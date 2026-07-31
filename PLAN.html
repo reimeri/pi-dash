@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pi Dashboard Implementation Plan</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0b1020; --panel:#121a2d; --panel2:#182238; --text:#e7edf8; --muted:#9cabbd; --accent:#70a5ff; --green:#52d273; --amber:#f4bd50; --red:#ff6b75; --border:#2a3852; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:16px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    main { width:min(1120px,calc(100% - 32px)); margin:0 auto; padding:40px 0 72px; }
+    h1,h2,h3 { line-height:1.25; scroll-margin-top:24px; }
+    h1 { font-size:2.35rem; margin:0 0 8px; }
+    h2 { margin-top:42px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+    h3 { margin-top:28px; }
+    a { color:var(--accent); }
+    code,pre { font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace; }
+    code { background:var(--panel2); padding:.1rem .35rem; border-radius:4px; }
+    pre { overflow:auto; padding:16px; background:#080d19; border:1px solid var(--border); border-radius:8px; }
+    pre code { padding:0; background:none; }
+    table { width:100%; border-collapse:collapse; display:block; overflow:auto; }
+    th,td { padding:10px 12px; border:1px solid var(--border); text-align:left; vertical-align:top; }
+    th { background:var(--panel2); }
+    .lede { color:var(--muted); font-size:1.08rem; max-width:860px; }
+    .card,.decision { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:18px 20px; margin:16px 0; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
+    .grid .card { margin:0; }
+    .tag { display:inline-block; padding:2px 8px; border-radius:999px; background:var(--panel2); color:var(--muted); font-size:.85rem; }
+    .working { color:var(--accent); } .blocked { color:var(--amber); } .done { color:var(--green); } .danger { color:var(--red); }
+    nav ul { columns:2; padding-left:22px; }
+    @media (max-width:700px) { main { width:min(100% - 20px,1120px); padding-top:24px; } nav ul { columns:1; } h1 { font-size:1.9rem; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="tag">Planning baseline</span>
+    <h1>Pi Dashboard Implementation Plan</h1>
+    <p class="lede">A Linux-first, local-only web dashboard that creates managed Git worktrees and gives every worktree an exact interactive Pi terminal. The browser is the presentation layer; a loopback-only Node.js daemon owns filesystem access, Git operations, PTYs, process lifecycle, and status aggregation.</p>
+  </header>
+
+  <nav aria-label="Plan contents">
+    <h2>Contents</h2>
+    <ul>
+      <li><a href="#goals">Goals and boundaries</a></li>
+      <li><a href="#decisions">Confirmed decisions</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#data">Data model and storage</a></li>
+      <li><a href="#worktrees">Workspace and worktree lifecycle</a></li>
+      <li><a href="#terminal">Terminal lifecycle</a></li>
+      <li><a href="#status">Workflow status model</a></li>
+      <li><a href="#interfaces">Interfaces and contracts</a></li>
+      <li><a href="#security">Security and reliability</a></li>
+      <li><a href="#repository">Repository layout</a></li>
+      <li><a href="#phases">Implementation phases</a></li>
+      <li><a href="#risks">Risks and open follow-ups</a></li>
+    </ul>
+  </nav>
+
+  <section id="goals">
+    <h2>Goals and boundaries</h2>
+    <h3>Product goals</h3>
+    <ul>
+      <li>Register local Git repositories as workspaces.</li>
+      <li>Create dashboard-managed Git worktrees in a central application data directory.</li>
+      <li>Run one ordinary interactive Pi process per active worktree, with the worktree as Pi's current working directory.</li>
+      <li>Render Pi's complete terminal UI, including extension-provided custom components and dialogs.</li>
+      <li>Keep worktree terminals running when the user switches between sidebar entries or temporarily disconnects the browser.</li>
+      <li>Show useful <code>idle</code>, <code>working</code>, <code>blocked</code>, and <code>done</code> attention states without parsing human-readable terminal output.</li>
+      <li>Make destructive Git and filesystem actions explicit, validated, and recoverable.</li>
+    </ul>
+    <h3>Initial boundaries</h3>
+    <ul>
+      <li>Linux is the supported target. macOS is a likely follow-up after platform validation.</li>
+      <li>The daemon binds to loopback only. Remote access and multi-user authorization are excluded.</li>
+      <li>Pi processes do not survive a dashboard daemon restart. tmux or another supervisor is deferred.</li>
+      <li>The dashboard does not recreate Pi as a native web chat interface and does not concurrently open a Pi session through RPC or SDK.</li>
+      <li>The dashboard manages only worktrees recorded in its own database. Importing arbitrary existing worktrees is deferred.</li>
+      <li>Merge, rebase, pull-request, code-editor, and diff-review workflows are deferred.</li>
+    </ul>
+  </section>
+
+  <section id="decisions">
+    <h2>Confirmed decisions</h2>
+    <div class="grid">
+      <article class="decision"><h3>Application</h3><p>Svelte 5 single-page application built with Vite, served by a dedicated Fastify Node.js daemon.</p></article>
+      <article class="decision"><h3>Terminal</h3><p><code>@battlefieldduck/xterm-svelte</code> over a custom WebSocket protocol to a <code>node-pty</code> process running interactive Pi.</p></article>
+      <article class="decision"><h3>Persistence</h3><p>SQLite with Drizzle schema and migrations. npm workspaces, Vitest, and Playwright form the project toolchain.</p></article>
+      <article class="decision"><h3>Pi startup</h3><p>Start Pi lazily on the first selection of a worktree terminal, then keep it alive until stop, removal, or daemon shutdown.</p></article>
+      <article class="decision"><h3>Git defaults</h3><p>New branch from the workspace repository's current <code>HEAD</code>; branch name <code>pi-dash/&lt;workspace&gt;/&lt;slug&gt;</code>; worktree path under the central app data directory.</p></article>
+      <article class="decision"><h3>Removal</h3><p>Block dirty worktree removal. After removal, optionally perform a separately confirmed mergedness check and atomic expected-OID ref deletion.</p></article>
+      <article class="decision"><h3>Status</h3><p><code>ask_user</code> tool execution means blocked. <code>agent_settled</code> means done until the terminal is viewed or acknowledged.</p></article>
+      <article class="decision"><h3>Folder selection</h3><p>Use a native Linux directory dialog initiated by the daemon, with explicit cancellation and unavailability handling.</p></article>
+    </div>
+  </section>
+
+  <section id="architecture">
+    <h2>Architecture</h2>
+    <pre><code>Browser (Svelte 5 SPA)
+├── Workspace/worktree sidebar ───── REST + status WebSocket ─┐
+└── xterm-svelte terminal ───────── terminal WebSocket ───────┤
+                                                               ▼
+Loopback Fastify daemon
+├── HTTP/API and authentication boundary
+├── Workspace service ─────────────── Git repository validation
+├── Worktree service ──────────────── locked Git worktree/ref commands
+├── Terminal manager ──────────────── node-pty ── interactive pi
+├── Status socket server ◄─────────── bundled Pi status extension
+├── Native directory dialog adapter ─ zenity, then kdialog fallback
+└── Drizzle repositories ──────────── SQLite
+</code></pre>
+
+    <h3>Frontend</h3>
+    <p>The Svelte SPA owns navigation, dialogs, terminal presentation, focus acknowledgement, status icons, and reconnect behavior. It never receives unrestricted filesystem or command-execution capabilities. <code>@battlefieldduck/xterm-svelte</code> wraps xterm.js; the app loads the Fit and Unicode 11 addons, uses a <code>ResizeObserver</code>, and explicitly disposes terminal/addon resources. The transport remains custom rather than using xterm's AttachAddon because resize, replay, process state, input ownership, and protocol versioning require control messages.</p>
+
+    <h3>Daemon</h3>
+    <p>The daemon is the only privileged application component. It serves production static assets, provides versioned REST endpoints, upgrades terminal and status WebSockets, launches native dialogs, validates paths, serializes Git mutations by canonical Git common directory, and owns all PTYs. Development runs Vite separately with API/WebSocket proxying; production is one loopback process.</p>
+
+    <h3>Pi integration</h3>
+    <p>Each runtime launches the user's configured <code>pi</code> binary in interactive mode with the managed worktree as <code>cwd</code>. The dashboard adds one bundled extension through <code>--extension</code>. It does not disable or replace the user's global or project extensions, prompts, skills, themes, settings, credentials, trust behavior, or sessions.</p>
+    <pre><code>pi --extension /absolute/path/to/pi-dash-status-extension.ts
+</code></pre>
+    <p>The status extension uses Pi lifecycle events and a private Unix-domain socket. Its failure must never block Pi startup or tool execution. It opens resources on <code>session_start</code>, closes them idempotently on <code>session_shutdown</code>, and reconnects after Pi reload/new/resume/fork lifecycle replacement.</p>
+
+    <h3>Process and runtime ownership</h3>
+    <ul>
+      <li>There is at most one dashboard-owned Pi PTY per worktree.</li>
+      <li>A worktree runtime can exist with zero attached browsers.</li>
+      <li>The server keeps a bounded sequence-numbered output buffer for browser reconnects.</li>
+      <li>Daemon shutdown sends a graceful termination signal, waits for Pi cleanup, then escalates if necessary.</li>
+      <li>Runtime process state is independent from workflow attention state.</li>
+    </ul>
+  </section>
+
+  <section id="data">
+    <h2>Data model and storage</h2>
+    <h3>XDG paths</h3>
+    <table>
+      <thead><tr><th>Purpose</th><th>Primary path</th><th>Fallback</th></tr></thead>
+      <tbody>
+        <tr><td>Data/database/worktrees</td><td><code>$XDG_DATA_HOME/pi-dash</code></td><td><code>~/.local/share/pi-dash</code></td></tr>
+        <tr><td>Configuration</td><td><code>$XDG_CONFIG_HOME/pi-dash</code></td><td><code>~/.config/pi-dash</code></td></tr>
+        <tr><td>Sockets and launch token</td><td><code>$XDG_RUNTIME_DIR/pi-dash</code></td><td>Private <code>runtime/</code> directory under the data directory</td></tr>
+      </tbody>
+    </table>
+    <p>Directories and sensitive files use user-only permissions. Managed worktrees use a stable ID path such as <code>&lt;data&gt;/worktrees/&lt;workspace-id&gt;/&lt;worktree-id&gt;-&lt;slug&gt;</code>; display-name changes therefore do not move repositories.</p>
+
+    <h3>Durable entities</h3>
+    <pre><code>Workspace {
+  id: UUID
+  name: string
+  slug: string
+  repositoryPath: canonical absolute path
+  gitCommonDir: canonical absolute path
+  createdAt: timestamp
+  updatedAt: timestamp
+}
+
+Worktree {
+  id: UUID
+  workspaceId: UUID
+  name: string
+  slug: string
+  path: canonical absolute managed path
+  branchRef: string
+  baseRef: string
+  baseCommit: object id
+  lifecycle: creating | ready | removing | removed | error
+  finalBranchTip: object id | null
+  lastError: string | null
+  createdAt: timestamp
+  updatedAt: timestamp
+}
+
+WorkflowStatus {
+  worktreeId: UUID
+  state: idle | working | blocked | done
+  reason: string | null
+  revision: integer
+  changedAt: timestamp
+  acknowledgedAt: timestamp | null
+}
+</code></pre>
+    <p>Terminal process handles, PIDs, WebSocket connections, leases, and output buffers are in-memory runtime data. A separate runtime DTO reports <code>stopped</code>, <code>starting</code>, <code>running</code>, <code>stopping</code>, or <code>crashed</code>; it is not overloaded into the four workflow states.</p>
+  </section>
+
+  <section id="worktrees">
+    <h2>Workspace and worktree lifecycle</h2>
+    <h3>Workspace registration</h3>
+    <ol>
+      <li>The user opens the native directory dialog.</li>
+      <li>The daemon launches <code>zenity --file-selection --directory</code>, with <code>kdialog --getexistingdirectory</code> as a fallback adapter.</li>
+      <li>The chosen path is resolved with <code>realpath</code> and validated using <code>git rev-parse --show-toplevel</code> and <code>git rev-parse --git-common-dir</code>.</li>
+      <li>The canonical repository root and common Git directory are stored. Duplicate canonical repositories return a conflict rather than creating aliases.</li>
+    </ol>
+    <p>Only one native chooser is active at a time. Cancellation is a successful no-selection result; missing display variables or picker executables produce an actionable unavailable error. A typed-path fallback may be offered for headless recovery but is not the primary UX.</p>
+
+    <h3>Worktree creation</h3>
+    <ol>
+      <li>Validate the requested display name, slug, base ref, derived branch name, and managed target path.</li>
+      <li>Resolve the workspace's current <code>HEAD</code> to an exact commit when the dialog opens and issue a short-lived signed snapshot token binding workspace, ref, and object ID. Creation sends the token plus <code>baseCommit</code>; <code>baseRef</code> remains display/audit metadata.</li>
+      <li>Acquire the in-process and cross-process locks keyed by canonical Git common directory.</li>
+      <li>Insert a <code>creating</code> record and run <code>git worktree add -b pi-dash/&lt;workspace-slug&gt;/&lt;worktree-slug&gt; &lt;path&gt; &lt;base-commit&gt;</code> using an argument array and no shell.</li>
+      <li>Verify the resulting top level, branch, and common Git directory, then mark the record <code>ready</code>.</li>
+      <li>On failure, remove any safe partial target, preserve a diagnostic, and expose an explicit retry/repair path.</li>
+    </ol>
+
+    <h3>Worktree removal</h3>
+    <ol>
+      <li>Check <code>git status --porcelain=v1 --untracked-files=all</code> before disturbing a running Pi terminal; reject all dirty worktrees with no force path.</li>
+      <li>Under the shared worktree lifecycle coordinator, atomically transition <code>ready → removing</code>; terminal start uses the same coordinator and is rejected after this point.</li>
+      <li>Stop and dispose the Pi runtime only after the preliminary check and lifecycle claim say removal is eligible.</li>
+      <li>Recheck dirtiness immediately after shutdown to close the race, then run normal <code>git worktree remove</code> without <code>--force</code>. New dirt or exact intact failure restores <code>ready</code>; ambiguity becomes <code>error</code>.</li>
+      <li>Retain a removed-worktree tombstone containing the verified branch and final tip so branch cleanup can be a separate operation.</li>
+      <li>If separately confirmed afterward, verify no worktree uses the branch and that the recorded tip is merged into the chosen safety target, then atomically delete the ref with <code>git update-ref -d &lt;ref&gt; &lt;expected-tip&gt;</code>. A moved/unmerged branch refusal does not invalidate worktree removal.</li>
+      <li>Finalize the record only after Git no longer reports the worktree; ambiguous failures remain recoverable error/tombstone records.</li>
+    </ol>
+  </section>
+
+  <section id="terminal">
+    <h2>Terminal lifecycle</h2>
+    <h3>Launch</h3>
+    <p>Selecting a ready worktree calls the idempotent start endpoint and opens its terminal socket. The terminal manager chooses a configured Pi executable, verifies it, creates a PTY with a known UTF-8 environment and default dimensions, and supplies private status-channel environment variables. It does not invoke an intermediate shell.</p>
+
+    <h3>Transport</h3>
+    <p>Protocol v1 uses JSON WebSocket envelopes for control and UTF-8 terminal data. Every output event has a monotonically increasing sequence. On attach, the server sends a hello message, process state, buffer range, and replay or reset instruction. Resize values are bounded before calling <code>pty.resize(cols, rows)</code>.</p>
+    <p>The frontend forwards xterm <code>onData</code> exactly once, forwards <code>onBinary</code> with binary-safe encoding when needed, and sends resize only after the FitAddon computes positive dimensions. Shift+Enter and Alt+Enter are explicitly tested and, if xterm/browser defaults are insufficient, translated to the escape sequences Pi documents for modified Enter keys.</p>
+
+    <h3>Switching and reconnect</h3>
+    <ul>
+      <li>Switching worktrees detaches presentation, not the PTY.</li>
+      <li>A bounded client cache may retain recently viewed xterm instances; evicted instances are explicitly disposed.</li>
+      <li>The daemon keeps a bounded output ring buffer. Buffer overflow advances the earliest sequence and tells stale clients to reset.</li>
+      <li>Full-screen terminal replay is validated in Phase 0. Resize-triggered redraw is the primary recovery mechanism; a server-side terminal snapshot is deferred unless the spike proves replay inadequate.</li>
+      <li>Only one browser connection owns input for a runtime. Additional connections are read-only until they explicitly take over; full lease behavior is hardened in the final phase.</li>
+    </ul>
+  </section>
+
+  <section id="status">
+    <h2>Workflow status model</h2>
+    <table>
+      <thead><tr><th>State</th><th>Source</th><th>Meaning</th><th>Suggested UI</th></tr></thead>
+      <tbody>
+        <tr><td><code>idle</code></td><td>Startup or completion acknowledgement</td><td>Pi is ready and no completed result currently requires attention.</td><td>Static gray dot</td></tr>
+        <tr><td><code>working</code></td><td><code>agent_start</code>; end of a blocking interaction</td><td>Pi is processing, retrying, compacting, or continuing queued work.</td><td class="working">Animated blue spinner</td></tr>
+        <tr><td><code>blocked</code></td><td>Cooperating ask-user extension emits dashboard <code>blocking_wait_start</code> immediately before awaiting its terminal UI</td><td>A supported interactive extension is actually waiting for user input.</td><td class="blocked">Pulsing amber icon</td></tr>
+        <tr><td><code>done</code></td><td><code>agent_settled</code></td><td>The complete run settled and has not yet been viewed or acknowledged.</td><td class="done">Static green dot</td></tr>
+      </tbody>
+    </table>
+    <p>A compatible ask-user extension emits a shared Pi event immediately before awaiting its dialog and a matching end event in <code>finally</code>. Each start adds its interaction ID to an active blocking set and each end removes only that ID. State returns to <code>working</code> only when the set is empty; <code>agent_settled</code> clears transient correlations and moves it to <code>done</code>. Pi tool preflight events alone never claim that UI is waiting.</p>
+    <p><code>agent_settled</code> always records <code>done</code>, even if that worktree is currently selected. A subsequent selection, terminal focus/click, terminal input, or explicit acknowledgement marks it <code>idle</code>. State changes carry revisions so late socket events cannot overwrite newer transitions.</p>
+    <p>Blocked detection is deliberately exact rather than heuristic. A quiet model request is still working. Other user-input tools can be added later through a configurable allowlist or a shared Pi extension event contract.</p>
+  </section>
+
+  <section id="interfaces">
+    <h2>Interfaces and contracts</h2>
+    <h3>REST surface</h3>
+    <table>
+      <thead><tr><th>Method and path</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/v1/health</code></td><td>Version, readiness, database migration, Git, Pi, and native-picker capability summary.</td></tr>
+        <tr><td><code>POST /api/v1/dialogs/workspace-directory</code></td><td>Open the native Linux directory chooser; returns a path, cancellation, conflict, or unavailable error.</td></tr>
+        <tr><td><code>GET /api/v1/workspaces</code></td><td>List workspaces with worktree summaries.</td></tr>
+        <tr><td><code>POST /api/v1/workspaces</code></td><td>Validate and register a selected repository path.</td></tr>
+        <tr><td><code>PATCH /api/v1/workspaces/:id</code></td><td>Rename dashboard metadata; repository relocation is not implicit.</td></tr>
+        <tr><td><code>DELETE /api/v1/workspaces/:id</code></td><td>Remove an empty workspace registration.</td></tr>
+        <tr><td><code>GET /api/v1/workspaces/:id/refs</code></td><td>Return validated candidate base refs and current HEAD metadata.</td></tr>
+        <tr><td><code>POST /api/v1/workspaces/:id/worktrees</code></td><td>Create a managed worktree and branch from an exact displayed <code>baseCommit</code>; mutating requests use an idempotency key.</td></tr>
+        <tr><td><code>POST /api/v1/worktrees/:id/remove</code></td><td>Remove a clean managed worktree without a force path and retain its branch tombstone.</td></tr>
+        <tr><td><code>POST /api/v1/worktrees/:id/delete-branch</code></td><td>Separately confirm and safely delete the unchanged recorded branch after worktree removal.</td></tr>
+        <tr><td><code>POST /api/v1/worktrees/:id/terminal/start</code></td><td>Idempotently create or return the runtime.</td></tr>
+        <tr><td><code>POST /api/v1/worktrees/:id/terminal/stop</code></td><td>Gracefully stop the runtime.</td></tr>
+        <tr><td><code>POST /api/v1/worktrees/:id/terminal/restart</code></td><td>Stop then start a fresh Pi process.</td></tr>
+        <tr><td><code>POST /api/v1/worktrees/:id/status/acknowledge</code></td><td>Acknowledge the current done revision.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Terminal WebSocket</h3>
+    <pre><code>// Client to server
+{ "v": 1, "type": "input", "data": "..." }
+{ "v": 1, "type": "binaryInput", "dataBase64": "..." }
+{ "v": 1, "type": "resize", "cols": 120, "rows": 40 }
+{ "v": 1, "type": "claimInput", "connectionId": "..." }
+{ "v": 1, "type": "acknowledgeDone", "revision": 17 }
+
+// Server to client
+{ "v": 1, "type": "hello", "runtimeId": "...", "connectionId": "...", "inputOwner": true }
+{ "v": 1, "type": "output", "seq": 42, "data": "..." }
+{ "v": 1, "type": "replayReset", "earliestSeq": 20, "latestSeq": 80 }
+{ "v": 1, "type": "runtime", "state": "running", "exitCode": null }
+{ "v": 1, "type": "inputOwnership", "ownerConnectionId": "..." }
+{ "v": 1, "type": "error", "code": "INVALID_RESIZE", "message": "..." }
+</code></pre>
+
+    <h3>Status side-channel event</h3>
+    <pre><code>// Event frame (common runtime/worktree/token/epoch/seq/timestamp fields omitted here)
+{ "v": 1, "kind": "event",
+  "event": "agent_start | agent_settled | blocking_wait_start | blocking_wait_end | session_start | session_shutdown",
+  "interactionId": "optional", "reason": "ask_user when blocking" }
+
+// Snapshot frame at a sequence boundary after connect/reconnect
+{ "v": 1, "kind": "snapshot", "runtimeId": "uuid", "worktreeId": "uuid",
+  "token": "per-runtime secret", "extensionInstanceId": "random load epoch", "seq": 8,
+  "agentActive": true,
+  "blockingInteractions": [{ "id": "...", "reason": "ask_user" }],
+  "timestamp": "ISO-8601" }
+</code></pre>
+    <p>Messages are LF-delimited JSON with strict size limits. An authenticated <code>session_start</code> establishes the extension-instance epoch; sequence ordering is scoped to that epoch and older epochs are rejected. Reconnect sends an atomic extension snapshot containing agent activity and the complete active blocking-interaction set before incremental events. The daemon uses receipt time for state ordering. The extension sends no prompt, message content, tool arguments, tool output, credentials, or system prompt data.</p>
+    <p>The browser's application-events WebSocket starts with an atomic status/runtime snapshot and server cursor, then ordered incremental events. If the cursor expires, the server explicitly requires a fresh snapshot so reconnect cannot lose a transition.</p>
+
+    <h3>Error contract</h3>
+    <pre><code>{
+  "error": {
+    "code": "WORKTREE_DIRTY",
+    "message": "The worktree has uncommitted or untracked changes.",
+    "details": { "worktreeId": "..." },
+    "requestId": "..."
+  }
+}
+</code></pre>
+    <p>Expected conflict codes include <code>WORKSPACE_EXISTS</code>, <code>WORKSPACE_HAS_WORKTREES</code>, <code>BRANCH_EXISTS</code>, <code>PATH_EXISTS</code>, <code>WORKTREE_DIRTY</code>, <code>RUNTIME_RUNNING</code>, <code>DIALOG_BUSY</code>, and <code>DIALOG_UNAVAILABLE</code>. Internal command output is sanitized before reaching the browser.</p>
+  </section>
+
+  <section id="security">
+    <h2>Security and reliability</h2>
+    <ul>
+      <li>Bind only to IPv4 and/or IPv6 loopback; startup rejects non-loopback binding in the initial product.</li>
+      <li>Create a per-launch bootstrap token in a user-only runtime file, exchange it for an HttpOnly, SameSite=Strict cookie, then remove the token from the URL.</li>
+      <li>Validate HTTP Host and WebSocket Origin and require authentication for every non-health API and upgrade.</li>
+      <li>Canonicalize paths with <code>realpath</code>; verify managed worktree destinations remain beneath the application-owned root.</li>
+      <li>Run Git and Pi with executable plus argument arrays and <code>shell: false</code>.</li>
+      <li>Validate IDs, names, branch components, refs, terminal dimensions, WebSocket message sizes, and status frames at trust boundaries.</li>
+      <li>Acquire an exclusive per-data-root daemon lock before migration/readiness, and serialize mutating Git operations with both in-process and cross-process locks keyed by canonical Git common directory.</li>
+      <li>Use database lifecycle markers for interrupted create/remove operations and reconcile them with <code>git worktree list --porcelain</code> on startup.</li>
+      <li>Bound terminal buffers, socket queues, logs, request bodies, and native dialog concurrency.</li>
+      <li>Never log authentication tokens, Pi credentials, terminal input/output, prompt content, or status side-channel secrets by default.</li>
+      <li>Use SIGTERM followed by a bounded wait and SIGKILL escalation for process-tree cleanup.</li>
+    </ul>
+  </section>
+
+  <section id="repository">
+    <h2>Planned repository layout</h2>
+    <pre><code>pi-dash/
+├── PLAN.html
+├── phases/
+│   ├── phase-0-terminal-feasibility.html
+│   ├── phase-1-foundation.html
+│   ├── phase-2-workspaces.html
+│   ├── phase-3-worktrees.html
+│   ├── phase-4-terminal-runtime.html
+│   ├── phase-5-status-tracking.html
+│   ├── phase-6-hardening-recovery.html
+│   └── phase-7-packaging-release.html
+├── package.json                 # npm workspace scripts
+├── package-lock.json
+├── tsconfig.base.json
+├── apps/
+│   ├── web/                     # Svelte 5 SPA and xterm-svelte UI
+│   └── server/                  # Fastify daemon, PTY, Git, SQLite
+├── packages/
+│   ├── contracts/               # Shared HTTP/WebSocket schemas and types
+│   └── pi-extension/            # Bundled lifecycle/status extension
+├── migrations/                  # Ordered SQLite migrations
+├── tests/
+│   ├── fixtures/                # Temporary Git repositories and fake Pi
+│   └── e2e/                     # Playwright scenarios
+├── spikes/
+│   └── terminal-bridge/         # Phase 0 disposable compatibility harness
+└── docs/
+    ├── architecture/
+    ├── operations/
+    └── testing/
+</code></pre>
+  </section>
+
+  <section id="phases">
+    <h2>Implementation phases</h2>
+    <ol>
+      <li><a href="phases/phase-0-terminal-feasibility.html"><strong>Phase 0: Terminal and Pi feasibility</strong></a> — retire PTY, xterm-svelte, keyboard, extension UI, replay, and status-channel risks with an executable spike.</li>
+      <li><a href="phases/phase-1-foundation.html"><strong>Phase 1: Application foundation</strong></a> — establish the workspace repository, loopback daemon, authenticated SPA shell, shared contracts, database, migrations, and test harness.</li>
+      <li><a href="phases/phase-2-workspaces.html"><strong>Phase 2: Workspace registration</strong></a> — native Linux directory selection, Git repository validation, and workspace CRUD in the sidebar.</li>
+      <li><a href="phases/phase-3-worktrees.html"><strong>Phase 3: Managed worktrees</strong></a> — safe branch/worktree creation, listing, reconciliation, dirty protection, removal, and optional safe branch deletion.</li>
+      <li><a href="phases/phase-4-terminal-runtime.html"><strong>Phase 4: Interactive Pi terminal runtime</strong></a> — lazy Pi startup, PTY/WebSocket transport, xterm terminal, switching, resizing, reconnect, and process controls.</li>
+      <li><a href="phases/phase-5-status-tracking.html"><strong>Phase 5: Workflow status tracking</strong></a> — Pi lifecycle side channel and exact idle/working/blocked/done sidebar behavior.</li>
+      <li><a href="phases/phase-6-hardening-recovery.html"><strong>Phase 6: Operational hardening and recovery</strong></a> — reconciliation, single-writer input leases, security review, concrete resource budgets, accessibility, and fault tolerance.</li>
+      <li><a href="phases/phase-7-packaging-release.html"><strong>Phase 7: Packaging and release validation</strong></a> — reproducible Linux artifacts, clean installation, compatibility matrix, documentation, and full release-gate verification.</li>
+    </ol>
+    <p>Each phase has an observable product increment, explicit exclusions, contracts, tests, acceptance criteria, and verification commands. A phase is complete only when its acceptance criteria and automated checks pass; later-phase features must not be silently pulled into earlier scope.</p>
+  </section>
+
+  <section id="risks">
+    <h2>Risks and open follow-ups</h2>
+    <table>
+      <thead><tr><th>Risk</th><th>Mitigation or decision point</th></tr></thead>
+      <tbody>
+        <tr><td>xterm/browser keyboard reporting differs from a native terminal.</td><td>Phase 0 tests Pi shortcuts and custom translation for modified Enter before product architecture proceeds.</td></tr>
+        <tr><td>Replaying bytes does not reconstruct Pi's alternate-screen state.</td><td>Test bounded replay plus forced resize. If inadequate, evaluate xterm serialization/headless snapshots before Phase 4 acceptance.</td></tr>
+        <tr><td><code>xterm-svelte</code> lifecycle does not automatically dispose every terminal/listener.</td><td>Wrap it in an application component with explicit observer, addon, socket, and terminal disposal; include repeated mount/unmount leak tests.</td></tr>
+        <tr><td>Native dialog commands vary across Linux desktops.</td><td>Use an adapter with zenity primary, kdialog fallback, capability reporting, cancellation semantics, and a documented typed-path recovery.</td></tr>
+        <tr><td>User Pi versions or extensions differ.</td><td>Probe <code>pi --version</code>, document the supported range, make status integration fail-open, and test with representative terminal extensions and ask-user.</td></tr>
+        <tr><td>Two browser tabs send conflicting input.</td><td>Single-writer lease with visible takeover, read-only observers, heartbeat expiry, and integration tests.</td></tr>
+        <tr><td>Interrupted Git operations leave DB/filesystem disagreement.</td><td>Lifecycle markers, per-common-dir locks, startup reconciliation, repair actions, and no silent destructive cleanup.</td></tr>
+        <tr><td>Central worktree directory fills disk.</td><td>Report creation failures clearly, avoid hidden copies, expose paths and sizes later, and keep cleanup explicit.</td></tr>
+      </tbody>
+    </table>
+    <h3>Deferred product questions</h3>
+    <ul>
+      <li>Whether macOS becomes an officially supported target and which native picker adapter it uses.</li>
+      <li>Whether Pi runtimes should survive daemon restarts through tmux.</li>
+      <li>Whether additional blocking tools use a configuration allowlist or emit a shared extension event.</li>
+      <li>Whether existing worktrees can be imported and adopted safely.</li>
+      <li>Whether a later semantic UI uses Pi RPC/SDK alongside, but never concurrently writing, an interactive session.</li>
+    </ul>
+  </section>
+
+  <footer class="card">
+    <strong>Planning rule:</strong> the interactive terminal is the product's primary Pi interface. Structured integration exists to manage lifecycle and attention state, not to replace or constrain Pi's extensible terminal UI.
+  </footer>
+</main>
+</body>
+</html>

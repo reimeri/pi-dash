@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phase 1: Application foundation</title><style>:root{color-scheme:dark;--bg:#0b1020;--panel:#121a2d;--text:#e7edf8;--muted:#9cabbd;--accent:#70a5ff;--border:#2a3852}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}main{width:min(1040px,calc(100% - 28px));margin:auto;padding:32px 0 64px}h1,h2,h3{line-height:1.25}h2{margin-top:36px;border-bottom:1px solid var(--border);padding-bottom:7px}a{color:var(--accent)}code{background:#182238;padding:.1rem .35rem;border-radius:4px}pre{overflow:auto;background:#080d19;border:1px solid var(--border);border-radius:8px;padding:15px}pre code{background:none;padding:0}table{border-collapse:collapse;width:100%;display:block;overflow:auto}th,td{border:1px solid var(--border);padding:9px 11px;text-align:left;vertical-align:top}th{background:#182238}.note{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 17px}</style></head><body><main>
+<p><a href="phase-0-terminal-feasibility.html">← Previous phase</a> · <a href="../PLAN.html">Master plan</a> · <a href="phase-2-workspaces.html">Next phase →</a></p>
+<h1>Phase 1: Application foundation</h1>
+
+<h2>Outcome</h2>
+<p>A production-shaped local application starts through one npm command: a loopback Fastify daemon migrates a SQLite database, serves an authenticated Svelte 5 SPA in production, exposes health/version information, and supports shared validated contracts and structured errors. The UI displays its two-pane dashboard shell, connection state, empty workspace sidebar, and setup guidance. Unit, integration, and browser test infrastructure is operational.</p>
+
+<h2>Purpose</h2>
+<p>All later phases need a stable security boundary, data directory policy, schema/migration mechanism, API conventions, frontend state pattern, logging policy, and automated test harness. Establishing these once prevents Git, PTY, and status features from inventing incompatible contracts or bypassing local authentication.</p>
+
+<h2>Dependencies</h2>
+<ul>
+  <li>Phase 0 has a “proceed” decision and its terminal constraints are reflected in the master plan.</li>
+  <li>Node.js version selected and enforced in <code>engines</code>; npm workspaces are available.</li>
+  <li>Svelte 5 + Vite, Fastify, SQLite driver, Drizzle ORM/migrations, TypeBox or Zod schemas, Vitest, and Playwright.</li>
+  <li>Required technical decision: one Fastify daemon serves built assets in production; Vite proxies to it during development.</li>
+  <li>Required technical decision: the MVP rejects non-loopback bind addresses.</li>
+</ul>
+
+<h2>In scope</h2>
+<ul>
+  <li>npm workspace and TypeScript configuration for web, server, contracts, Pi extension, migrations, fixtures, and end-to-end tests.</li>
+  <li>Svelte dashboard frame with sidebar, main-content empty state, global error region, and responsive minimum behavior.</li>
+  <li>Fastify startup/shutdown, static production assets, development proxy contract, request IDs, structured errors, and health API.</li>
+  <li>XDG config/data/runtime directory resolution, secure directory creation, and an exclusive per-data-root daemon lock acquired before migration/readiness.</li>
+  <li>SQLite connection, ordered migrations, schema version tracking, WAL-safe pre-migration backup, and transactional migration startup.</li>
+  <li>Loopback bootstrap-token exchange, HttpOnly cookie session, Host/Origin validation, and WebSocket authentication helper.</li>
+  <li>Typed shared API contracts and a generated/handwritten client boundary.</li>
+  <li>Structured redacted logging and configuration loading.</li>
+  <li>Vitest unit/integration harness and Playwright smoke test.</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+  <li>Native folder picker, workspace records, worktrees, Git mutations, PTY processes, terminal WebSockets, or status extension events.</li>
+  <li>Remote authentication, TLS termination, user accounts, or non-loopback access.</li>
+  <li>Installers, systemd user service, desktop entry, auto-update, or binary bundling.</li>
+  <li>Final visual polish, themes, mobile support, or accessibility audit.</li>
+  <li>Pi credential/model management.</li>
+</ul>
+
+<h2>Requirements</h2>
+<ul>
+  <li><strong>REQ-01-01:</strong> The repository shall use npm workspaces with reproducible lockfile installs and common build, test, lint, format, and type-check scripts.</li>
+  <li><strong>REQ-01-02:</strong> The daemon shall bind to <code>127.0.0.1</code> by default and reject a configured non-loopback host.</li>
+  <li><strong>REQ-01-03:</strong> Startup shall resolve XDG paths, create private data/runtime directories, open SQLite, and apply pending migrations before reporting ready.</li>
+  <li><strong>REQ-01-04:</strong> The daemon shall generate a high-entropy, short-lived, one-use bootstrap token, exchange it for an HttpOnly SameSite=Strict cookie, and avoid logging either secret. The bootstrap response shall use <code>Cache-Control: no-store</code>, <code>Referrer-Policy: no-referrer</code>, contain no third-party resources, redirect to a clean URL, and ensure failed exchanges do not retain the token in application-controlled browser history.</li>
+  <li><strong>REQ-01-05:</strong> All protected REST endpoints and future WebSocket upgrades shall share one authentication and Origin/Host policy.</li>
+  <li><strong>REQ-01-06:</strong> <code>GET /api/v1/health</code> shall report application version, readiness, schema version, and capability placeholders without exposing paths or secrets unnecessarily.</li>
+  <li><strong>REQ-01-07:</strong> API errors shall follow the master-plan error envelope with stable codes and request IDs.</li>
+  <li><strong>REQ-01-08:</strong> Runtime request/response schemas shall be defined once in <code>packages/contracts</code> and used for server validation and frontend typing.</li>
+  <li><strong>REQ-01-09:</strong> The SPA shall show disconnected, connecting, ready, migration-failed, and unauthorized startup states.</li>
+  <li><strong>REQ-01-10:</strong> Graceful shutdown shall stop accepting requests, close WebSockets, flush logs, close SQLite, and remove runtime secrets/socket placeholders idempotently.</li>
+  <li><strong>REQ-01-11:</strong> Configuration shall support CLI/environment overrides for port, data/config/runtime directories, Pi executable placeholder, and log level while preserving loopback-only policy.</li>
+  <li><strong>REQ-01-12:</strong> Startup shall acquire an exclusive advisory lock for the canonical data root before backup/migration; a second daemon shall fail clearly, while stale lock metadata shall be recovered only after proving no owner holds the OS lock.</li>
+  <li><strong>REQ-01-13:</strong> Every upgrade migration shall first create a consistent SQLite backup through the SQLite backup API or equivalent WAL-safe mechanism and verify that it can be opened.</li>
+</ul>
+
+<h2>Non-functional requirements</h2>
+<ul>
+  <li><strong>Security:</strong> Runtime and token files are mode 0600; directories are mode 0700; cookies are HttpOnly and SameSite=Strict; state-changing requests enforce same-origin and content type; logs redact tokens/cookies.</li>
+  <li><strong>Performance:</strong> Warm daemon startup excluding migrations should target under one second on a typical development machine; the empty SPA should become interactive promptly and avoid large terminal dependencies until Phase 4 routes load them.</li>
+  <li><strong>Accessibility:</strong> Use semantic landmarks, a skip link, keyboard-visible focus, live regions for connection/errors, and sufficient contrast in the base shell.</li>
+  <li><strong>Reliability:</strong> Migrations are transactional; startup failure is explicit; shutdown is idempotent; filesystem and database errors include actionable diagnostics without partial readiness.</li>
+  <li><strong>Compatibility:</strong> Linux and current supported Node LTS/current range; Chromium for required E2E; no dependence on a specific desktop environment yet.</li>
+</ul>
+
+<h2>Technical design</h2>
+<p>The root npm workspace contains <code>apps/web</code>, <code>apps/server</code>, <code>packages/contracts</code>, and <code>packages/pi-extension</code>. The extension package is a placeholder in this phase so build and resource-path strategy can be fixed before Phase 5. The server uses a composition root that constructs config, logger, paths, database, auth, and Fastify plugins; tests can inject temporary directories, an in-memory or temporary-file database, clocks, random-token functions, and fake capability probes.</p>
+<p>Fastify owns all production HTTP and static files. During development, Vite serves the SPA and proxies <code>/api</code> and future upgrade paths to Fastify. The browser never reads a bootstrap token from persistent JavaScript storage. The launch command prints or opens a short-lived one-time bootstrap URL; the no-store/no-referrer endpoint contains no third-party resources, validates and consumes the token, sets the cookie, and redirects with history replacement to a clean URL. Sessions are invalidated when the daemon restarts.</p>
+<p>Drizzle defines only foundation-owned metadata and the migration journal; workspace, worktree, operation, and workflow-status tables are introduced by their owning phases. Database access occurs through repository interfaces rather than directly in routes. SQLite uses foreign keys, WAL mode where supported, a busy timeout, explicit transactions, and a WAL-safe backup API before upgrades. Migration failure prevents readiness and does not serve the application as if healthy.</p>
+<p>The SPA uses a small typed API client and centralized connection/error state. It renders a fixed-width/resizable-ready sidebar region and flexible main region but does not implement resizing yet. CSS variables establish status colors while respecting reduced motion in later animated components.</p>
+
+<h2>Interfaces and contracts</h2>
+<pre><code>GET /api/v1/health
+200 {
+  "status": "ready",
+  "version": "0.1.0",
+  "schemaVersion": 1,
+  "capabilities": {
+    "git": "unknown",
+    "pi": "unknown",
+    "nativeDirectoryDialog": "unknown",
+    "pty": "unknown"
+  }
+}
+
+GET /auth/bootstrap?token=&lt;one-time-token&gt;
+302 Set-Cookie: pi_dash_session=...; HttpOnly; SameSite=Strict; Path=/
+Location: /
+
+GET /api/v1/session
+200 { "authenticated": true, "csrfToken": "per-session-value" }
+</code></pre>
+<pre><code>type ApiErrorCode =
+  | "UNAUTHORIZED"
+  | "FORBIDDEN_ORIGIN"
+  | "VALIDATION_ERROR"
+  | "NOT_FOUND"
+  | "CONFLICT"
+  | "INTERNAL_ERROR"
+  | "MIGRATION_REQUIRED";
+
+interface ApiErrorEnvelope {
+  error: {
+    code: ApiErrorCode | string;
+    message: string;
+    details?: unknown;
+    requestId: string;
+  };
+}
+</code></pre>
+<p>Configuration precedence is CLI, environment, config file, then defaults. Planned environment names are prefixed <code>PI_DASH_</code>. The server exposes a reusable <code>authenticateUpgrade(request)</code> helper for future terminal/status WebSockets.</p>
+
+<h2>Work breakdown</h2>
+<ol>
+  <li>Initialize npm workspaces, TypeScript project references, formatting/linting, Svelte/Vite, Vitest, and Playwright.</li>
+  <li>Implement XDG path resolution, configuration validation, secure directory/file helpers, logger redaction, and process signal handling.</li>
+  <li>Define Drizzle schema, migration runner, repositories, SQLite pragmas, and temporary-database test utilities.</li>
+  <li>Implement Fastify composition, health/session/bootstrap routes, static serving, structured errors, request IDs, origin/host checks, and shutdown hooks.</li>
+  <li>Implement Svelte application shell, typed API client, authentication bootstrap states, connection banners, empty sidebar/main state, and accessible error reporting.</li>
+  <li>Add server unit/integration tests, web component tests where useful, and Playwright bootstrap/health/shell smoke tests.</li>
+  <li>Document development/production commands, XDG paths, configuration, security assumptions, and migration workflow.</li>
+</ol>
+
+<h2>Files or components affected</h2>
+<h3>Create</h3>
+<ul>
+  <li><code>package.json</code>, <code>package-lock.json</code>, <code>tsconfig.base.json</code>, lint/format configuration</li>
+  <li><code>apps/web/</code> with Svelte/Vite configuration, routes/components, styles, API client, and tests</li>
+  <li><code>apps/server/</code> with composition root, config, paths, auth, API plugins, database, logging, and tests</li>
+  <li><code>packages/contracts/</code> with schemas, DTOs, errors, and protocol version constants</li>
+  <li><code>packages/pi-extension/</code> package placeholder and build/resource strategy</li>
+  <li><code>migrations/0001_foundation.sql</code> and migration metadata</li>
+  <li><code>tests/e2e/bootstrap.spec.ts</code> and Playwright configuration</li>
+  <li><code>docs/operations/configuration.md</code>, <code>docs/operations/local-security.md</code>, <code>docs/testing/README.md</code></li>
+</ul>
+<h3>Modify</h3>
+<ul>
+  <li><code>PLAN.html</code> and phase documents only if Phase 0 evidence changed the accepted architecture.</li>
+  <li><code>.gitignore</code> for build, coverage, temporary data, and local environment files.</li>
+</ul>
+
+<h2>Data and migrations</h2>
+<p>Migration 0001 creates only foundation-owned metadata required to identify schema/application versions; feature tables arrive in later owning phases. A migration journal records applied versions and checksums. Startup applies forward-only migrations transactionally; tests prove a fresh database and the previous fixture version both reach the same schema.</p>
+<p>Rollback is backup-and-restore through a consistent SQLite backup created with the backup API (or equivalent mechanism that includes WAL state), never a live file copy and never an automatic downgrade. The backup is opened and integrity-checked before migration proceeds. The app reports a newer-than-supported schema as an explicit incompatibility.</p>
+
+<h2>Edge cases</h2>
+<ul>
+  <li><code>XDG_RUNTIME_DIR</code> missing: create a private runtime directory under the data root and warn at debug level.</li>
+  <li>Port occupied: exit with a clear message and no partial ready state.</li>
+  <li>Bootstrap token replay: reject after first successful exchange.</li>
+  <li>Browser visits <code>/</code> without a session: show/redirect to launch guidance without leaking token details.</li>
+  <li>Wrong Host or Origin, including DNS rebinding attempts: reject before route/upgrade handling.</li>
+  <li>Database locked or read-only: fail readiness with request ID and underlying path redacted from normal browser errors.</li>
+  <li>Migration interrupted: SQLite transaction rolls back; next startup retries safely.</li>
+  <li>Static assets missing in production: health can report degraded startup, but protected product UI is not falsely reported ready.</li>
+  <li>Duplicate shutdown signals: cleanup executes once.</li>
+</ul>
+
+<h2>Testing</h2>
+<h3>Unit</h3>
+<ul>
+  <li>XDG path precedence, path expansion, permissions, config precedence, and invalid non-loopback binds.</li>
+  <li>Token generation/consumption, cookie flags, CSRF token validation, Host/Origin policy, and redaction.</li>
+  <li>Shared schema parsing and stable error serialization.</li>
+  <li>Frontend startup state reducer and API error rendering.</li>
+</ul>
+<h3>Integration</h3>
+<ul>
+  <li>Fresh and upgrade migration against temporary SQLite files, foreign key enforcement, WAL/busy settings, WAL-safe backup with residual WAL data, restore verification, and newer-schema rejection.</li>
+  <li>Two daemon processes targeting one data root prove exclusive ownership and safe stale-lock recovery.</li>
+  <li>Fastify injection tests for unauthenticated/authenticated routes, token replay, request IDs, validation errors, and static fallback.</li>
+  <li>Graceful server shutdown closes database and runtime artifacts.</li>
+</ul>
+<h3>End-to-end</h3>
+<ul>
+  <li>Launch with temporary XDG roots, exchange bootstrap token, land on a clean URL, and render the empty dashboard.</li>
+  <li>Unauthenticated and wrong-origin requests are denied.</li>
+  <li>Reload preserves the cookie session and does not expose token material in local/session storage or the URL.</li>
+</ul>
+
+<h2>Acceptance criteria</h2>
+<ul>
+  <li>☐ One development command runs web and server with working API proxying; one production command serves the built SPA from Fastify.</li>
+  <li>☐ The daemon binds only to loopback and authenticated browser access succeeds through a one-time bootstrap URL.</li>
+  <li>☐ SQLite initializes and migrates deterministically in XDG data storage.</li>
+  <li>☐ Shared contracts validate requests on the server and type responses in the web app.</li>
+  <li>☐ The empty two-pane Svelte dashboard is keyboard accessible and shows connection/error states.</li>
+  <li>☐ No token, cookie, terminal placeholder, or sensitive path appears in normal logs.</li>
+  <li>☐ Tests pass.</li>
+  <li>☐ Build, lint, and type checking pass.</li>
+  <li>☐ Documentation is updated.</li>
+</ul>
+
+<h2>Verification</h2>
+<pre><code>npm ci
+npm run db:migrate -- --data-dir "$(mktemp -d)"
+npm run build
+npm run lint
+npm run check
+npm test
+npm run test:e2e
+npm run dev
+</code></pre>
+<p class="note"><strong>Exit gate:</strong> later phases may depend only on documented contracts from <code>packages/contracts</code>, injected server services, and repository interfaces—not on route-internal or global mutable state.</p>
+</main></body></html>

@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phase 5: Workflow status tracking</title><style>:root{color-scheme:dark;--bg:#0b1020;--panel:#121a2d;--text:#e7edf8;--muted:#9cabbd;--accent:#70a5ff;--border:#2a3852}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}main{width:min(1040px,calc(100% - 28px));margin:auto;padding:32px 0 64px}h1,h2,h3{line-height:1.25}h2{margin-top:36px;border-bottom:1px solid var(--border);padding-bottom:7px}a{color:var(--accent)}code{background:#182238;padding:.1rem .35rem;border-radius:4px}pre{overflow:auto;background:#080d19;border:1px solid var(--border);border-radius:8px;padding:15px}pre code{background:none;padding:0}table{border-collapse:collapse;width:100%;display:block;overflow:auto}th,td{border:1px solid var(--border);padding:9px 11px;text-align:left;vertical-align:top}th{background:#182238}.note{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 17px}</style></head><body><main>
+<p><a href="phase-4-terminal-runtime.html">← Previous phase</a> · <a href="../PLAN.html">Master plan</a> · <a href="phase-6-hardening-recovery.html">Next phase →</a></p>
+<h1>Phase 5: Workflow status tracking</h1>
+
+<h2>Outcome</h2>
+<p>Every managed worktree displays a reliable workflow attention indicator: gray idle, animated blue working, pulsing amber blocked while a compatible ask-user extension actually awaits terminal UI, and green done after Pi fully settles. State comes from a bundled fail-open Pi extension over a private authenticated Unix socket, not from terminal-output parsing. Done remains visible until the user views/focuses or explicitly acknowledges that worktree.</p>
+
+<h2>Purpose</h2>
+<p>Multiple independent Pi terminals are useful only if users can see which agent needs attention without opening each one. Pi exposes exact lifecycle and tool events to extensions, allowing a minimal side channel to report state while preserving the interactive TUI. This phase defines deterministic transitions, ordering, persistence, acknowledgement, and degraded behavior.</p>
+
+<h2>Dependencies</h2>
+<ul>
+  <li>Phase 4 runtime UUID/secret allocation, bundled extension launch path, terminal focus/selection events, and authenticated browser connections.</li>
+  <li>Pi lifecycle events <code>session_start</code>, <code>session_shutdown</code>, <code>agent_start</code>, and <code>agent_settled</code>, plus Pi's shared extension event bus.</li>
+  <li>A compatible ask-user extension emits the documented <code>pi-dash:attention</code> start immediately before awaiting terminal UI and end in <code>finally</code>; tool preflight events are not treated as waiting.</li>
+  <li>Unix-domain sockets under the private XDG runtime directory.</li>
+  <li>Required technical decision: blocked detection is exact only for cooperating interactive extensions, initially the reference ask-user integration; silence, tool preflight, and prompt wording are never interpreted as blocked.</li>
+</ul>
+
+<h2>In scope</h2>
+<ul>
+  <li>Bundled Pi extension with lifecycle subscriptions, Unix socket client, framing, authentication fields, sequence numbers, reconnect, and idempotent cleanup.</li>
+  <li>Daemon StatusSocketServer, event validation, runtime authentication, stale-event rejection, and state reducer.</li>
+  <li>Workflow status persistence with revision, reason, timestamps, and acknowledgement.</li>
+  <li>Status updates delivered to the SPA through a dashboard events WebSocket or equivalent authenticated real-time channel.</li>
+  <li>Sidebar status icons, labels/tooltips, animations respecting reduced motion, workspace aggregate attention, and status detail text.</li>
+  <li>Done acknowledgement from selection, terminal focus/click, terminal input, or explicit action.</li>
+  <li>Exact ask-user wait start/end correlation by interaction ID, including answer, cancel, abort, and thrown errors.</li>
+  <li>A documented shared-event protocol and reference ask-user compatibility fixture/patch for extension authors.</li>
+  <li>Degraded status-channel health separate from runtime and workflow state.</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+  <li>Heuristic detection from quiet periods, ANSI output, prompt wording, or model text ending in a question.</li>
+  <li>Automatic support for every third-party blocking tool or arbitrary extension dialog.</li>
+  <li>Native desktop notifications, sounds, email, mobile push, or system tray.</li>
+  <li>Detailed task progress, percent complete, tool log, token/cost display, or semantic transcript.</li>
+  <li>Cross-daemon persistent active processes or remote event delivery.</li>
+  <li>Bundling or silently replacing a user's ask-user extension; incompatible versions remain working-state rather than being guessed blocked.</li>
+</ul>
+
+<h2>Requirements</h2>
+<ul>
+  <li><strong>REQ-05-01:</strong> The status extension shall begin connection work only from <code>session_start</code> or a relevant event, not from its factory, and close resources idempotently on <code>session_shutdown</code>.</li>
+  <li><strong>REQ-05-02:</strong> Status transport failure shall never block, delay materially, abort, or alter Pi, tool execution, ask-user UI, or session lifecycle.</li>
+  <li><strong>REQ-05-03:</strong> Side-channel frames shall contain only lifecycle metadata; prompt text, answers, message content, tool arguments/results, system prompts, and credentials are forbidden.</li>
+  <li><strong>REQ-05-04:</strong> The daemon shall authenticate each frame with the currently active runtime ID and per-runtime secret and reject events from exited/replaced runtimes.</li>
+  <li><strong>REQ-05-05:</strong> <code>agent_start</code> shall transition the current runtime's workflow state to <code>working</code>.</li>
+  <li><strong>REQ-05-06:</strong> A validated <code>pi-dash:attention</code> start emitted immediately before an extension awaits user UI shall add its interaction ID to the active blocking set and transition to <code>blocked</code>.</li>
+  <li><strong>REQ-05-07:</strong> The cooperating extension shall emit matching end in <code>finally</code>; it removes only its own ID. State remains blocked while any interaction is active and returns to working when the set is empty.</li>
+  <li><strong>REQ-05-08:</strong> <code>agent_settled</code> shall always transition to <code>done</code>, even when the worktree terminal is already selected.</li>
+  <li><strong>REQ-05-09:</strong> Selecting, focusing/clicking, typing in, or explicitly acknowledging a worktree after its current done revision shall transition it to <code>idle</code>.</li>
+  <li><strong>REQ-05-10:</strong> Acknowledgement shall include or compare the status revision so a late acknowledgement cannot clear a newer done event.</li>
+  <li><strong>REQ-05-11:</strong> Every extension load shall create an <code>extensionInstanceId</code> epoch. An authenticated <code>session_start</code> handshake atomically establishes the current epoch; sequence ordering is scoped to <code>(runtimeId, extensionInstanceId)</code>, and prior-epoch frames are rejected.</li>
+  <li><strong>REQ-05-12:</strong> Workflow state and runtime state shall remain separate; stopped/crashed is not encoded as blocked or done.</li>
+  <li><strong>REQ-05-13:</strong> On daemon restart, stale working/blocked states shall be reset to idle because no runtime survives; unacknowledged done may remain visible.</li>
+  <li><strong>REQ-05-14:</strong> Sidebar icons shall include text accessible to assistive technology and not rely on color or motion alone.</li>
+  <li><strong>REQ-05-15:</strong> The shared-event reason allowlist shall initially accept only <code>ask_user</code>; unsupported tools/dialogs do not become blocked heuristically.</li>
+  <li><strong>REQ-05-16:</strong> Application-event subscribers shall receive an atomic initial status/runtime snapshot with a server cursor before incremental events; reconnect by cursor shall replay or explicitly require a fresh snapshot so REST/WebSocket races cannot lose state.</li>
+</ul>
+
+<h2>Non-functional requirements</h2>
+<ul>
+  <li><strong>Security:</strong> Socket directory is mode 0700, socket access is user-scoped, secrets are random and never logged, frames are size-limited/validated, runtime authentication uses constant-time comparison where appropriate.</li>
+  <li><strong>Performance:</strong> Lifecycle reporting is non-blocking and low volume; status fan-out coalesces redundant updates; sidebar transitions render without rerendering terminal output.</li>
+  <li><strong>Accessibility:</strong> Every icon has a textual state, animation respects <code>prefers-reduced-motion</code>, focus acknowledgement is predictable, and workspace aggregate indicators have labels.</li>
+  <li><strong>Reliability:</strong> Duplicate/reordered events, extension reload, socket restart, daemon shutdown, Pi crash, ask-user cancellation, and missing ask-user extension have deterministic outcomes.</li>
+  <li><strong>Compatibility:</strong> Supports the documented Pi event API/version range on Linux. If unsupported, terminal remains usable and UI reports status integration unavailable.</li>
+</ul>
+
+<h2>Technical design</h2>
+<p>The Fastify daemon starts one <code>StatusSocketServer</code>. TerminalManager supplies each Pi runtime a UUID/secret. The packaged extension writes bounded LF-delimited JSON and tracks <code>agentActive</code> plus the complete active blocking-interaction set. After reconnect it sends one atomic snapshot at a sequence boundary before incrementals; it may drop superseded event frames only because the snapshot restores full state.</p>
+<p>Each extension load creates a random epoch and listens to <code>pi.events.on("pi-dash:attention", ...)</code>. A compatible ask-user emits start immediately before its <code>await ui...</code> and end in <code>finally</code>. Starts/ends update a set by interaction ID, so overlap is correct. Pi's <code>tool_execution_start</code> remains preflight and never directly marks blocked. Event handlers enqueue non-blocking writes; socket errors never reach the TUI.</p>
+<p>The daemon validates protocol, frame length, runtime/worktree pair, secret, extension epoch, sequence, timestamp sanity, and event-specific fields. An authenticated session-start frame atomically replaces the current extension epoch and clears prior-epoch transient correlations. A pure reducer produces a new status revision using daemon receipt time as authoritative <code>changedAt</code>; extension time is diagnostic only. Durable status is updated transactionally, then appended to a bounded server event stream. Runtime exit invokes a server-authoritative reducer event even if extension shutdown was not delivered.</p>
+<p>Done acknowledgement uses compare-and-set semantics: acknowledge revision N only if current state is done and current revision equals N (or is the exact revision sent to the client). Opening/focusing a terminal sends acknowledgement after the UI has actually selected/focused it. If it was already focused when done arrives, done remains until a subsequent click/focus/input or explicit acknowledgement, matching the chosen semantics.</p>
+
+<h2>Interfaces and contracts</h2>
+<pre><code>// LF-delimited extension frame; maximum size is small and fixed.
+interface StatusFrameBaseV1 {
+  v: 1; runtimeId: string; worktreeId: string; token: string;
+  extensionInstanceId: string; seq: number; timestamp: string;
+}
+type StatusExtensionFrameV1 =
+  | (StatusFrameBaseV1 & {
+      kind: "event";
+      event: "session_start" | "session_shutdown" | "agent_start" | "agent_settled"
+        | "blocking_wait_start" | "blocking_wait_end";
+      interactionId?: string; reason?: "ask_user";
+    })
+  | (StatusFrameBaseV1 & {
+      kind: "snapshot";
+      agentActive: boolean;
+      blockingInteractions: Array&lt;{ id: string; reason: "ask_user" }&gt;;
+    });
+</code></pre>
+<pre><code>interface WorkflowStatusDto {
+  worktreeId: string;
+  state: "idle" | "working" | "blocked" | "done";
+  reason: "agent" | "ask_user" | "settled" | "acknowledged" | "runtime_reset" | null;
+  revision: number;
+  changedAt: string;
+  acknowledgedAt: string | null;
+  integration: "connected" | "disconnected" | "unsupported";
+}
+
+POST /api/v1/worktrees/:id/status/acknowledge
+{ "revision": 17 }
+200 { "status": WorkflowStatusDto, "acknowledged": true }
+409 { "error": { "code": "STATUS_REVISION_CHANGED", ... } }
+
+// Application events WebSocket: client first sends subscribe with optional cursor.
+{ "v": 1, "type": "subscribe", "afterCursor": 410 }
+{ "v": 1, "type": "snapshot", "cursor": 412,
+  "statuses": [WorkflowStatusDto], "runtimes": [RuntimeDto], "workspaceAttention": [...] }
+{ "v": 1, "type": "status", "cursor": 413, "status": WorkflowStatusDto }
+{ "v": 1, "type": "runtime", "cursor": 414, "runtime": RuntimeDto }
+{ "v": 1, "type": "resyncRequired", "latestCursor": 900 }
+</code></pre>
+<table><thead><tr><th>Current</th><th>Event</th><th>Next</th><th>Guard</th></tr></thead><tbody>
+<tr><td>any</td><td>agent_start</td><td>working</td><td>active runtime, newer seq</td></tr>
+<tr><td>working/blocked</td><td>blocking_wait_start</td><td>blocked</td><td>add interaction ID to set</td></tr>
+<tr><td>blocked</td><td>matching blocking_wait_end</td><td>blocked/working</td><td>remove ID; working only when set empty</td></tr>
+<tr><td>any</td><td>extension snapshot</td><td>derived atomically</td><td>replace agentActive and full interaction set at seq boundary</td></tr>
+<tr><td>working/blocked</td><td>agent_settled</td><td>done</td><td>active epoch/seq; clear set</td></tr>
+<tr><td>done</td><td>acknowledge</td><td>idle</td><td>revision matches</td></tr>
+<tr><td>working/blocked</td><td>runtime exit/reset</td><td>idle</td><td>server-authoritative</td></tr>
+</tbody></table>
+<p>Stable errors include <code>STATUS_PROTOCOL_MISMATCH</code>, <code>STATUS_FRAME_TOO_LARGE</code>, <code>STATUS_RUNTIME_UNKNOWN</code>, <code>STATUS_AUTH_FAILED</code>, <code>STATUS_EVENT_INVALID</code>, and <code>STATUS_REVISION_CHANGED</code>. These are operational/debug errors; malicious or malformed socket clients receive no sensitive detail.</p>
+
+<h2>Work breakdown</h2>
+<ol>
+  <li>Define status frames, workflow DTOs, pure reducer, transition table, revision/acknowledgement semantics, and compatibility policy.</li>
+  <li>Implement packaged Pi extension lifecycle, shared attention-event listener, active-state snapshot, non-blocking Unix socket client, epoch/sequence, reconnect, and shutdown.</li>
+  <li>Publish the <code>pi-dash:attention</code> contract and reference ask-user integration that emits start before UI await and end in finally.</li>
+  <li>Implement daemon StatusSocketServer, private path/permissions, framing parser, runtime auth, validation, and lifecycle cleanup.</li>
+  <li>Implement WorkflowStatus repository/service, startup stale-state reset, runtime-exit integration, compare-and-set acknowledgement, and aggregate attention.</li>
+  <li>Implement authenticated app-events WebSocket and frontend reconnect/snapshot behavior.</li>
+  <li>Build accessible sidebar dots/spinners/pulses, text/tooltips, workspace aggregates, integration-health affordance, and acknowledgement triggers.</li>
+  <li>Test with fake status client, fake Pi, real Pi, ask-user answer/cancel/abort, extension reload, duplicate/reordered frames, and daemon restart.</li>
+  <li>Document states, exact blocked scope, protocol privacy, extension compatibility, and troubleshooting.</li>
+</ol>
+
+<h2>Files or components affected</h2>
+<h3>Create</h3>
+<ul>
+  <li><code>packages/pi-extension/src/index.ts</code>, shared attention protocol, transport, wire protocol, and tests</li>
+  <li><code>tests/fixtures/compatible-ask-user-extension.ts</code> and <code>docs/integrations/ask-user-status.md</code></li>
+  <li><code>packages/contracts/src/status.ts</code> and app-events protocol</li>
+  <li><code>apps/server/src/status/status-socket-server.ts</code>, frame parser, reducer, service, repository, routes, and tests</li>
+  <li><code>apps/server/src/events/application-events.ts</code></li>
+  <li><code>apps/web/src/lib/status/</code> store, indicators, aggregate display, acknowledgement, and tests</li>
+  <li><code>tests/e2e/status.spec.ts</code></li>
+  <li><code>docs/architecture/status-protocol.md</code></li>
+  <li><code>docs/operations/status-troubleshooting.md</code></li>
+</ul>
+<h3>Modify</h3>
+<ul>
+  <li><code>apps/server/src/terminal/terminal-manager.ts</code> to register runtime credentials and server-authoritative exit/reset events</li>
+  <li><code>apps/server/src/app.ts</code> startup/shutdown and event socket registration</li>
+  <li><code>apps/web/src/lib/worktrees/</code> list entries and terminal focus/input hooks</li>
+  <li><code>migrations/</code> for workflow status revision/reason/acknowledgement fields if not finalized</li>
+  <li><code>docs/operations/configuration.md</code> for status socket/debug configuration</li>
+</ul>
+
+<h2>Data and migrations</h2>
+<p>A migration finalizes <code>workflow_status</code> as one row per worktree with checked state, reason, monotonically increasing revision, changed timestamp, acknowledged timestamp, and optional non-secret integration diagnostics. A worktree creation inserts idle revision zero in the same transaction as its durable record. Worktree deletion cascades status deletion.</p>
+<p>On upgrade, missing rows are backfilled as idle. On daemon startup, working/blocked rows become idle with reason <code>runtime_reset</code> and a new revision because runtimes are not persistent. Done rows remain done so unread completion is not silently lost. Rollback treats unknown status values conservatively as idle after restoring the prior database backup.</p>
+
+<h2>Edge cases</h2>
+<ul>
+  <li>Ask-user extension not installed/active: no blocked event occurs; agent lifecycle still reports working/done.</li>
+  <li>Ask-user is answered, cancelled, aborted, or throws: its <code>finally</code> emits matching <code>blocking_wait_end</code>; agent_settled later marks done.</li>
+  <li>Pi/extension reload replaces extension instance: authenticated session-start installs a new epoch; its sequence restarts safely and all prior-epoch frames/correlations are rejected.</li>
+  <li>Status socket starts late/restarts while interactions overlap: extension reconnects and atomically snapshots <code>agentActive</code> plus the complete interaction set before new events.</li>
+  <li>Duplicate/out-of-order frames within an epoch are ignored; old-epoch frames are rejected; metrics/debug log the condition without changing state.</li>
+  <li>Two blocking calls overlap: ending one keeps blocked until the active blocking-call set is empty.</li>
+  <li>Old runtime emits after restart: runtime ID/secret mismatch rejects it.</li>
+  <li>User acknowledges revision 17 as revision 18 becomes done: compare-and-set returns conflict and preserves done.</li>
+  <li>Terminal is selected when settled: done remains until a later focus/click/input or explicit acknowledgement.</li>
+  <li>Pi crashes while blocked: runtime exit clears stale blocked to idle while runtime badge shows crashed.</li>
+  <li>Multiple worktrees update rapidly: per-worktree revisions and aggregate recalculation remain deterministic.</li>
+  <li>Reduced motion requested: working/blocked icons become static shapes with text while retaining color distinctions.</li>
+</ul>
+
+<h2>Testing</h2>
+<h3>Unit</h3>
+<ul>
+  <li>Complete reducer transition table, active blocking-call sets, epoch handshakes, per-epoch sequence/revision checks, acknowledgement compare-and-set, startup reset, and aggregates.</li>
+  <li>Event/snapshot schemas, atomic snapshot reducer, size/auth/privacy, LF chunk splitting, partial/multiple frames, reconnect during overlap, and dropped-event recovery.</li>
+  <li>Svelte status store ordering, icon labels, reduced motion, workspace aggregate, and acknowledgement triggers.</li>
+</ul>
+<h3>Integration</h3>
+<ul>
+  <li>Fake extension authenticates and drives idle → working → blocked → working → done → idle, overlapping blocking calls, and sequence restart under a new extension epoch.</li>
+  <li>Wrong token/runtime, stale seq, duplicate event, malformed frame, socket disconnect, and old runtime are rejected safely.</li>
+  <li>Fake Pi runtime exit and daemon restart reset active states but preserve done.</li>
+  <li>Real Pi with compatible ask-user validates that blocked begins only when UI wait opens and ends through answer, cancel, abort, and thrown-error cleanup.</li>
+</ul>
+<h3>End-to-end</h3>
+<ul>
+  <li>Two worktrees show independent animated working and blocked/done states while terminals switch.</li>
+  <li>Done remains after settlement and clears only on post-settlement view/focus/input/acknowledge.</li>
+  <li>Refresh/reconnect receives an atomic cursor snapshot, then ordered incremental updates or an explicit resync; status channel degradation leaves terminal functional.</li>
+  <li>Screen-reader-visible labels and reduced-motion mode are asserted.</li>
+</ul>
+
+<h2>Acceptance criteria</h2>
+<ul>
+  <li>☐ Sidebar reliably displays idle, working, ask-user blocked, and unacknowledged done states.</li>
+  <li>☐ With a compatible ask-user extension, blocked lasts exactly from immediately before awaiting its UI until matching <code>finally</code> cleanup; preflight-only/blocked tool calls never report blocked.</li>
+  <li>☐ Done always occurs on <code>agent_settled</code> and revision-safe acknowledgement changes it to idle.</li>
+  <li>☐ Status failures never alter or prevent Pi terminal interaction.</li>
+  <li>☐ Side-channel frames contain no conversation/tool payload content or credentials.</li>
+  <li>☐ Stale and old-runtime events cannot regress current state.</li>
+  <li>☐ Indicators are accessible without color or motion alone.</li>
+  <li>☐ Tests pass.</li>
+  <li>☐ Build, lint, and type checking pass.</li>
+  <li>☐ Documentation is updated.</li>
+</ul>
+
+<h2>Verification</h2>
+<pre><code>npm ci
+npm run build
+npm run lint
+npm run check
+npm run test -- --project status
+npm run test:integration -- --grep status
+npm run test:e2e -- --grep "status|blocked|done"
+PI_DASH_PI_EXECUTABLE=pi npm run dev
+</code></pre>
+<p class="note"><strong>Exit gate:</strong> all four workflow states must have event-based tests and an accessible visible representation before release hardening begins.</p>
+</main></body></html>

@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phase 3: Managed worktrees</title><style>:root{color-scheme:dark;--bg:#0b1020;--panel:#121a2d;--text:#e7edf8;--muted:#9cabbd;--accent:#70a5ff;--border:#2a3852}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}main{width:min(1040px,calc(100% - 28px));margin:auto;padding:32px 0 64px}h1,h2,h3{line-height:1.25}h2{margin-top:36px;border-bottom:1px solid var(--border);padding-bottom:7px}a{color:var(--accent)}code{background:#182238;padding:.1rem .35rem;border-radius:4px}pre{overflow:auto;background:#080d19;border:1px solid var(--border);border-radius:8px;padding:15px}pre code{background:none;padding:0}table{border-collapse:collapse;width:100%;display:block;overflow:auto}th,td{border:1px solid var(--border);padding:9px 11px;text-align:left;vertical-align:top}th{background:#182238}.note{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 17px}</style></head><body><main>
+<p><a href="phase-2-workspaces.html">← Previous phase</a> · <a href="../PLAN.html">Master plan</a> · <a href="phase-4-terminal-runtime.html">Next phase →</a></p>
+<h1>Phase 3: Managed worktrees</h1>
+
+<h2>Outcome</h2>
+<p>Users can create a named Git worktree beneath a registered workspace, using a new branch named <code>pi-dash/&lt;workspace&gt;/&lt;slug&gt;</code> from the workspace repository's current HEAD or another selected valid ref. Managed worktrees appear under their workspace, persist across restarts, and can be safely removed with dirty-tree protection and optional separate safe branch deletion. Interrupted and externally changed worktrees are detected and represented explicitly.</p>
+
+<h2>Purpose</h2>
+<p>Managed worktrees provide isolated filesystem and branch contexts for independent Pi agents. This phase implements the project's primary Git mutation boundary before PTYs are introduced, allowing worktree invariants, failure recovery, and destructive safeguards to be tested without process-lifecycle complexity.</p>
+
+<h2>Dependencies</h2>
+<ul>
+  <li>Phase 2 canonical healthy workspace records and Git inspection/process utilities.</li>
+  <li>Central application data directory with user-only permissions.</li>
+  <li>Git version supporting <code>git worktree add/remove/list --porcelain</code>.</li>
+  <li>Required technical decision: in-process and cross-process mutation locks are keyed by canonical Git common directory so related records or separate data roots cannot race.</li>
+  <li>Required technical decision: MVP worktree creation always creates a new branch; existing-branch and detached modes are deferred.</li>
+  <li>Required technical decision: branch deletion proves mergedness, then uses atomic expected-OID <code>git update-ref -d</code>; force branch deletion is not included.</li>
+</ul>
+
+<h2>In scope</h2>
+<ul>
+  <li>Central managed path allocation using stable workspace/worktree IDs and a readable slug suffix.</li>
+  <li>Current HEAD/base-ref discovery and bounded branch/ref listing for creation UI.</li>
+  <li>New branch and worktree creation with lifecycle records and compensation after failure.</li>
+  <li>Per-common-dir mutation locking within the daemon.</li>
+  <li>Managed worktree listing, branch/base metadata, filesystem/Git health, and sidebar entries.</li>
+  <li>Dirty state check including untracked files.</li>
+  <li>Clean-only worktree removal and a separately confirmed post-removal safe branch-deletion operation.</li>
+  <li>Startup/manual reconciliation against <code>git worktree list --porcelain</code>.</li>
+  <li>Repair/retry messaging for interrupted <code>creating</code>, <code>removing</code>, and <code>error</code> records.</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+  <li>Pi process or PTY startup, terminal controls, and status tracking.</li>
+  <li>Import/adoption of worktrees not created by the dashboard.</li>
+  <li>Existing branch checkout, detached worktrees, sparse checkout, submodule initialization policy, or worktree locking.</li>
+  <li>Fetch, remote branch discovery, clone, merge, rebase, push, pull request, or branch force deletion.</li>
+  <li>Automatically deleting dirty files, stashing changes, or resolving Git locks.</li>
+  <li>Moving a managed worktree to another location.</li>
+</ul>
+
+<h2>Requirements</h2>
+<ul>
+  <li><strong>REQ-03-01:</strong> The creation form shall snapshot the workspace's current <code>HEAD</code> (or selected ref) to an exact object ID and receive a short-lived signed token binding workspace ID, ref, commit, and expiry. Creation shall require the token plus matching <code>baseRef</code>/<code>baseCommit</code> and use that exact commit even if the ref moves.</li>
+  <li><strong>REQ-03-02:</strong> The default branch shall be <code>pi-dash/&lt;workspace-slug&gt;/&lt;worktree-slug&gt;</code> and shall pass <code>git check-ref-format --branch</code>.</li>
+  <li><strong>REQ-03-03:</strong> The target path shall be allocated beneath <code>&lt;data&gt;/worktrees/&lt;workspace-id&gt;</code>, contain the worktree ID, and be rejected if canonical containment cannot be established.</li>
+  <li><strong>REQ-03-04:</strong> Creation shall execute <code>git worktree add -b &lt;branch&gt; &lt;path&gt; &lt;base&gt;</code> with argument arrays, explicit repository <code>cwd</code>, timeout, and bounded output.</li>
+  <li><strong>REQ-03-05:</strong> Mutating operations sharing a Git common directory shall be serialized through both daemon-local and OS-visible cross-process locks and return a busy/conflict response rather than overlap.</li>
+  <li><strong>REQ-03-06:</strong> A durable <code>creating</code> record shall exist before Git mutation and transition to <code>ready</code> only after postcondition verification.</li>
+  <li><strong>REQ-03-07:</strong> Failed creation shall not silently delete an ambiguous external path; compensation is allowed only for the exact app-allocated path and branch known to have been created by the failed operation.</li>
+  <li><strong>REQ-03-08:</strong> Normal removal shall reject any tracked or untracked change with <code>WORKTREE_DIRTY</code> and a non-sensitive summary.</li>
+  <li><strong>REQ-03-09:</strong> The dashboard shall expose no forced dirty-worktree removal path; the user must clean, commit, or stash changes outside the removal operation.</li>
+  <li><strong>REQ-03-10:</strong> Branch deletion shall be a separate post-removal endpoint and confirmation. Under the common-dir lock it shall verify no worktree uses the branch, prove the recorded tip is merged into the explicit safety target, and atomically execute <code>git update-ref -d &lt;ref&gt; &lt;expected-tip&gt;</code>; moved/unmerged refusal shall not undo removal.</li>
+  <li><strong>REQ-03-11:</strong> Removing a workspace with any managed worktree record shall remain forbidden.</li>
+  <li><strong>REQ-03-12:</strong> Reconciliation shall never adopt or delete an unrecorded worktree automatically.</li>
+  <li><strong>REQ-03-13:</strong> Worktree names and branch components shall reject control characters, path separators where inappropriate, empty slugs, reserved Git forms, and collisions.</li>
+  <li><strong>REQ-03-14:</strong> Every create/remove/delete-branch mutation shall require a client operation ID (idempotency key); retries with the same request hash shall return the durable prior/in-progress result, while reuse with different input shall be rejected.</li>
+  <li><strong>REQ-03-15:</strong> Removal shall check dirtiness before stopping Pi, then under the shared worktree lifecycle coordinator atomically compare-and-set <code>ready → removing</code> before stop. New terminal starts are rejected from that point; dirtiness is rechecked immediately before normal removal.</li>
+  <li><strong>REQ-03-16:</strong> If post-stop recheck becomes dirty or a failed command proves the exact worktree is intact, lifecycle returns to <code>ready</code> with a warning. Ambiguous partial Git/filesystem state transitions to <code>error</code>; successful removal transitions to <code>removed</code>.</li>
+</ul>
+
+<h2>Non-functional requirements</h2>
+<ul>
+  <li><strong>Security:</strong> All destinations remain under the app-owned root; no user-supplied command strings; symlink/path-swap checks occur before and after mutation; browser errors redact unnecessary command output.</li>
+  <li><strong>Performance:</strong> Worktree listing is database-first with bounded health refresh. Ref listing is capped and filterable. Git mutations run asynchronously without blocking the Node event loop.</li>
+  <li><strong>Accessibility:</strong> Creation/removal confirmations expose branch, base, path, dirty warning, and consequences in text; progress is announced; destructive actions require unambiguous labels and focus restoration.</li>
+  <li><strong>Reliability:</strong> Lifecycle markers, per-common-dir locks, postcondition verification, idempotent reconciliation, and conservative compensation protect against crashes and external Git changes.</li>
+  <li><strong>Compatibility:</strong> Linux filesystem and Git CLI; paths with spaces/Unicode supported; case sensitivity follows the underlying filesystem and Git ref rules.</li>
+</ul>
+
+<h2>Technical design</h2>
+<p><code>WorktreeService</code> owns invariants and calls an injected <code>GitWorktreeManager</code>. When the form opens, the server resolves the ref to <code>baseCommit</code> and signs a short-lived snapshot token binding workspace/ref/commit. Creation verifies that token without re-resolving moved <code>HEAD</code>. The service acquires a daemon mutex plus advisory OS lock under the canonical per-UID Linux namespace <code>/run/user/&lt;uid&gt;/pi-dash-git-locks</code> (secure <code>/tmp/pi-dash-&lt;uid&gt;</code> fallback), independent of configurable XDG/data roots. A DB transaction inserts lifecycle/idempotency records; external Git runs outside long DB transactions.</p>
+<p>Because filesystem/Git mutation cannot share SQLite atomicity, the lifecycle is a saga with conservative compensation. The record stores operation metadata such as expected branch, target path, and base commit. After a failed add, the service re-inspects <code>git worktree list --porcelain</code>, target existence, and branch existence before deciding whether a safe cleanup is possible. Ambiguous cases remain <code>error</code> for user repair.</p>
+<p>Removal first checks dirtiness while leaving any active terminal untouched. If clean, a shared lifecycle coordinator acquires the worktree mutex and atomically changes <code>ready</code> to <code>removing</code>; TerminalManager start uses that same coordinator and can no longer launch. Removal stops Pi, reacquires Git locks, and rechecks. New dirt restores <code>ready</code>; exact intact command failure restores <code>ready</code> with warning; ambiguity becomes <code>error</code>; success becomes <code>removed</code>. The tombstone stores branch/final tip/safety target for atomic ref deletion. Unknown worktrees are never adopted.</p>
+
+<h2>Interfaces and contracts</h2>
+<pre><code>GET /api/v1/workspaces/:id/refs?query=&amp;limit=50
+200 {
+  "head": { "ref": "refs/heads/main", "commit": "..." },
+  "refs": [{ "name": "main", "fullName": "refs/heads/main", "commit": "...", "kind": "local" }]
+}
+
+POST /api/v1/workspaces/:id/worktrees
+Idempotency-Key: &lt;client UUID&gt;
+{
+  "name": "OAuth refresh",
+  "slug": "oauth-refresh",
+  "baseRef": "HEAD",
+  "baseCommit": "&lt;exact object id shown in the form&gt;",
+  "baseSnapshotToken": "&lt;short-lived signed binding&gt;"
+}
+201 { "operationId": "...", "worktree": WorktreeDto }
+
+GET /api/v1/workspaces/:id/worktrees
+200 { "worktrees": WorktreeDto[] }
+
+POST /api/v1/worktrees/:id/remove
+Idempotency-Key: &lt;client UUID&gt;
+{}
+200 { "removed": true, "tombstone": { "branchRef": "refs/heads/...", "branchTip": "..." } }
+
+POST /api/v1/worktrees/:id/delete-branch
+Idempotency-Key: &lt;new client UUID&gt;
+{ "expectedBranchTip": "...", "safetyTargetCommit": "..." }
+200 { "deleted": true, "atomic": true }
+409 { "error": { "code": "BRANCH_CHANGED" | "BRANCH_NOT_MERGED", ... } }
+</code></pre>
+<pre><code>interface WorktreeDto {
+  id: string;
+  workspaceId: string;
+  name: string;
+  slug: string;
+  path: string;
+  branchRef: string;
+  baseRef: string;
+  baseCommit: string;
+  lifecycle: "creating" | "ready" | "removing" | "removed" | "error";
+  finalBranchTip: string | null;
+  health: "healthy" | "missing" | "git_mismatch" | "locked" | "unknown";
+  dirty: boolean | null;
+  lastError?: { code: string; message: string };
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface GitMutationLock {
+  runExclusive&lt;T&gt;(gitCommonDir: string, operation: () =&gt; Promise&lt;T&gt;): Promise&lt;T&gt;;
+}
+</code></pre>
+<p>Stable errors include <code>WORKSPACE_UNHEALTHY</code>, <code>BASE_REF_INVALID</code>, <code>BRANCH_INVALID</code>, <code>BRANCH_EXISTS</code>, <code>PATH_EXISTS</code>, <code>GIT_OPERATION_BUSY</code>, <code>WORKTREE_CREATE_FAILED</code>, <code>WORKTREE_DIRTY</code>, <code>WORKTREE_NOT_MANAGED</code>, <code>WORKTREE_MISSING</code>, <code>WORKTREE_REMOVE_FAILED</code>, and <code>BRANCH_NOT_MERGED</code>.</p>
+
+<h2>Work breakdown</h2>
+<ol>
+  <li>Implement worktree naming/ref/path validators, stable path allocator, and daemon-local plus cross-process common-dir mutation locks.</li>
+  <li>Implement GitWorktreeManager commands for signed ref snapshots, add, list/status parsing, remove, mergedness checks, atomic expected-OID ref deletion, and postcondition inspection.</li>
+  <li>Implement Worktree repository/service lifecycle saga, shared lifecycle coordinator/CAS, idempotent operations, safe rollback/error classification, reconciliation, tombstones, and future terminal-stop hook.</li>
+  <li>Add REST contracts, routes, structured errors, and operation progress representation.</li>
+  <li>Build Svelte create form with exact base commit, derived branch/path preview, sidebar entries, health/error repair affordances, clean-only removal, and separate branch-deletion flow.</li>
+  <li>Create temporary repository fixtures covering commits, branches, linked worktrees, dirty states, Unicode paths, and external changes.</li>
+  <li>Add unit, integration, E2E, crash/reconciliation tests, and Git version capability checks.</li>
+  <li>Document lifecycle, managed path layout, deletion guarantees, recovery, and manual Git inspection commands.</li>
+</ol>
+
+<h2>Files or components affected</h2>
+<h3>Create</h3>
+<ul>
+  <li><code>apps/server/src/git/git-worktree-manager.ts</code> and porcelain parsers</li>
+  <li><code>apps/server/src/worktrees/worktree-service.ts</code>, repository, locks, reconciler, routes, and tests</li>
+  <li><code>apps/web/src/lib/worktrees/</code> forms, list entries, removal dialogs, stores, and tests</li>
+  <li><code>packages/contracts/src/worktrees.ts</code></li>
+  <li><code>tests/e2e/worktrees.spec.ts</code></li>
+  <li><code>docs/architecture/worktree-lifecycle.md</code></li>
+  <li><code>docs/operations/worktree-recovery.md</code></li>
+</ul>
+<h3>Modify</h3>
+<ul>
+  <li><code>apps/server/src/workspaces/workspace-service.ts</code> to enforce dependent-worktree removal checks</li>
+  <li><code>apps/server/src/app.ts</code> and startup sequence for reconciliation</li>
+  <li><code>apps/web/src/lib/workspaces/</code> to render nested worktree entries</li>
+  <li><code>migrations/</code> for final worktree lifecycle fields/indexes if not present</li>
+  <li><code>docs/operations/configuration.md</code> for managed worktree root</li>
+</ul>
+
+<h2>Data and migrations</h2>
+<p>This phase owns migrations for the worktree table, durable mutation-operation table, and removal tombstone fields: UUID, workspace foreign key, name/slug, canonical managed path, branch/base refs, exact base commit, final branch tip, lifecycle, safe operation metadata, sanitized last-error code/message, request hash/result, and timestamps. Unique constraints cover managed path, workspace/name or slug policy, branch identity where representable, and idempotency key. SQLite checks restrict lifecycle/operation values.</p>
+<p>Startup backfill is unnecessary in a new product; tests include pre-migration fixtures. Rollback restores the database only and cannot undo Git worktrees already created, so downgrade documentation requires reconciling/removing managed worktrees with the newer version before restoring a backup.</p>
+
+<h2>Edge cases</h2>
+<ul>
+  <li>Workspace HEAD changes while form is open: server validates the unexpired signed workspace/ref/commit snapshot and uses its token-bound commit without requiring the ref still point there.</li>
+  <li>Unborn HEAD: default creation is disabled until a valid base commit is selected/created externally.</li>
+  <li>Branch/path appears after validation but before add: Git failure is reconciled and returned as collision or create failure.</li>
+  <li>Two workspace records share common Git metadata: common-dir lock serializes mutations.</li>
+  <li>Process crashes after Git add but before DB ready update: startup reconciliation verifies branch/path/common-dir and promotes the record if exact.</li>
+  <li>Directory exists but is not the recorded worktree: never force-delete it.</li>
+  <li>Dirty worktree contains only untracked files: normal removal is still blocked.</li>
+  <li>Dirty worktree remains dirty: removal continues to refuse; the user cleans, commits, or stashes outside the dashboard and retries with a new operation ID.</li>
+  <li>Branch was renamed/deleted externally: health shows mismatch; removal avoids deleting an unverified branch.</li>
+  <li>Safe branch deletion refuses unmerged branch: worktree stays removed and warning offers manual follow-up.</li>
+  <li>Submodules exist: Git may create directory entries, but automatic submodule init/update is deferred and not implied.</li>
+</ul>
+
+<h2>Testing</h2>
+<h3>Unit</h3>
+<ul>
+  <li>Name/slug/ref validation, branch derivation, containment, collision, and path allocation.</li>
+  <li>Porcelain parsers for worktree list/status, including spaces, detached entries, pruning markers, and malformed output.</li>
+  <li>Lifecycle reducer/saga decisions and conservative compensation matrix.</li>
+  <li>Removal UX state and branch-warning presentation.</li>
+</ul>
+<h3>Integration</h3>
+<ul>
+  <li>Create from HEAD and named base in temporary repositories; verify exact branch, path, common dir, and database record.</li>
+  <li>Concurrent creation under shared common dir serializes; duplicate branch/path returns stable errors.</li>
+  <li>Concurrent terminal-start/removal simulation proves <code>ready → removing</code> CAS prevents any new runtime after removal eligibility is claimed and verifies ready/error/removed rollback outcomes.</li>
+  <li>Removal rejects tracked/untracked dirt before stopping Pi and rechecks after stop; separate branch deletion tests worktree use/mergedness and atomically compare-deletes the expected tip.</li>
+  <li>Fault injection before/after Git mutation validates startup reconciliation and ambiguous-error preservation.</li>
+  <li>External move/remove/branch change updates health without destructive auto-repair.</li>
+</ul>
+<h3>End-to-end</h3>
+<ul>
+  <li>Create a worktree from a registered fixture, observe nested sidebar entry, restart daemon, and observe persistence.</li>
+  <li>Dirty the worktree, verify warning/refusal without stopping its terminal hook, clean it, remove it, then separately delete the unchanged branch.</li>
+  <li>Simulate branch-not-merged refusal and verify successful worktree removal plus actionable warning.</li>
+</ul>
+
+<h2>Acceptance criteria</h2>
+<ul>
+  <li>☐ A user can create a new managed branch/worktree from current HEAD or a selected valid base.</li>
+  <li>☐ Path, branch, and database postconditions are verified before ready state.</li>
+  <li>☐ Related Git mutations are serialized and recover from injected interruption without unsafe cleanup.</li>
+  <li>☐ Dirty tracked or untracked changes block normal removal.</li>
+  <li>☐ No forced dirty removal is exposed; post-removal branch deletion is a separate mergedness-checked atomic expected-OID operation.</li>
+  <li>☐ Unknown/external worktrees are never adopted or deleted automatically.</li>
+  <li>☐ Tests pass.</li>
+  <li>☐ Build, lint, and type checking pass.</li>
+  <li>☐ Documentation is updated.</li>
+</ul>
+
+<h2>Verification</h2>
+<pre><code>npm ci
+npm run build
+npm run lint
+npm run check
+npm run test -- --project worktrees
+npm run test:integration -- --grep worktree
+npm run test:e2e -- --grep "worktree"
+npm run db:migrate -- --data-dir "$(mktemp -d)"
+</code></pre>
+<p class="note"><strong>Exit gate:</strong> Phase 4 may launch processes only for <code>ready</code>, healthy, dashboard-managed worktrees and must call the removal stop hook before any Git removal.</p>
+</main></body></html>

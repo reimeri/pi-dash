@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phase 2: Workspace registration</title><style>:root{color-scheme:dark;--bg:#0b1020;--panel:#121a2d;--text:#e7edf8;--muted:#9cabbd;--accent:#70a5ff;--border:#2a3852}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}main{width:min(1040px,calc(100% - 28px));margin:auto;padding:32px 0 64px}h1,h2,h3{line-height:1.25}h2{margin-top:36px;border-bottom:1px solid var(--border);padding-bottom:7px}a{color:var(--accent)}code{background:#182238;padding:.1rem .35rem;border-radius:4px}pre{overflow:auto;background:#080d19;border:1px solid var(--border);border-radius:8px;padding:15px}pre code{background:none;padding:0}table{border-collapse:collapse;width:100%;display:block;overflow:auto}th,td{border:1px solid var(--border);padding:9px 11px;text-align:left;vertical-align:top}th{background:#182238}.note{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 17px}</style></head><body><main>
+<p><a href="phase-1-foundation.html">← Previous phase</a> · <a href="../PLAN.html">Master plan</a> · <a href="phase-3-worktrees.html">Next phase →</a></p>
+<h1>Phase 2: Workspace registration</h1>
+
+<h2>Outcome</h2>
+<p>A user can click “Add workspace,” choose a directory through a native Linux dialog, register a valid Git repository, and see it immediately in the persistent sidebar. Workspaces survive restarts, can be renamed, expose repository health, and can be removed when they have no managed worktrees. Duplicate aliases, invalid repositories, missing paths, dialog cancellation, and unavailable desktop pickers have clear behavior.</p>
+
+<h2>Purpose</h2>
+<p>Workspaces are the durable roots under which managed worktrees and Pi terminals are organized. This phase establishes safe local directory selection and canonical Git identity before any mutation is allowed. It also delivers the first complete user-facing workflow and validates the SPA/API/database architecture with real filesystem boundaries.</p>
+
+<h2>Dependencies</h2>
+<ul>
+  <li>Phase 1 application shell, authentication, contracts, database, repositories, and test harness.</li>
+  <li>Git CLI available to the daemon user.</li>
+  <li>Linux graphical session with <code>zenity</code> preferred and <code>kdialog</code> fallback; test adapters do not require a real display.</li>
+  <li>Required technical decision: repository identity is canonical top-level path plus canonical Git common directory.</li>
+  <li>Required technical decision: one native chooser request may be active at a time.</li>
+</ul>
+
+<h2>In scope</h2>
+<ul>
+  <li>Native Linux directory-dialog adapter, capability probe, cancellation, timeout/abort, and busy handling.</li>
+  <li>Git executable probe and read-only repository inspection service.</li>
+  <li>Canonicalization with <code>realpath</code>, <code>git rev-parse --show-toplevel</code>, <code>--git-common-dir</code>, current branch, and current HEAD.</li>
+  <li>Workspace create, list, detail/health, rename, and empty-workspace removal APIs.</li>
+  <li>Workspace sidebar groups, add/rename/remove dialogs, empty states, loading/error states, and keyboard behavior.</li>
+  <li>Startup/background health refresh for missing or changed repository paths.</li>
+  <li>Typed-path recovery UI only when no native chooser is available; native dialog remains the default.</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+  <li>Creating, importing, listing, or deleting Git worktrees.</li>
+  <li>Branch mutation, fetch, clone, commit, merge, rebase, or remote operations.</li>
+  <li>Moving a registered repository or automatically rewriting its stored path.</li>
+  <li>Watching every repository continuously for filesystem changes.</li>
+  <li>Windows/macOS directory dialogs or headless remote operation.</li>
+  <li>PTY or Pi process startup.</li>
+</ul>
+
+<h2>Requirements</h2>
+<ul>
+  <li><strong>REQ-02-01:</strong> The Add Workspace action shall request a native directory dialog from the authenticated daemon.</li>
+  <li><strong>REQ-02-02:</strong> The dialog adapter shall prefer zenity, fall back to kdialog, distinguish cancellation from failure, and never invoke a shell.</li>
+  <li><strong>REQ-02-03:</strong> The server shall allow at most one active dialog and return <code>DIALOG_BUSY</code> for concurrent requests.</li>
+  <li><strong>REQ-02-04:</strong> Registration shall resolve the selected path and Git top-level/common-dir paths canonically before persistence.</li>
+  <li><strong>REQ-02-05:</strong> A non-Git directory, inaccessible directory, bare repository without a usable worktree, or invalid Git response shall be rejected with a stable actionable error.</li>
+  <li><strong>REQ-02-06:</strong> Registering an already stored canonical repository shall return <code>WORKSPACE_EXISTS</code> and identify the existing workspace.</li>
+  <li><strong>REQ-02-07:</strong> Workspace display names shall default from the repository directory, remain user-editable, and produce a stable sanitized slug used for future branch defaults.</li>
+  <li><strong>REQ-02-08:</strong> The sidebar shall list workspaces in deterministic user-friendly order and preserve expansion state locally.</li>
+  <li><strong>REQ-02-09:</strong> Workspace removal shall be blocked if related worktree rows exist and otherwise remove metadata only, never repository files.</li>
+  <li><strong>REQ-02-10:</strong> Missing/inaccessible repositories shall remain visible as degraded records with repair/remove actions rather than disappearing.</li>
+  <li><strong>REQ-02-11:</strong> Repository inspection commands shall use bounded output, timeouts, argument arrays, and explicit <code>cwd</code>.</li>
+  <li><strong>REQ-02-12:</strong> Native dialog child processes shall be cancellable when the request or daemon closes.</li>
+</ul>
+
+<h2>Non-functional requirements</h2>
+<ul>
+  <li><strong>Security:</strong> Dialog results are untrusted; canonicalize and validate them. Run zenity/kdialog and Git with <code>shell: false</code>. Do not expose a generic directory-listing or arbitrary executable endpoint.</li>
+  <li><strong>Performance:</strong> Listing workspaces reads the database without synchronously running Git for every request. Health probes are cached/bounded and update asynchronously.</li>
+  <li><strong>Accessibility:</strong> Add, rename, retry, and remove dialogs are keyboard operable, focus is trapped/restored, errors are associated with fields, and workspace groups use semantic buttons with expanded state.</li>
+  <li><strong>Reliability:</strong> Dialog cancellation leaves no row; duplicate requests are idempotent at the canonical-path constraint; missing paths do not crash list rendering.</li>
+  <li><strong>Compatibility:</strong> Required on common Linux X11/Wayland sessions through zenity; kdialog supports KDE fallback. Capability failure has a documented typed-path recovery.</li>
+</ul>
+
+<h2>Technical design</h2>
+<p><code>NativeDirectoryDialog</code> is an injected interface with adapters for zenity and kdialog. At startup, the capability service resolves executables without shell lookup ambiguity and records display/session availability. The route invokes a single-flight dialog coordinator. Zenity receives <code>--file-selection --directory</code>; kdialog receives <code>--getexistingdirectory</code>. Exit code zero with trimmed stdout is a selection, the documented cancel code is cancellation, and all other outcomes become a sanitized unavailable/failure result.</p>
+<p><code>GitInspector</code> executes read-only commands with a fixed environment, timeout, output bound, and <code>--</code> where applicable. It resolves the selected path, asks Git for the top level, verifies that the top level is a directory worktree, resolves the common Git directory relative to the top level when Git returns a relative path, and captures current branch/HEAD for display only. Database uniqueness on canonical repository path prevents aliases; common-dir information allows later locks to coordinate repositories/worktrees sharing Git metadata.</p>
+<p>The frontend uses a workspace store backed by REST query invalidation. Creation is a two-step interaction: native selection, then a confirmation form with resolved path and editable display name. No database row is created before confirmation. The sidebar shows degraded health without removing user context.</p>
+
+<h2>Interfaces and contracts</h2>
+<pre><code>POST /api/v1/dialogs/workspace-directory
+200 { "cancelled": false, "path": "/home/user/src/project", "adapter": "zenity" }
+200 { "cancelled": true, "path": null, "adapter": "zenity" }
+409 { "error": { "code": "DIALOG_BUSY", ... } }
+503 { "error": { "code": "DIALOG_UNAVAILABLE", ... } }
+
+POST /api/v1/workspaces
+{ "path": "/home/user/src/project", "name": "Project" }
+201 { "workspace": WorkspaceDto }
+
+GET /api/v1/workspaces
+200 { "workspaces": WorkspaceSummaryDto[] }
+
+PATCH /api/v1/workspaces/:id
+{ "name": "Renamed project" }
+200 { "workspace": WorkspaceDto }
+
+DELETE /api/v1/workspaces/:id
+204
+</code></pre>
+<pre><code>interface WorkspaceDto {
+  id: string;
+  name: string;
+  slug: string;
+  repositoryPath: string;
+  repository: {
+    health: "healthy" | "missing" | "inaccessible" | "not_git" | "changed";
+    currentBranch: string | null;
+    headCommit: string | null;
+    checkedAt: string | null;
+  };
+  worktreeCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface NativeDirectoryDialog {
+  probe(): Promise&lt;{ available: boolean; adapter?: "zenity" | "kdialog"; reason?: string }&gt;;
+  chooseDirectory(options: { signal: AbortSignal }): Promise&lt;{ cancelled: boolean; path?: string }&gt;;
+}
+</code></pre>
+<p>Stable workspace errors include <code>DIALOG_BUSY</code>, <code>DIALOG_UNAVAILABLE</code>, <code>PATH_NOT_FOUND</code>, <code>PATH_INACCESSIBLE</code>, <code>NOT_A_GIT_WORKTREE</code>, <code>WORKSPACE_EXISTS</code>, <code>WORKSPACE_HAS_WORKTREES</code>, <code>GIT_UNAVAILABLE</code>, and <code>GIT_TIMEOUT</code>.</p>
+
+<h2>Work breakdown</h2>
+<ol>
+  <li>Implement executable probing, dialog adapter interface, zenity/kdialog adapters, single-flight coordination, cancellation, and capability reporting.</li>
+  <li>Implement safe process runner and GitInspector canonical repository inspection.</li>
+  <li>Implement workspace repository methods, service invariants, routes, shared contracts, errors, and health refresh.</li>
+  <li>Build Svelte Add Workspace flow, native-dialog progress/cancel states, confirmation form, sidebar workspace groups, rename/remove interactions, and degraded health UI.</li>
+  <li>Add temporary Git repository fixtures and fake native dialog adapters.</li>
+  <li>Test duplicate paths/symlinks, missing repositories, cancellation, busy dialog, invalid Git output, and database constraints.</li>
+  <li>Document native dialog prerequisites, fallback behavior, workspace semantics, and troubleshooting.</li>
+</ol>
+
+<h2>Files or components affected</h2>
+<h3>Create</h3>
+<ul>
+  <li><code>apps/server/src/platform/native-directory-dialog.ts</code> and Linux adapters</li>
+  <li><code>apps/server/src/process/safe-process.ts</code></li>
+  <li><code>apps/server/src/git/git-inspector.ts</code></li>
+  <li><code>apps/server/src/workspaces/workspace-service.ts</code>, repository, routes, and tests</li>
+  <li><code>apps/web/src/lib/workspaces/</code> components, store, dialogs, and tests</li>
+  <li><code>tests/fixtures/git-repository.ts</code></li>
+  <li><code>tests/e2e/workspaces.spec.ts</code></li>
+  <li><code>docs/operations/native-directory-dialog.md</code></li>
+</ul>
+<h3>Modify</h3>
+<ul>
+  <li><code>packages/contracts/src/workspaces.ts</code> and shared error codes</li>
+  <li><code>apps/server/src/app.ts</code> for capability and workspace plugins</li>
+  <li><code>apps/web/src/App.svelte</code> or layout components for populated sidebar behavior</li>
+  <li><code>docs/operations/configuration.md</code> for dialog override/probe settings</li>
+</ul>
+
+<h2>Data and migrations</h2>
+<p>This phase owns migration 0002, which creates the workspace table with canonical <code>repository_path</code>, <code>git_common_dir</code>, display <code>name</code>, stable <code>slug</code>, timestamps, and unique indexes. Health is derived/cached rather than treated as authoritative repository state; optional last-check metadata may be stored if needed for startup UX.</p>
+<p>No repository files are migrated or modified. Removing a workspace deletes metadata only. Rollback restores the pre-migration database backup; canonical paths cannot be safely downgraded into guessed aliases.</p>
+
+<h2>Edge cases</h2>
+<ul>
+  <li>User selects a subdirectory: Git top level is shown and registered, not the subdirectory.</li>
+  <li>User selects an existing linked worktree: it can be a workspace root; common-dir identity is retained for future locking.</li>
+  <li>Path contains spaces, newlines, Unicode, or leading hyphens: argument-array execution and validation preserve valid paths without shell interpretation; display sanitizes control characters.</li>
+  <li>Symlink points to an already registered repository: canonical uniqueness reports the existing workspace.</li>
+  <li>Repository is moved after registration: sidebar marks it missing and offers metadata removal; automatic search is deferred.</li>
+  <li>HEAD is detached or repository is unborn: registration may succeed if it is a usable worktree, but health displays that state and Phase 3 creation may require a valid base commit.</li>
+  <li>Native dialog opens behind the browser: UI shows that a system dialog is active and provides cancellation guidance.</li>
+  <li>Wayland/X11 environment missing: native capability is unavailable and typed-path recovery is presented.</li>
+  <li>Workspace has future managed worktrees: delete returns <code>WORKSPACE_HAS_WORKTREES</code>.</li>
+</ul>
+
+<h2>Testing</h2>
+<h3>Unit</h3>
+<ul>
+  <li>Dialog exit-code mapping, output trimming, single-flight behavior, adapter selection, timeout, and cancellation.</li>
+  <li>Workspace name/slug normalization, canonical path handling, duplicate detection, and error mapping.</li>
+  <li>Git output parsing for normal, detached, unborn, linked-worktree, malformed, timeout, and inaccessible states.</li>
+  <li>Svelte store updates, dialog focus restoration, field errors, and degraded workspace rendering.</li>
+</ul>
+<h3>Integration</h3>
+<ul>
+  <li>Temporary repositories and symlink aliases register exactly once.</li>
+  <li>Fastify routes enforce authentication, schemas, uniqueness, rename, remove, and request abort cancellation.</li>
+  <li>Deleting/moving a registered fixture produces degraded health without deleting its row.</li>
+  <li>Fake zenity/kdialog executables verify exact argument arrays and no shell usage.</li>
+</ul>
+<h3>End-to-end</h3>
+<ul>
+  <li>Stub native dialog selects a temporary repository; user confirms; workspace appears and survives reload/restart.</li>
+  <li>Cancel creates nothing; invalid selection renders an actionable error; duplicate selection focuses the existing workspace.</li>
+  <li>Rename and remove-empty-workspace workflows are keyboard operable and update the sidebar.</li>
+</ul>
+
+<h2>Acceptance criteria</h2>
+<ul>
+  <li>☐ A native Linux directory dialog can select and register a valid Git repository.</li>
+  <li>☐ Canonical path and Git identity prevent duplicate aliases.</li>
+  <li>☐ Workspace list, rename, health, and empty removal persist correctly.</li>
+  <li>☐ Cancellation, picker unavailability, invalid Git paths, and missing repositories have explicit non-destructive UX.</li>
+  <li>☐ No workspace operation mutates repository contents or Git refs.</li>
+  <li>☐ Sidebar and dialogs pass keyboard/focus checks.</li>
+  <li>☐ Tests pass.</li>
+  <li>☐ Build, lint, and type checking pass.</li>
+  <li>☐ Documentation is updated.</li>
+</ul>
+
+<h2>Verification</h2>
+<pre><code>npm ci
+npm run build
+npm run lint
+npm run check
+npm run test -- --project workspaces
+npm run test:integration -- --grep workspace
+npm run test:e2e -- --grep "workspace"
+PI_DASH_DATA_DIR="$(mktemp -d)" npm run dev
+</code></pre>
+<p class="note"><strong>Exit gate:</strong> Phase 3 receives only canonical healthy workspace records and the Git common-directory identity required for mutation locking.</p>
+</main></body></html>

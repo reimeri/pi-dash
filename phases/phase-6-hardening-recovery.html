@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phase 6: Operational hardening and recovery</title><style>:root{color-scheme:dark;--bg:#0b1020;--panel:#121a2d;--text:#e7edf8;--accent:#70a5ff;--border:#2a3852}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}main{width:min(1040px,calc(100% - 28px));margin:auto;padding:32px 0 64px}h1,h2,h3{line-height:1.25}h2{margin-top:36px;border-bottom:1px solid var(--border);padding-bottom:7px}a{color:var(--accent)}code{background:#182238;padding:.1rem .35rem;border-radius:4px}pre{overflow:auto;background:#080d19;border:1px solid var(--border);border-radius:8px;padding:15px}pre code{background:none;padding:0}table{border-collapse:collapse;width:100%;display:block;overflow:auto}th,td{border:1px solid var(--border);padding:9px 11px;text-align:left;vertical-align:top}th{background:#182238}.note{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 17px}</style></head><body><main>
+<p><a href="phase-5-status-tracking.html">← Previous phase</a> · <a href="../PLAN.html">Master plan</a> · <a href="phase-7-packaging-release.html">Next phase →</a></p>
+<h1>Phase 6: Operational hardening and recovery</h1>
+
+<h2>Outcome</h2>
+<p>The complete dashboard is safe under concurrency, interruption, stale external state, and sustained local use. Startup performs non-destructive reconciliation; ambiguous worktrees receive explicit repair guidance; multiple browser tabs use a server-authoritative single-writer terminal lease; resource limits, graceful shutdown, privacy, security, accessibility, and load budgets are enforced and verified. The application is operationally ready for packaging, but no release artifact is produced yet.</p>
+
+<h2>Purpose</h2>
+<p>Earlier phases own baseline safety for their features; this phase tests and hardens the interactions among all of them. It closes cross-cutting failure modes—browser ownership races, abrupt shutdown, restored databases, slow clients, path swaps, output floods, stale status, and inaccessible attention UI—without mixing that work with distribution and clean-install concerns.</p>
+
+<h2>Dependencies</h2>
+<ul>
+  <li>Phases 0–5 acceptance criteria pass, including baseline worktree reconciliation, socket limits, and process cleanup.</li>
+  <li>Foundation per-data-root lock and Phase 3 cross-process Git-common-dir locks are implemented.</li>
+  <li>Threat-model, privacy, accessibility, and fault-injection review checklists are available.</li>
+  <li>Required decision: loopback-only, single-user, daemon-lifetime Pi persistence remains unchanged.</li>
+  <li>Required decision: one browser connection owns PTY input while authenticated observers receive output.</li>
+</ul>
+
+<h2>In scope</h2>
+<ul>
+  <li>Startup reconciliation and enumerated user repair actions for workspace/worktree/status inconsistencies.</li>
+  <li>Final terminal input lease generation, observer mode, explicit takeover/release, heartbeat expiry, and stale-input rejection.</li>
+  <li>Security review and fixes for binding/authentication, DNS rebinding, CSRF/Origin, filesystem containment, Git refs, process environment/execution, Unix sockets, errors, logs, and dependency boundaries.</li>
+  <li>Concrete resource ceilings and performance budgets for requests, sockets, terminal buffers, clients/runtimes, Git/dialog concurrency, output, and shutdown.</li>
+  <li>Fault injection for database, Git, PTY, status socket, browser, native dialog, disk, and process failures.</li>
+  <li>Accessibility review/fixes for keyboard, focus, status semantics, reduced motion, contrast, errors, and 200% zoom.</li>
+  <li>WAL-safe backup/restore and non-destructive post-restore reconciliation verification.</li>
+  <li>Sanitized diagnostics suitable for troubleshooting without conversation or secret data.</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+  <li>Production packaging, desktop entries, release artifacts, checksums, license bundle, clean-install matrix, and release sign-off (Phase 7).</li>
+  <li>tmux or process persistence across daemon restart.</li>
+  <li>Remote access, TLS, accounts, teams, collaboration, telemetry, or cloud services.</li>
+  <li>macOS/Windows commitments, auto-update, sandboxing, or privilege separation.</li>
+  <li>Unmanaged worktree import, merge/rebase/PR UI, file editor, or semantic Pi transcript.</li>
+</ul>
+
+<h2>Requirements</h2>
+<ul>
+  <li><strong>REQ-06-01:</strong> Startup shall reconcile every managed worktree record with canonical filesystem and Git porcelain state before enabling a destructive action on that record.</li>
+  <li><strong>REQ-06-02:</strong> Reconciliation shall classify healthy, exact interrupted-success, recoverable missing, mismatch, and ambiguous states without automatically adopting/deleting external files, worktrees, refs, or branches.</li>
+  <li><strong>REQ-06-03:</strong> Repair endpoints shall expose enumerated operations only, revalidate current state under the common-dir lock, and refuse any action whose safety precondition changed.</li>
+  <li><strong>REQ-06-04:</strong> One authenticated connection shall own input for a runtime; observers shall be visibly read-only and continue receiving output.</li>
+  <li><strong>REQ-06-05:</strong> Claim/takeover shall atomically increment a lease generation and notify every client; input must include the generation and stale-generation bytes shall never reach the PTY.</li>
+  <li><strong>REQ-06-06:</strong> Disconnect or three missed 5-second heartbeats shall release ownership; an explicit focused observer may claim it.</li>
+  <li><strong>REQ-06-07:</strong> Default supported capacity shall be 50 workspaces, 200 managed worktrees, 8 simultaneous Pi runtimes, and 4 terminal clients per runtime; exceeding a limit shall fail before partial allocation.</li>
+  <li><strong>REQ-06-08:</strong> Defaults shall bound replay to 1 MiB/runtime (16 MiB hard ceiling), control frames to 64 KiB, input/paste frames to 1 MiB, queued bytes to 4 MiB/client, and API bodies to route-specific limits no greater than 1 MiB.</li>
+  <li><strong>REQ-06-09:</strong> Graceful shutdown shall reject new work, notify clients, and stop all Pi groups concurrently within a 10-second global deadline before closing sockets/database and releasing locks/secrets.</li>
+  <li><strong>REQ-06-10:</strong> Production logs/diagnostics shall exclude cookies, bootstrap/runtime tokens, provider credentials, terminal bytes, prompts, ask-user answers, system prompts, and raw tool payloads.</li>
+  <li><strong>REQ-06-11:</strong> Every executable call shall use argument arrays, explicit cwd/environment, cancellation, timeout, bounded output, and sanitized browser errors; a centralized audit test shall enumerate call sites.</li>
+  <li><strong>REQ-06-12:</strong> A complete database backup shall use the SQLite backup API/equivalent WAL-safe mechanism, be integrity-checked, and restore only while the daemon is stopped; restored state is always reconciled with Git.</li>
+  <li><strong>REQ-06-13:</strong> Critical non-terminal workflows shall work by keyboard at 200% zoom, and status meaning shall remain available without color or animation.</li>
+  <li><strong>REQ-06-14:</strong> The diagnostics API shall return only allowlisted versions, capability states, counts, limits, reconciliation summaries, and sanitized error codes.</li>
+  <li><strong>REQ-06-15:</strong> Security review shall have no unresolved high-severity issue before the phase passes.</li>
+</ul>
+
+<h2>Non-functional requirements</h2>
+<ul>
+  <li><strong>Security:</strong> Threat-model tests cover malicious origins/DNS rebinding, CSRF, token leakage, symlink/path swaps, ref/argument injection, socket spoofing, stale runtime epochs, oversized traffic, and data-root/common-dir lock bypass.</li>
+  <li><strong>Performance:</strong> At supported capacity on the recorded reference Linux machine: cached list APIs p95 ≤200 ms; bridge added echo p95 ≤50 ms; health p95 ≤200 ms during 5 MiB/s output; 200-worktree reconciliation ≤30 seconds; server RSS with 8 fake PTYs ≤ baseline +128 MiB (child RSS excluded); browser JS heap with 8 cached terminals ≤ baseline +160 MiB; after 100 start/stop/mount cycles and forced GC, retained growth ≤ max(10% of post-warmup baseline, 32 MiB).</li>
+  <li><strong>Accessibility:</strong> Non-terminal UI follows WCAG-oriented keyboard/focus/name/contrast/error/motion checks. Exact terminal content remains Pi/xterm-controlled but has a named focusable region and non-terminal runtime/status text.</li>
+  <li><strong>Reliability:</strong> Recovery is deterministic, mutations are idempotent, shutdown is bounded, no tested dashboard child remains orphaned, and fault injection covers every external-effect boundary.</li>
+  <li><strong>Compatibility:</strong> Hardening runs on the reference Linux/browser/Pi matrix chosen from Phase 0 evidence; packaging breadth is deferred.</li>
+</ul>
+
+<h2>Technical design</h2>
+<p><code>ReconciliationCoordinator</code> runs after migration and before product readiness. It validates locks/permissions, resets stale runtime-dependent states, inspects workspaces, and reconciles managed worktrees under bounded concurrency and common-dir locks. Deterministic exact postconditions may advance an interrupted lifecycle; ambiguity becomes a repair card. Startup never deletes files or refs.</p>
+<p>Each TerminalRuntime owns an input lease <code>{ownerConnectionId, generation, expiresAt}</code>. The first eligible client may claim it. Takeover increments generation under the runtime mutex and broadcasts ownership. Every input frame carries generation; server comparison immediately before <code>pty.write</code> rejects stale buffered input. Output is multicast independently.</p>
+<p>Validated configuration centralizes defaults and hard ceilings. Protocol parsers reject sizes early; socket queue bytes are tracked; slow clients are disconnected with replay instructions. Inspection/mutation concurrency, process output, dialog count, request bodies, reconnect rate, and logs are bounded. Diagnostics are built from an explicit privacy allowlist.</p>
+<p>Backup uses the SQLite library's online backup facility (or an equivalently safe SQLite operation), verifies integrity/schema, and records no secret. Restore is an offline operator action followed by normal reconciliation.</p>
+
+<h2>Interfaces and contracts</h2>
+<pre><code>{ "v": 1, "type": "claimInput" }
+{ "v": 1, "type": "releaseInput", "leaseGeneration": 4 }
+{ "v": 1, "type": "input", "leaseGeneration": 4, "data": "..." }
+{ "v": 1, "type": "inputOwnership",
+  "ownerConnectionId": "uuid-or-null", "leaseGeneration": 5,
+  "youAreOwner": false, "reason": "takeover|disconnect|expiry|release" }
+</code></pre>
+<pre><code>GET /api/v1/diagnostics
+200 {
+  "version": "...",
+  "capabilities": { "git": {...}, "pi": {...}, "pty": {...}, "nativeDialog": {...} },
+  "database": { "schemaVersion": 6, "writable": true },
+  "counts": { "workspaces": 3, "worktrees": 8, "runtimes": 2, "connections": 3 },
+  "reconciliation": { "lastRunAt": "...", "healthy": 7, "attention": 1 },
+  "limits": { "runtimeMax": 8, "terminalBufferBytes": 1048576 }
+}
+
+POST /api/v1/worktrees/:id/reconcile
+Idempotency-Key: &lt;client UUID&gt;
+{ "action": "retryVerification", "expectedRevision": 12 }
+200 { "worktree": WorktreeDto, "actions": RepairActionDto[] }
+</code></pre>
+<p>Stable errors include <code>INPUT_LEASE_REQUIRED</code>, <code>INPUT_LEASE_STALE</code>, <code>LIMIT_EXCEEDED</code>, <code>SERVER_SHUTTING_DOWN</code>, <code>RECONCILIATION_REQUIRED</code>, <code>REPAIR_PRECONDITION_CHANGED</code>, and <code>REPAIR_NOT_SAFE</code>.</p>
+
+<h2>Work breakdown</h2>
+<ol>
+  <li>Write the threat model, privacy inventory, exact resource configuration, performance reference machine, and accessibility/fault-injection checklists.</li>
+  <li>Implement reconciliation coordinator, classifiers, enumerated revision-safe repair actions, readiness gating, and repair UI.</li>
+  <li>Implement input lease generation, takeover/release/heartbeat expiry, observer UX, and stale-input rejection.</li>
+  <li>Centralize and enforce limits, timeouts, backpressure, runtime/client caps, cancellation, and bounded global shutdown.</li>
+  <li>Audit and fix path/lock/process/environment/auth/Origin/CSRF/socket/schema/error/log boundaries.</li>
+  <li>Implement sanitized diagnostics and WAL-safe backup/restore verification.</li>
+  <li>Run accessibility review and fix keyboard, focus, labels, contrast, motion, zoom, and error announcement issues.</li>
+  <li>Run load and fault-injection suites; fix leaks, event-loop stalls, races, unsafe repair, and orphan cleanup.</li>
+  <li>Document hard limits, backup/restore, recovery, threat model, privacy, and operational troubleshooting.</li>
+</ol>
+
+<h2>Files or components affected</h2>
+<h3>Create</h3>
+<ul>
+  <li><code>apps/server/src/reconciliation/</code> coordinator, classifiers, repair actions, and tests</li>
+  <li><code>apps/server/src/security/limits.ts</code> and security boundary tests</li>
+  <li><code>apps/server/src/diagnostics/</code> allowlisted diagnostics service/routes</li>
+  <li><code>apps/server/src/database/backup.ts</code></li>
+  <li><code>apps/web/src/lib/repair/</code> and input-ownership UI</li>
+  <li><code>tests/fault-injection/</code>, <code>tests/load/</code>, <code>tests/e2e/multi-tab.spec.ts</code></li>
+  <li><code>docs/architecture/threat-model.md</code>, <code>privacy-data-flow.md</code></li>
+  <li><code>docs/operations/backup-restore.md</code>, <code>recovery.md</code>, <code>hard-limits.md</code></li>
+  <li><code>docs/testing/performance-budgets.md</code>, <code>accessibility-checklist.md</code></li>
+</ul>
+<h3>Modify</h3>
+<ul>
+  <li><code>apps/server/src/terminal/</code>, workspaces, worktrees, status, auth, config, logging, startup, and shutdown</li>
+  <li><code>apps/web/src/</code> for observer/takeover, repair, diagnostics, accessibility, and error UX</li>
+  <li><code>packages/contracts/</code> for lease, diagnostics, repair, shutdown, and limit contracts</li>
+  <li><code>migrations/</code> only for bounded reconciliation revision/error fields</li>
+</ul>
+
+<h2>Data and migrations</h2>
+<p>This phase may add reconciliation revision/error-code/timestamp fields, never PIDs, terminal bytes, prompts, answers, or secrets. Existing lifecycle/status rows are backfilled deterministically. Migration tests cover every earlier schema and residual WAL state.</p>
+<p>Before migration, Phase 1's WAL-safe backup policy remains mandatory. Restore requires a stopped daemon and integrity/schema verification. Because Git is external state, restore always triggers non-destructive reconciliation and cannot automatically recreate/delete worktrees.</p>
+
+<h2>Edge cases</h2>
+<ul>
+  <li>Two tabs claim simultaneously: runtime mutex produces one generation winner; stale input is rejected.</li>
+  <li>Owner suspends without close: heartbeat expires; resumed buffered input has an old generation.</li>
+  <li>Crash leaves creating/removing records: exact postconditions advance safely; ambiguity remains an error.</li>
+  <li>Database restore disagrees with Git: repair cards show mismatches without adoption/deletion.</li>
+  <li>Symlink/path changes between checks: postcondition containment/common-dir validation stops mutation.</li>
+  <li>Output flood exceeds queues: slow clients disconnect/replay while PTY and APIs remain responsive.</li>
+  <li>Runtime/client cap reached: request fails before spawning/attaching partial state.</li>
+  <li>Many hung Pi processes at shutdown: concurrent graceful stops escalate and finish by the global deadline.</li>
+  <li>Disk full or database read-only: operation fails visibly, transaction rolls back where possible, and no unsafe retry loops.</li>
+  <li>Diagnostics requested during failures: only allowlisted metadata is returned.</li>
+</ul>
+
+<h2>Testing</h2>
+<h3>Unit</h3>
+<ul>
+  <li>Lease generation/expiry/takeover/stale input, reconciliation classification/repair authorization, limit validators, shutdown coordinator, privacy allowlist, and redaction.</li>
+  <li>Accessibility component states, focus restoration, reduced motion, and errors.</li>
+  <li>Backup integrity/version validation.</li>
+</ul>
+<h3>Integration</h3>
+<ul>
+  <li>Fault injection at each Git saga boundary, database busy/full/read-only/WAL, socket disconnect, PTY hang/crash, picker error, shutdown signal, and stale startup.</li>
+  <li>Multi-client ownership under concurrent claims, disconnect, suspend simulation, reconnect, and stale buffered frames.</li>
+  <li>Host/Origin/CSRF/token/socket/path/ref injection and oversized/malformed boundary suites.</li>
+  <li>Supported-capacity and sustained-output tests meet numeric budgets without leaks or API starvation.</li>
+</ul>
+<h3>End-to-end</h3>
+<ul>
+  <li>Complete product journey including dirty-removal refusal without stopping Pi, clean removal, and separate branch deletion.</li>
+  <li>Two browser contexts observe one terminal, transfer control, and prove only lease-owner input arrives.</li>
+  <li>Kill/restart daemon and verify stopped runtimes, status reset/preservation, data survival, and non-destructive reconciliation.</li>
+  <li>Keyboard-only, 200% zoom, reduced-motion, and accessible status/error checks.</li>
+</ul>
+
+<h2>Acceptance criteria</h2>
+<ul>
+  <li>☐ Reconciliation handles every injected exact/ambiguous/external state without unsafe adoption or deletion.</li>
+  <li>☐ Single-writer leases prevent duplicate/stale input and provide visible observer/takeover behavior.</li>
+  <li>☐ Numeric capacity, latency, output, memory, and shutdown budgets pass on the recorded reference machine.</li>
+  <li>☐ Security review has no unresolved high-severity issue and privacy/log diagnostics contain no forbidden data.</li>
+  <li>☐ Fault tests leave no dashboard-owned orphan process and no unrepresented database/Git ambiguity; genuinely ambiguous states remain explicitly classified with safe manual-recovery guidance.</li>
+  <li>☐ Backup/restore/reconcile procedures are tested with WAL-active fixtures.</li>
+  <li>☐ Keyboard, focus, contrast, state text, reduced motion, and zoom checks pass.</li>
+  <li>☐ Tests pass.</li>
+  <li>☐ Build, lint, and type checking pass.</li>
+  <li>☐ Documentation is updated.</li>
+</ul>
+
+<h2>Verification</h2>
+<pre><code>npm ci
+npm run build
+npm run lint
+npm run check
+npm test
+npm run test:integration
+npm run test:fault-injection
+npm run test:load
+npm run test:e2e -- --grep "recovery|multi-tab|accessibility"
+npm run audit:security
+npm run audit:accessibility
+</code></pre>
+<p class="note"><strong>Exit gate:</strong> Phase 7 packages only a build that has passed reconciliation, lease, privacy, fault, resource-budget, and accessibility gates.</p>
+</main></body></html>

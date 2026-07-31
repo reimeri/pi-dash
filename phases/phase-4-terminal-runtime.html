@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phase 4: Interactive Pi terminal runtime</title><style>:root{color-scheme:dark;--bg:#0b1020;--panel:#121a2d;--text:#e7edf8;--muted:#9cabbd;--accent:#70a5ff;--border:#2a3852}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}main{width:min(1040px,calc(100% - 28px));margin:auto;padding:32px 0 64px}h1,h2,h3{line-height:1.25}h2{margin-top:36px;border-bottom:1px solid var(--border);padding-bottom:7px}a{color:var(--accent)}code{background:#182238;padding:.1rem .35rem;border-radius:4px}pre{overflow:auto;background:#080d19;border:1px solid var(--border);border-radius:8px;padding:15px}pre code{background:none;padding:0}table{border-collapse:collapse;width:100%;display:block;overflow:auto}th,td{border:1px solid var(--border);padding:9px 11px;text-align:left;vertical-align:top}th{background:#182238}.note{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 17px}</style></head><body><main>
+<p><a href="phase-3-worktrees.html">← Previous phase</a> · <a href="../PLAN.html">Master plan</a> · <a href="phase-5-status-tracking.html">Next phase →</a></p>
+<h1>Phase 4: Interactive Pi terminal runtime</h1>
+
+<h2>Outcome</h2>
+<p>Selecting a ready worktree lazily starts one interactive Pi process in that worktree and shows its exact terminal UI in the main Svelte panel. Users can type, paste, resize, use Pi shortcuts and extension UI, switch among worktrees without stopping processes, reconnect after a browser refresh, and explicitly stop or restart a runtime. Runtime state and crashes are visible independently from later workflow status dots.</p>
+
+<h2>Purpose</h2>
+<p>This phase delivers the core product experience using the production architecture validated in Phase 0. It turns managed worktrees into live Pi environments while preserving Pi's terminal extensibility, isolates process ownership in the daemon, and creates stable terminal contracts for status integration and hardening.</p>
+
+<h2>Dependencies</h2>
+<ul>
+  <li>Phase 0 terminal decision record and its selected alternate-screen reconnect mechanism.</li>
+  <li>Phase 1 authenticated REST/WebSocket infrastructure and shared contracts.</li>
+  <li>Phase 3 ready/healthy managed worktrees and terminal-stop removal hook.</li>
+  <li><code>node-pty</code>, <code>@battlefieldduck/xterm-svelte</code>, xterm FitAddon and Unicode11Addon.</li>
+  <li>A discoverable supported <code>pi</code> executable; user's Pi settings/credentials/extensions remain external.</li>
+  <li>Required technical decision: one runtime per worktree and process persistence only for the daemon lifetime.</li>
+</ul>
+
+<h2>In scope</h2>
+<ul>
+  <li>Pi executable/version probe and configurable executable path.</li>
+  <li>In-memory TerminalManager with one PTY runtime per managed worktree.</li>
+  <li>Lazy idempotent start on first worktree selection; explicit stop and restart.</li>
+  <li>Authenticated versioned terminal WebSocket with input, binary input, output sequencing, resize, replay/reset, runtime state, ping/heartbeat, and errors.</li>
+  <li>Bounded per-runtime output buffers and outbound backpressure policy.</li>
+  <li>xterm-svelte terminal panel with explicit lifecycle cleanup, FitAddon, Unicode11Addon, responsive layout, focus, paste, modified-key handling, and error overlays.</li>
+  <li>Switching among multiple live worktrees without stopping hidden runtimes.</li>
+  <li>Browser refresh/reconnect while daemon and Pi continue running.</li>
+  <li>Graceful process-tree stop on API request, worktree removal, and daemon shutdown.</li>
+  <li>Runtime state: stopped, starting, running, stopping, and crashed.</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+  <li>Workflow idle/working/blocked/done lifecycle and Pi status extension logic (Phase 5).</li>
+  <li>Survival across daemon restart, tmux, systemd-managed child sessions, or terminal history persistence.</li>
+  <li>Remote access, SSH runtimes, containers, sandboxing, or arbitrary shell terminals.</li>
+  <li>Multiple concurrent input writers with final lease/takeover UX (basic single owner only; hardening in Phase 6).</li>
+  <li>Semantic rendering of Pi messages or RPC/SDK control panels.</li>
+  <li>Image-protocol guarantees beyond behavior naturally supported by xterm/browser and validated examples.</li>
+</ul>
+
+<h2>Requirements</h2>
+<ul>
+  <li><strong>REQ-04-01:</strong> Selecting a worktree shall acquire the shared lifecycle coordinator, atomically verify lifecycle is still <code>ready</code>, and register the starting/current runtime before releasing it. Lifecycle <code>removing</code>, <code>removed</code>, or <code>error</code> rejects start.</li>
+  <li><strong>REQ-04-02:</strong> TerminalManager shall enforce at most one live dashboard PTY per worktree under concurrent requests.</li>
+  <li><strong>REQ-04-03:</strong> The PTY shall spawn the Pi executable directly with the worktree path as <code>cwd</code>, <code>shell: false</code> semantics, the documented sanitized inherited environment, and dashboard extension path placeholder.</li>
+  <li><strong>REQ-04-04:</strong> User/global and trusted project Pi resources shall load normally; the dashboard shall not override Pi's agent directory, session directory, theme, tools, or approvals by default.</li>
+  <li><strong>REQ-04-05:</strong> The terminal WebSocket shall authenticate before attachment and validate protocol version, frame schema, frame size, dimensions, and runtime/worktree association.</li>
+  <li><strong>REQ-04-06:</strong> Each output chunk shall have a monotonically increasing sequence and be retained only within configured byte/chunk limits.</li>
+  <li><strong>REQ-04-07:</strong> Disconnecting the last browser shall not stop Pi; reattachment shall follow the Phase 0 replay/redraw contract.</li>
+  <li><strong>REQ-04-08:</strong> Hidden/zero-size terminal panels shall not resize PTYs to invalid dimensions; visibility restoration shall refit.</li>
+  <li><strong>REQ-04-09:</strong> Input from xterm <code>onData</code> shall be forwarded once; binary reports use a binary-safe frame; output uses <code>terminal.write</code> without newline transformation.</li>
+  <li><strong>REQ-04-10:</strong> Required Pi keys and ask-user terminal UI shall behave as recorded in Phase 0.</li>
+  <li><strong>REQ-04-11:</strong> On Linux the PTY child shall be verified by integration test as the owned session/process-group leader. Stop shall signal that group through the live PTY identity, wait a bounded interval, and escalate, while guarding against signaling after handle exit/PID reuse.</li>
+  <li><strong>REQ-04-12:</strong> Pi exit code/signal and sanitized startup failures shall update runtime state and remain visible until restart.</li>
+  <li><strong>REQ-04-13:</strong> Worktree removal shall await runtime stop before invoking Git removal.</li>
+  <li><strong>REQ-04-14:</strong> Terminal/addon/observer/socket resources shall be disposed on client eviction and daemon runtime disposal.</li>
+  <li><strong>REQ-04-15:</strong> Start is resource-idempotent by worktree and always returns the sole current runtime; stop is idempotent and returns stopped when already stopped. Restart alone requires an idempotency key so retries return the original operation/runtime and changed-input key reuse fails.</li>
+  <li><strong>REQ-04-16:</strong> Pi shall inherit user runtime variables needed for normal behavior (<code>HOME</code>, <code>PATH</code>, <code>SHELL</code>, locale, XDG, SSH agent, provider credentials, and Pi configuration), while all internal <code>PI_DASH_*</code> authentication/bootstrap variables are removed and only the three per-runtime status variables are reintroduced.</li>
+</ul>
+
+<h2>Non-functional requirements</h2>
+<ul>
+  <li><strong>Security:</strong> No generic spawn endpoint; executable and extension paths come from trusted config/package resources; WebSockets enforce cookie, Host, Origin, worktree authorization, message limits, and input ownership.</li>
+  <li><strong>Performance:</strong> The production bridge shall meet the Phase 0 p95 50 ms localhost input-to-echo target, reconnect to a usable screen within 2 seconds when replay is available, keep health API p95 below 200 ms during the 5 MiB/s output fixture, and bound each runtime replay buffer to the configured default 1 MiB/hard ceiling. Terminal dependencies are lazy-loaded.</li>
+  <li><strong>Accessibility:</strong> Terminal region has an accessible name containing workspace/worktree, visible focus boundary, keyboard focus command, runtime/error text outside color-only indicators, and reduced-motion-compatible controls.</li>
+  <li><strong>Reliability:</strong> Concurrent starts collapse to one operation; all exits clean handles; disconnects do not affect PTY; stop/restart are idempotent; daemon shutdown drains runtimes.</li>
+  <li><strong>Compatibility:</strong> Linux and browsers accepted by Phase 0. Exact package versions are pinned. Default renderer works without WebGL.</li>
+</ul>
+
+<h2>Technical design</h2>
+<p><code>TerminalManager</code> is a composition-root service. Its per-worktree mutex collapses concurrent starts and serializes lifecycle operations; an in-memory idempotency map covers daemon-lifetime retries. Start enters Phase 3's shared WorktreeLifecycleCoordinator, verifies <code>ready</code>, and registers <code>starting</code> before release, so a concurrent removal cannot pass <code>ready → removing</code> unnoticed. It then resolves Pi/extension, sanitizes inherited environment, allocates runtime identity, and creates the PTY. If spawn fails, runtime registration rolls back while durable worktree lifecycle remains ready.</p>
+<p>Each runtime owns PTY listeners, output sequence, bounded ring buffer, connection registry, basic single input owner, dimensions, timestamps, and shutdown controller. On Linux, the node-pty child/session ownership assumption is verified with a child/grandchild fixture; group signaling uses the still-live runtime handle/PID only until its exit callback wins, preventing post-exit PID reuse. The PTY data callback appends once and broadcasts with backpressure handling. Slow clients are disconnected or required to replay. PTY exit transitions state and finalizes listeners after delivering exit state.</p>
+<p>The Svelte app renders a terminal workspace area. Recently used terminals may remain mounted in a bounded LRU cache to preserve browser state when switching; eviction calls explicit terminal/addon/observer/socket disposal. If the selected worktree has no cached terminal, it starts/attaches and applies replay. Fit happens after fonts and container dimensions are ready and whenever the main panel changes.</p>
+<p>The status extension passed on the Pi command line can initially be a no-op transport package until Phase 5. Its argument must already be present so Phase 5 does not alter the process launch contract. Pi project trust remains an interactive terminal concern, preserving exact behavior.</p>
+
+<h2>Interfaces and contracts</h2>
+<pre><code>POST /api/v1/worktrees/:id/terminal/start
+// Resource-idempotent: repeated/concurrent requests return the sole runtime.
+200 { "runtime": RuntimeDto }
+POST /api/v1/worktrees/:id/terminal/stop
+// Idempotent: an already stopped runtime remains a successful stopped result.
+200 { "runtime": RuntimeDto }
+POST /api/v1/worktrees/:id/terminal/restart
+Idempotency-Key: &lt;client UUID&gt;
+200 { "operationId": "...", "runtime": RuntimeDto }
+GET /api/v1/worktrees/:id/terminal
+200 { "runtime": RuntimeDto }
+
+interface RuntimeDto {
+  worktreeId: string;
+  runtimeId: string | null;
+  state: "stopped" | "starting" | "running" | "stopping" | "crashed";
+  startedAt: string | null;
+  exitedAt: string | null;
+  exitCode: number | null;
+  signal: number | null;
+  attachedClients: number;
+}
+</code></pre>
+<pre><code>// WebSocket: /api/v1/worktrees/:id/terminal/socket
+// Client
+{ "v": 1, "type": "attach", "afterSeq": 120 }
+{ "v": 1, "type": "input", "data": "hello" }
+{ "v": 1, "type": "binaryInput", "dataBase64": "AAE=" }
+{ "v": 1, "type": "resize", "cols": 120, "rows": 40 }
+{ "v": 1, "type": "ping", "nonce": "..." }
+
+// Server
+{ "v": 1, "type": "hello", "runtime": { ... }, "connectionId": "...", "inputOwner": true,
+  "earliestSeq": 80, "latestSeq": 130 }
+{ "v": 1, "type": "output", "seq": 121, "data": "...", "replay": true }
+{ "v": 1, "type": "replayReset", "earliestSeq": 80, "latestSeq": 130 }
+{ "v": 1, "type": "runtime", "state": "crashed", "exitCode": 1, "signal": null }
+{ "v": 1, "type": "pong", "nonce": "..." }
+{ "v": 1, "type": "error", "code": "NOT_INPUT_OWNER", "message": "..." }
+</code></pre>
+<p>Configuration includes Pi executable, initial rows/columns, output-buffer byte limit, maximum frame size, graceful-stop timeout, terminal cache size, and supported Pi version policy. Stable errors include <code>WORKTREE_NOT_READY</code>, <code>WORKTREE_UNHEALTHY</code>, <code>PI_UNAVAILABLE</code>, <code>PI_VERSION_UNSUPPORTED</code>, <code>PTY_START_FAILED</code>, <code>RUNTIME_STARTING</code>, <code>RUNTIME_STOPPING</code>, <code>TERMINAL_PROTOCOL_MISMATCH</code>, <code>INVALID_RESIZE</code>, <code>OUTPUT_REPLAY_EXPIRED</code>, and <code>NOT_INPUT_OWNER</code>.</p>
+
+<h2>Work breakdown</h2>
+<ol>
+  <li>Implement Pi capability/version resolver, packaged extension-path resolution, runtime configuration, and fake-Pi test executable.</li>
+  <li>Implement TerminalRuntime/TerminalManager, per-worktree lifecycle locking, PTY spawn, buffer, sequencing, broadcast/backpressure, exit, and shutdown.</li>
+  <li>Implement terminal REST routes, authenticated WebSocket upgrade, protocol parsing, attach/replay, input, binary input, resize, heartbeat, and basic ownership.</li>
+  <li>Integrate terminal stop hook into worktree removal and daemon graceful shutdown.</li>
+  <li>Build Svelte terminal panel around xterm-svelte with addons, fit observer, keyboard translation, paste, socket client, runtime controls, LRU lifecycle, and reconnect.</li>
+  <li>Test against fake Pi, real shell-like fixtures, and guarded real Pi with representative extension UI from Phase 0.</li>
+  <li>Add load/backpressure, rapid switching, repeated lifecycle, crash, and browser refresh tests.</li>
+  <li>Document runtime behavior, supported Pi versions, terminal protocol, configuration, troubleshooting, and limitations.</li>
+</ol>
+
+<h2>Files or components affected</h2>
+<h3>Create</h3>
+<ul>
+  <li><code>apps/server/src/terminal/terminal-manager.ts</code>, <code>terminal-runtime.ts</code>, ring buffer, routes, socket protocol, and tests</li>
+  <li><code>apps/server/src/pi/pi-resolver.ts</code> and version/capability checks</li>
+  <li><code>apps/web/src/lib/terminal/TerminalPane.svelte</code>, socket client, cache, key handling, controls, and tests</li>
+  <li><code>packages/contracts/src/terminal.ts</code></li>
+  <li><code>tests/fixtures/fake-pi.ts</code></li>
+  <li><code>tests/e2e/terminal.spec.ts</code></li>
+  <li><code>docs/architecture/terminal-protocol.md</code></li>
+  <li><code>docs/operations/terminal-runtime.md</code></li>
+</ul>
+<h3>Modify</h3>
+<ul>
+  <li><code>apps/server/src/worktrees/worktree-service.ts</code> to await runtime stop before removal</li>
+  <li><code>apps/server/src/app.ts</code> and shutdown orchestration</li>
+  <li><code>apps/web/src/App.svelte</code> and worktree selection state</li>
+  <li><code>packages/pi-extension/</code> to provide the launchable no-op/status entry path</li>
+  <li><code>package.json</code> dependencies and native-build documentation</li>
+  <li><code>docs/operations/configuration.md</code></li>
+</ul>
+
+<h2>Data and migrations</h2>
+<p>No durable runtime/process table is introduced because PIDs and sockets become stale across daemon restarts. Worktree DTOs may expose runtime state joined from TerminalManager. If operational crash metadata is desired, store only bounded last-exit diagnostics on the worktree or a separate audit table; it must not be interpreted as a reconnectable process.</p>
+<p>Daemon restart always reconstructs TerminalManager empty and reports all runtimes stopped. Existing Pi session JSONL remains owned by Pi in its normal storage and is not migrated or copied.</p>
+
+<h2>Edge cases</h2>
+<ul>
+  <li>Two clients select a stopped ready worktree simultaneously: exactly one PTY starts and both attach; if removal has claimed <code>removing</code>, both receive <code>WORKTREE_NOT_READY</code>.</li>
+  <li>Worktree disappears between selection and spawn: start fails without launching Pi.</li>
+  <li>Pi prompts for project trust or login: exact interactive prompt remains usable in terminal; dashboard does not bypass it.</li>
+  <li>Pi executable changes or is upgraded while server runs: existing runtimes continue; new start re-probes according to cache policy.</li>
+  <li>Browser refresh after ring-buffer overflow: reset/redraw contract restores usability or shows a clear reconnect limitation established by Phase 0.</li>
+  <li>Terminal hidden by sidebar/navigation: no zero resize; refit when visible.</li>
+  <li>Very fast output or slow observer client: bounded queue disconnects/replays the client while PTY remains alive.</li>
+  <li><code>/quit</code> cleanly exits Pi: runtime becomes stopped (clean exit) and offers Start; unexpected nonzero exit becomes crashed.</li>
+  <li>Stop during ask-user or tool execution: Pi receives graceful signal/abort opportunity, then escalation.</li>
+  <li>Restart requested while stop is in progress: serialized operation returns the final new runtime, not two processes.</li>
+  <li>Native node-pty build unavailable: startup capability reports PTY unavailable with installation guidance.</li>
+</ul>
+
+<h2>Testing</h2>
+<h3>Unit</h3>
+<ul>
+  <li>Runtime state machine, concurrent lifecycle locks, output sequence/ring overflow, backpressure, frame schemas, resize bounds, and error mapping.</li>
+  <li>Pi executable/version resolution and command argument/environment construction.</li>
+  <li>Frontend socket reducer, replay/reset, reconnect backoff, cache eviction cleanup, key translation, and focus state.</li>
+</ul>
+<h3>Integration</h3>
+<ul>
+  <li>Fake Pi validates exact <code>cwd</code>, args, environment allow/deny behavior, input/output, resize, exit codes, session/process-group identity, SIGTERM-ignoring grandchildren, escalation, and PID-reuse guard.</li>
+  <li>Concurrent start/stop/restart and worktree removal use the shared lifecycle coordinator: removal CAS before start rejects launch; start registration before removal is stopped before Git; no process can start after <code>removing</code>.</li>
+  <li>Authenticated WebSocket rejects wrong Origin/session/version and handles malformed/oversized frames without daemon failure.</li>
+  <li>Disconnect/reconnect, replay, overflow reset, slow client, and multiple observer behavior.</li>
+  <li>Guarded real Pi smoke repeats Phase 0 terminal and extension UI checks in production components.</li>
+</ul>
+<h3>End-to-end</h3>
+<ul>
+  <li>Create/select worktree, observe lazy fake-Pi start and exact terminal interaction, switch away/back, resize, refresh, and reconnect.</li>
+  <li>Start two worktrees and verify independent terminals/cwds/process controls.</li>
+  <li>Stop/restart/crash display correct runtime state; worktree removal waits for stop.</li>
+  <li>Repeated navigation/mount/eviction has stable browser/server resource counts.</li>
+</ul>
+
+<h2>Acceptance criteria</h2>
+<ul>
+  <li>☐ First selection starts exactly one Pi PTY in the selected managed worktree.</li>
+  <li>☐ Pi's standard and extension-modified terminal UI, shortcuts, paste, and resize are usable.</li>
+  <li>☐ Switching or browser refresh does not stop Pi and reconnect restores a usable terminal.</li>
+  <li>☐ Stop, restart, clean exit, crash, and daemon shutdown clean all process/socket resources.</li>
+  <li>☐ Worktree removal cannot race a running Pi process.</li>
+  <li>☐ Output/socket/client memory is bounded under sustained output and disconnects.</li>
+  <li>☐ Tests pass.</li>
+  <li>☐ Build, lint, and type checking pass.</li>
+  <li>☐ Documentation is updated.</li>
+</ul>
+
+<h2>Verification</h2>
+<pre><code>npm ci
+npm run build
+npm run lint
+npm run check
+npm run test -- --project terminal
+npm run test:integration -- --grep terminal
+npm run test:e2e -- --grep "terminal"
+PI_DASH_PI_EXECUTABLE=pi npm run dev
+</code></pre>
+<p class="note"><strong>Exit gate:</strong> Phase 5 may add status events but must not replace the PTY transport, inspect terminal bytes, or change the user's normal Pi UI/resource loading.</p>
+</main></body></html>

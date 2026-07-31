@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phase 7: Packaging and release validation</title><style>:root{color-scheme:dark;--bg:#0b1020;--panel:#121a2d;--text:#e7edf8;--accent:#70a5ff;--border:#2a3852}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}main{width:min(1040px,calc(100% - 28px));margin:auto;padding:32px 0 64px}h1,h2,h3{line-height:1.25}h2{margin-top:36px;border-bottom:1px solid var(--border);padding-bottom:7px}a{color:var(--accent)}code{background:#182238;padding:.1rem .35rem;border-radius:4px}pre{overflow:auto;background:#080d19;border:1px solid var(--border);border-radius:8px;padding:15px}pre code{background:none;padding:0}table{border-collapse:collapse;width:100%;display:block;overflow:auto}th,td{border:1px solid var(--border);padding:9px 11px;text-align:left;vertical-align:top}th{background:#182238}.note{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 17px}</style></head><body><main>
+<p><a href="phase-6-hardening-recovery.html">← Previous phase</a> · <a href="../PLAN.html">Master plan</a></p>
+<h1>Phase 7: Packaging and release validation</h1>
+
+<h2>Outcome</h2>
+<p>A reproducible Linux MVP artifact can be installed into a clean supported environment, launched through a documented command or optional desktop entry, open an authenticated loopback browser session, locate its packaged Pi extension and native node-pty module, preserve XDG data correctly across upgrade/uninstall, and complete the full real-Pi workflow. Supported versions, dependencies, licenses, backup/recovery, known limitations, and release evidence are published.</p>
+
+<h2>Purpose</h2>
+<p>Operationally hardened source code is not yet a usable release. This phase verifies the distribution boundary: deterministic builds, native dependencies, resource paths, launch/bootstrap UX, Linux desktop integration, clean installation, upgrades, documentation, license obligations, and the final compatibility matrix. It deliberately does not add product capability.</p>
+
+<h2>Dependencies</h2>
+<ul>
+  <li>Phase 6 hardening, security, fault, accessibility, performance, and recovery gates pass.</li>
+  <li>Supported Node, Git, Pi, Linux distribution/session, browser, zenity/kdialog, and architecture matrix is selected from prior evidence.</li>
+  <li>A clean test environment (container/VM where graphical testing permits) and a reference desktop Linux host.</li>
+  <li>Required decision: first artifact is a documented Linux tarball/npm-style bundle or equivalent that preserves node-pty native compatibility; no auto-update.</li>
+  <li>Required decision: user data is external XDG state and is retained by uninstall unless the user explicitly removes it.</li>
+</ul>
+
+<h2>In scope</h2>
+<ul>
+  <li>Production builds for Svelte SPA, Fastify server, shared contracts, migrations, and bundled Pi status extension at deterministic paths.</li>
+  <li>Linux launcher that performs capability checks, starts one daemon, obtains the one-time bootstrap URL safely, and uses <code>xdg-open</code> when available.</li>
+  <li>Optional desktop entry/icon that invokes the same launcher and does not create a persistent background service.</li>
+  <li>Artifact layout, checksums, version metadata, source mapping policy, third-party notices, and software bill of materials if selected.</li>
+  <li>Clean install, first launch, upgrade with WAL-safe backup/migration, downgrade refusal, uninstall, and retained-data verification.</li>
+  <li>Supported/unsupported dependency diagnostics for Node ABI, node-pty, Git, Pi, browser, graphical session, and native picker.</li>
+  <li>Full release compatibility matrix and real Pi/ask-user/terminal-extension smoke tests.</li>
+  <li>User guide, installation, configuration, security model, backup/restore, recovery, troubleshooting, known limitations, and release checklist.</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+  <li>New application features, protocol changes, or schema changes except release metadata corrections.</li>
+  <li>Deb/RPM/AppImage/Flatpak guarantees unless explicitly chosen after the first artifact passes.</li>
+  <li>Auto-update, package repository hosting, telemetry, crash upload, signing infrastructure beyond available checksum/signature tooling.</li>
+  <li>systemd user service, tmux persistence, always-on daemon, or startup at login.</li>
+  <li>macOS/Windows artifacts or remote deployment.</li>
+</ul>
+
+<h2>Requirements</h2>
+<ul>
+  <li><strong>REQ-07-01:</strong> <code>npm ci</code> from the committed lockfile shall produce the same declared application version and deterministic logical artifact contents; unavoidable native/build timestamps shall be documented.</li>
+  <li><strong>REQ-07-02:</strong> The artifact shall contain the built SPA, server, migrations, package metadata, and Pi extension at paths resolved independently of the launcher's current working directory.</li>
+  <li><strong>REQ-07-03:</strong> The daemon is the sole owner of the data-root lock and acquires it before migration/readiness. The launcher shall never hold that lock; it starts the daemon or uses the private existing-instance handshake, then waits for capability/readiness before opening the browser.</li>
+  <li><strong>REQ-07-04:</strong> The launcher shall transfer the short-lived bootstrap URL without logging it to persistent logs and shall use <code>xdg-open</code> only after readiness; if opening fails it shall print a safe actionable launch instruction.</li>
+  <li><strong>REQ-07-05:</strong> A second launcher invocation for the same data root shall focus/open the existing daemon session through a secure existing-instance handshake or fail with clear instructions; it shall never start a competing daemon.</li>
+  <li><strong>REQ-07-06:</strong> First launch on a clean supported host shall reach the empty dashboard without manually editing configuration.</li>
+  <li><strong>REQ-07-07:</strong> Upgrade shall create and verify the WAL-safe backup before migration, retain workspaces/worktrees/status, reconcile external Git state, and document backup location/restore.</li>
+  <li><strong>REQ-07-08:</strong> A binary older than the database schema shall refuse startup without modifying the database.</li>
+  <li><strong>REQ-07-09:</strong> Uninstall shall not remove repositories, managed worktrees, Pi sessions/config/credentials, or XDG pi-dash data unless a separate explicit data-removal command is invoked.</li>
+  <li><strong>REQ-07-10:</strong> Every distributed dependency license/notice obligation shall be included and the release shall publish checksums; signing is used if project signing infrastructure exists.</li>
+  <li><strong>REQ-07-11:</strong> Documentation shall name exact supported/tested versions and distinguish required, optional, degraded, and unsupported capabilities.</li>
+  <li><strong>REQ-07-12:</strong> The release test shall execute the complete real-Pi journey including terminal-modifying extensions, ask-user blocked state, done acknowledgement, clean worktree removal, and separate safe branch deletion.</li>
+  <li><strong>REQ-07-13:</strong> Release artifacts and production logs shall contain no bootstrap tokens, runtime secrets, provider credentials, terminal output, prompts, or answers.</li>
+  <li><strong>REQ-07-14:</strong> Known limitations shall explicitly state local-only access, Linux-first support, daemon-lifetime PTYs, native picker dependencies, exact blocked scope, and non-import of unmanaged worktrees.</li>
+</ul>
+
+<h2>Non-functional requirements</h2>
+<ul>
+  <li><strong>Security:</strong> Artifact provenance/checksum, dependency audit, no embedded secrets, loopback-only launch, safe desktop-entry quoting, secure bootstrap transfer, and no writable executable resource directory.</li>
+  <li><strong>Performance:</strong> Installed startup and real workflow remain within Phase 6 budgets; production source maps/assets do not cause excessive startup size or expose server source/secrets.</li>
+  <li><strong>Accessibility:</strong> Installation and launch errors are text-readable; desktop entry has a useful name/icon; packaged app passes the Phase 6 keyboard/motion/zoom smoke.</li>
+  <li><strong>Reliability:</strong> Clean install, repeated launch, upgrade, interrupted launch, backup/restore, downgrade refusal, and uninstall are repeatable with no repository or user-data loss.</li>
+  <li><strong>Compatibility:</strong> Every supported matrix row records distribution, architecture, desktop/session, Node, Git, Pi, browser, picker, install, launch, terminal, ask-user, and upgrade result.</li>
+</ul>
+
+<h2>Technical design</h2>
+<p>The production build emits versioned server ESM, static SPA assets, migrations, and an extension resource into one immutable application tree. Runtime paths derive from <code>import.meta.url</code> or an injected package resource root, never process cwd. node-pty remains a native dependency built/downloaded for the documented Node ABI and architecture; prebuilt strategy is accepted only if its provenance and license are verified.</p>
+<p>The launcher is a small argument-array-safe script/program. It validates prerequisites and asks the private existing-instance socket first. If absent, it starts the daemon as foreground child; the daemon alone acquires/holds the data-root lock. The launcher parses narrowly framed readiness containing the ephemeral URL without persistence and invokes <code>xdg-open</code>. It never inherits/transfers a lock descriptor or starts a fallback daemon on another port.</p>
+<p>The artifact does not own Pi's <code>~/.pi/agent</code> data. It passes the packaged status extension via absolute path while preserving all normal user/project Pi resource discovery. XDG dashboard data and central worktrees remain outside the artifact so upgrades replace application files only.</p>
+
+<h2>Interfaces and contracts</h2>
+<pre><code>pi-dash [--port PORT] [--no-open] [--data-dir PATH] [--log-level LEVEL]
+pi-dash doctor [--json]
+pi-dash backup --output PATH
+pi-dash restore --input PATH   # requires stopped daemon; explicit confirmation
+pi-dash version
+</code></pre>
+<pre><code>artifact/
+├── bin/pi-dash
+├── app/server/
+├── app/web/
+├── app/migrations/
+├── app/pi-extension/
+├── package.json
+├── THIRD_PARTY_LICENSES.html
+├── SBOM.json                  # if generated
+└── README.html or README.md
+</code></pre>
+<p><code>doctor --json</code> follows the diagnostics privacy allowlist and never emits auth material or terminal data. Launcher exit codes distinguish prerequisites, already-running handshake failure, database incompatibility, bind failure, migration/backup failure, browser-open failure, and internal error. Exact codes are documented and tested.</p>
+
+<h2>Work breakdown</h2>
+<ol>
+  <li>Select and document the first Linux artifact format, supported matrix, versioning, and native node-pty strategy.</li>
+  <li>Implement deterministic production build/resource layout and absolute extension/migration/static path resolution.</li>
+  <li>Implement launcher, readiness framing, existing-instance handshake, capability doctor, browser open/fallback, and exit codes.</li>
+  <li>Create optional desktop entry/icon and verify safe path/argument handling.</li>
+  <li>Generate third-party notices, checksums, dependency audit, and optional SBOM/signature.</li>
+  <li>Automate clean install, first launch, repeated launch, upgrade/backup/migration, restore/reconcile, downgrade refusal, uninstall, and retained-data tests.</li>
+  <li>Run full supported matrix with real Pi, terminal-modifying extensions, ask-user, multiple worktrees, and lifecycle states.</li>
+  <li>Complete user/operations/security/recovery/troubleshooting/known-limitations documentation and release checklist.</li>
+  <li>Build the final artifact twice, compare declared deterministic contents, publish evidence, and sign off the release gate.</li>
+</ol>
+
+<h2>Files or components affected</h2>
+<h3>Create</h3>
+<ul>
+  <li><code>scripts/pi-dash</code> or <code>apps/launcher/</code></li>
+  <li><code>packaging/linux/</code> artifact manifest, desktop entry, icon, and clean-install fixtures</li>
+  <li><code>tests/release/</code> build, install, launch, upgrade, restore, uninstall, and artifact privacy tests</li>
+  <li><code>docs/operations/install-linux.md</code>, <code>upgrade.md</code>, <code>uninstall.md</code>, <code>troubleshooting.md</code></li>
+  <li><code>docs/testing/compatibility-matrix.md</code>, <code>release-checklist.md</code></li>
+  <li><code>docs/user-guide.html</code> or equivalent user documentation</li>
+  <li><code>THIRD_PARTY_LICENSES.html</code> and optional <code>SBOM.json</code></li>
+</ul>
+<h3>Modify</h3>
+<ul>
+  <li><code>package.json</code>, lockfile, build scripts, version metadata, and CI/release configuration</li>
+  <li><code>apps/server/</code> resource resolution, readiness/existing-instance protocol, doctor, and exit codes</li>
+  <li><code>apps/web/</code> only for packaged base/static-path corrections found by release tests</li>
+  <li><code>README.md</code>, security/backup/recovery docs, and known limitations</li>
+</ul>
+
+<h2>Data and migrations</h2>
+<p>No product schema change is planned. Release metadata may record application/schema compatibility outside user tables. Upgrade uses the Phase 1/6 WAL-safe backup and forward migrations; clean-install and every supported prior schema fixture are tested. Downgrade opens nothing writable when schema is newer.</p>
+<p>Uninstall removes application artifacts only. The user is told the exact XDG data/config/runtime locations and managed-worktree paths; an optional explicit purge procedure requires the daemon stopped and warns that deleting managed worktree directories outside Git commands can leave repository metadata.</p>
+
+<h2>Edge cases</h2>
+<ul>
+  <li>Launcher cwd is arbitrary or path contains spaces/Unicode: immutable resources still resolve and desktop entry remains safe.</li>
+  <li>Second launch while daemon starts: wait for existing-instance readiness within a bound, then open it or report failure.</li>
+  <li><code>xdg-open</code> missing/fails: daemon remains available and a clean bootstrap instruction is presented without persistent token logging.</li>
+  <li>Node ABI mismatches node-pty: doctor fails before product readiness with install/rebuild guidance.</li>
+  <li>zenity/kdialog absent: existing dashboard features work and workspace add shows the documented degraded typed-path recovery.</li>
+  <li>Pi absent/unsupported: dashboard can show setup/doctor information but terminal start is disabled clearly.</li>
+  <li>Upgrade backup fails or disk is full: migration does not begin and prior installation/data remain usable.</li>
+  <li>Interrupted artifact replacement: packaging/install procedure is atomic or recovery is documented/tested.</li>
+  <li>Uninstall with live Pi runtimes: launcher stops daemon cleanly or refuses until stopped; repositories/data are retained.</li>
+  <li>Artifact accidentally contains local XDG data or secrets: privacy test fails release.</li>
+</ul>
+
+<h2>Testing</h2>
+<h3>Unit</h3>
+<ul>
+  <li>Launcher argument/config precedence, readiness framing, exit-code mapping, resource resolution, existing-instance handshake, doctor redaction, and version compatibility.</li>
+  <li>Artifact manifest/license/checksum generation and forbidden-file/content scanning.</li>
+</ul>
+<h3>Integration</h3>
+<ul>
+  <li>Build from clean lockfile twice and compare manifest hashes excluding documented nondeterministic native metadata.</li>
+  <li>Install/launch from arbitrary cwd/path, missing prerequisites, occupied port, existing daemon, browser-open failure, and native-module mismatch.</li>
+  <li>Upgrade with active/residual WAL, backup/integrity check, migration, restore/reconcile, newer-schema refusal, and retained worktrees.</li>
+  <li>Uninstall preserves XDG data, central worktrees, Git repositories, and all Pi configuration/sessions.</li>
+</ul>
+<h3>End-to-end</h3>
+<ul>
+  <li>Clean supported Linux host completes bootstrap → native workspace selection → exact-base worktree create → real Pi terminal → ask-user blocked → done/acknowledge → clean removal → separate branch delete.</li>
+  <li>Optional desktop entry launches/focuses the same daemon and passes keyboard/reduced-motion/zoom smoke.</li>
+  <li>Each compatibility-matrix row records pass/fail evidence and no unsupported row is advertised as supported.</li>
+</ul>
+
+<h2>Acceptance criteria</h2>
+<ul>
+  <li>☐ Reproducible artifact builds from the lockfile and contains all required immutable resources at cwd-independent paths.</li>
+  <li>☐ Clean install, first launch, repeated launch, upgrade, restore/reconcile, downgrade refusal, and uninstall pass.</li>
+  <li>☐ Real Pi complete workflow passes on every advertised Linux matrix row.</li>
+  <li>☐ Artifact/log/privacy scans contain no forbidden secret, terminal, prompt, or user-data content.</li>
+  <li>☐ Third-party notices, checksums, version compatibility, and known limitations are complete.</li>
+  <li>☐ User installation, security, backup, recovery, troubleshooting, and data-retention documentation is verified by a clean tester.</li>
+  <li>☐ Phase 6 performance, security, accessibility, recovery, and resource gates still pass against the packaged build.</li>
+  <li>☐ Tests pass.</li>
+  <li>☐ Build, lint, and type checking pass.</li>
+  <li>☐ Documentation is updated.</li>
+</ul>
+
+<h2>Verification</h2>
+<pre><code>npm ci
+npm run build
+npm run lint
+npm run check
+npm test
+npm run test:integration
+npm run test:e2e
+npm run package:linux
+npm run artifact:verify -- ./dist/pi-dash-*.tar.gz
+npm run test:release -- --artifact ./dist/pi-dash-*.tar.gz
+npm run test:compatibility
+npm run release:checklist
+</code></pre>
+<p class="note"><strong>Release gate:</strong> publish only when the artifact, compatibility matrix, real-Pi journey, privacy scan, upgrade/restore, uninstall retention, licenses, checksums, and documentation all have recorded passing evidence.</p>
+</main></body></html>

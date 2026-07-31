@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phase 0: Terminal and Pi feasibility</title><style>:root{color-scheme:dark;--bg:#0b1020;--panel:#121a2d;--text:#e7edf8;--muted:#9cabbd;--accent:#70a5ff;--border:#2a3852}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}main{width:min(1040px,calc(100% - 28px));margin:auto;padding:32px 0 64px}h1,h2,h3{line-height:1.25}h2{margin-top:36px;border-bottom:1px solid var(--border);padding-bottom:7px}a{color:var(--accent)}code{background:#182238;padding:.1rem .35rem;border-radius:4px}pre{overflow:auto;background:#080d19;border:1px solid var(--border);border-radius:8px;padding:15px}pre code{background:none;padding:0}table{border-collapse:collapse;width:100%;display:block;overflow:auto}th,td{border:1px solid var(--border);padding:9px 11px;text-align:left;vertical-align:top}th{background:#182238}.note{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 17px}.muted{color:var(--muted)}</style></head><body><main>
+<p><a href="../PLAN.html">← Master plan</a> · <a href="phase-1-foundation.html">Next phase →</a></p>
+<h1>Phase 0: Terminal and Pi feasibility</h1>
+
+<h2>Outcome</h2>
+<p>An executable Linux spike proves that a Svelte 5 page using <code>@battlefieldduck/xterm-svelte</code> can drive an ordinary interactive Pi process through <code>node-pty</code> and a WebSocket without losing Pi's terminal UI. The spike demonstrates resizing, essential key chords, paste, ask-user custom UI, worktree-specific <code>cwd</code>, disconnect/reconnect, process exit, and a non-invasive lifecycle status side channel. A written decision record captures measured behavior and any design changes required before product construction.</p>
+
+<h2>Purpose</h2>
+<p>The exact terminal is the defining integration, and it carries the project's highest technical risk. Browser keyboard reporting, alternate-screen redraws, PTY lifecycle, xterm resource cleanup, and extension side-channel behavior must be observed against real Pi rather than assumed. This phase is intentionally a bounded throwaway harness: it retires architectural uncertainty before database, workspace, and production API work makes a terminal redesign expensive.</p>
+
+<h2>Dependencies</h2>
+<ul>
+  <li>Linux host with Node.js, npm, Git, a working <code>pi</code> executable, and at least one configured model.</li>
+  <li>Svelte 5, Vite, Fastify, WebSocket support, <code>node-pty</code>, and <code>@battlefieldduck/xterm-svelte</code>.</li>
+  <li>The installed Pi version must support interactive extensions, <code>agent_start</code>/<code>agent_settled</code>, and the shared extension event bus used by a compatible ask-user integration.</li>
+  <li>An installed ask-user extension, or a purpose-built spike ask-user extension, to validate blocked interaction rendering.</li>
+  <li>Decision: custom terminal WebSocket envelopes are used instead of xterm AttachAddon.</li>
+</ul>
+
+<h2>In scope</h2>
+<ul>
+  <li>One hard-coded or command-line-selected temporary Git worktree.</li>
+  <li>One Fastify process, one PTY, one browser terminal, and one status Unix socket.</li>
+  <li>Real interactive Pi TUI startup and representative global/project extensions.</li>
+  <li>Terminal resize via FitAddon and <code>ResizeObserver</code>.</li>
+  <li>Keyboard matrix for Enter, Shift+Enter, Alt+Enter, Escape, Ctrl+C, Ctrl+O, Ctrl+T, Ctrl+L, arrows, Tab, Backspace, and printable Unicode.</li>
+  <li>Clipboard paste, multiline input, output streaming, browser refresh, socket reconnect, and PTY shutdown.</li>
+  <li>Bounded output replay and forced-resize redraw experiment.</li>
+  <li>Status proof for agent start, ask-user start/end, agent settled, and session shutdown.</li>
+  <li>Repeated mount/unmount measurements for terminal, addon, observer, and WebSocket cleanup.</li>
+  <li>A self-contained spike lockfile and scripts; Phase 0 does not depend on the Phase 1 root workspace.</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+  <li>Production authentication, SQLite, migrations, workspace CRUD, or Git worktree creation UI.</li>
+  <li>Visual design beyond a minimal terminal host and status readout.</li>
+  <li>Persistent Pi processes after daemon restart.</li>
+  <li>Multiple simultaneous worktree runtimes or production input leasing.</li>
+  <li>macOS, Windows, remote access, packaging, or installation.</li>
+  <li>Keeping the spike's API or file layout as a compatibility promise.</li>
+</ul>
+
+<h2>Requirements</h2>
+<ul>
+  <li><strong>REQ-00-01:</strong> The harness shall spawn <code>pi</code> directly with <code>shell: false</code>, the selected worktree as <code>cwd</code>, and a bundled spike status extension.</li>
+  <li><strong>REQ-00-02:</strong> Pi's startup header, transcript, tools, editor, footer, selectors, and custom extension UI shall render legibly in xterm.</li>
+  <li><strong>REQ-00-03:</strong> Browser terminal input shall reach the PTY once and only once; no duplicated characters are permitted.</li>
+  <li><strong>REQ-00-04:</strong> Positive xterm column/row changes shall resize the PTY and trigger a correct Pi redraw.</li>
+  <li><strong>REQ-00-05:</strong> Shift+Enter shall insert a newline and Alt+Enter shall use Pi's follow-up behavior, using explicit escape translation if required.</li>
+  <li><strong>REQ-00-06:</strong> Escape and Ctrl+C shall retain Pi's abort/clear semantics and shall not be captured by the web page.</li>
+  <li><strong>REQ-00-07:</strong> The ask-user extension's terminal-native selector and free-text input shall be operable from the browser.</li>
+  <li><strong>REQ-00-08:</strong> The status extension shall report lifecycle events over a private Unix socket without writing visible terminal text or delaying Pi.</li>
+  <li><strong>REQ-00-09:</strong> A disconnected browser shall not terminate the PTY; reconnect shall produce an intelligible current screen through replay plus redraw.</li>
+  <li><strong>REQ-00-10:</strong> Closing the harness shall terminate Pi gracefully and leave no child process or socket behind.</li>
+  <li><strong>REQ-00-11:</strong> The decision record shall state pass/fail results, package versions, observed caveats, and whether the production architecture can proceed unchanged.</li>
+</ul>
+
+<h2>Non-functional requirements</h2>
+<ul>
+  <li><strong>Security:</strong> Bind the spike to loopback; do not expose arbitrary command input; use random status runtime IDs/tokens; do not log terminal content by default.</li>
+  <li><strong>Performance:</strong> The dashboard bridge shall add no more than 50 ms p95 input-to-echo latency on localhost with the fake PTY; reconnect shall become usable within 2 seconds when replay is available; a 5 MiB/s, 30-second output test shall not freeze the page; 100 mount/unmount cycles shall leave no live sockets/observers and less than 10% retained-heap growth after forced GC in the test harness.</li>
+  <li><strong>Accessibility:</strong> The terminal host shall have an accessible label, visible focus treatment outside xterm, and a documented keyboard-only path to focus the terminal.</li>
+  <li><strong>Reliability:</strong> Disconnects, malformed WebSocket messages, status-socket absence, Pi exit, and repeated browser refreshes shall not crash the daemon.</li>
+  <li><strong>Compatibility:</strong> Record Linux distribution, desktop/session type, browser, Node, Pi, xterm-svelte, xterm, and node-pty versions. Chromium is the required spike browser; Firefox is a useful secondary check.</li>
+</ul>
+
+<h2>Technical design</h2>
+<p>The spike consists of a tiny Svelte client and Fastify server under <code>spikes/terminal-bridge</code>. The server accepts a worktree path through a startup option, validates it as a Git top level, creates a Unix socket under a temporary private directory, then starts one PTY. The PTY executable is the resolved Pi binary and receives <code>PI_DASH_STATUS_SOCKET</code>, <code>PI_DASH_RUNTIME_ID</code>, and <code>PI_DASH_STATUS_TOKEN</code>.</p>
+<p>The Svelte component binds the xterm instance exposed by xterm-svelte, dynamically loads FitAddon and Unicode11Addon, observes its host, and forwards <code>onData</code>. It handles <code>onBinary</code> separately so binary mouse reports are not corrupted. The wrapper registers stable callbacks and performs explicit disposal in Svelte teardown because xterm-svelte's component lifecycle must not be assumed to dispose the terminal and event resources.</p>
+<p>The server keeps a sequence-numbered ring buffer with a deliberately small configurable cap so overflow behavior can be exercised. Reconnect sends the available replay and then performs a resize nudge to request a complete Pi redraw. The experiment records whether this is sufficient for the alternate screen. If not, the decision record compares xterm serialization/headless state or a later tmux capture strategy; Phase 4 may not begin until one bounded approach is selected.</p>
+<p>The status extension starts its socket client only on <code>session_start</code> and listens for the <code>pi-dash:attention</code> shared event. The compatible ask-user fixture emits start immediately before awaiting UI and end in <code>finally</code>; tool preflight alone must never mark blocked. Connection errors are swallowed/debug-logged outside the terminal, and ANSI output is never parsed for state.</p>
+
+<h2>Interfaces and contracts</h2>
+<pre><code>type ClientFrame =
+  | { v: 0; type: "input"; data: string }
+  | { v: 0; type: "binaryInput"; dataBase64: string }
+  | { v: 0; type: "resize"; cols: number; rows: number }
+  | { v: 0; type: "replayFrom"; seq: number };
+
+type ServerFrame =
+  | { v: 0; type: "hello"; runtimeId: string; earliestSeq: number; latestSeq: number }
+  | { v: 0; type: "output"; seq: number; data: string }
+  | { v: 0; type: "runtime"; state: "running" | "exited"; exitCode: number | null }
+  | { v: 0; type: "status"; event: string }
+  | { v: 0; type: "error"; code: string; message: string };
+</code></pre>
+<p>The spike protocol is version zero and disposable. Frame sizes, resize bounds, and UTF-8 behavior are explicit. The status socket uses LF-delimited JSON and rejects events with a wrong runtime ID/token. A development-only <code>GET /spike/diagnostics</code> may expose counts and versions, but not terminal bytes or secrets.</p>
+<table><thead><tr><th>Test action</th><th>Expected observation</th></tr></thead><tbody>
+<tr><td>Open <code>/model</code>, <code>/settings</code>, and <code>/tree</code></td><td>Selectors draw, navigate, cancel, and restore the editor.</td></tr>
+<tr><td>Invoke ask-user with options and free text</td><td>Custom terminal UI renders; status is blocked until answer/cancel.</td></tr>
+<tr><td>Resize sidebar/window repeatedly</td><td>Fit emits valid sizes; Pi redraw has no accumulating artifacts.</td></tr>
+<tr><td>Refresh during model streaming and during ask-user</td><td>Pi remains alive and the reattached terminal becomes usable.</td></tr>
+<tr><td>Mount/unmount terminal 100 times</td><td>No unbounded growth in sockets, observers, listeners, or xterm instances.</td></tr>
+</tbody></table>
+
+<h2>Work breakdown</h2>
+<ol>
+  <li>Create the isolated spike package and minimal Svelte/Fastify development scripts.</li>
+  <li>Implement PTY launch, status Unix socket, WebSocket framing, bounded replay, and graceful process cleanup.</li>
+  <li>Implement the xterm-svelte host with fit, Unicode, key translation hooks, input/output, reconnect, and explicit teardown.</li>
+  <li>Create a minimal Pi lifecycle extension plus compatible ask-user fixture/integration; verify attention start immediately before UI await, end in finally, and no blocked state from preflight alone.</li>
+  <li>Run the keyboard, resize, reconnect, alternate-screen, high-output, and resource-lifecycle matrix.</li>
+  <li>Write the decision record, record package versions, and update later phase contracts if evidence requires changes.</li>
+  <li>Add automated protocol/unit tests and a smoke driver that uses a fake terminal process when an authenticated Pi run is unavailable.</li>
+  <li>Document prerequisites, commands, manual checks, failures, and the explicit go/no-go conclusion.</li>
+</ol>
+
+<h2>Files or components affected</h2>
+<h3>Create</h3>
+<ul>
+  <li><code>spikes/terminal-bridge/package.json</code> and <code>spikes/terminal-bridge/package-lock.json</code></li>
+  <li><code>spikes/terminal-bridge/src/server.ts</code></li>
+  <li><code>spikes/terminal-bridge/src/status-extension.ts</code></li>
+  <li><code>spikes/terminal-bridge/src/TerminalSpike.svelte</code></li>
+  <li><code>spikes/terminal-bridge/src/protocol.ts</code></li>
+  <li><code>spikes/terminal-bridge/test/</code></li>
+  <li><code>docs/architecture/terminal-feasibility.md</code></li>
+</ul>
+<h3>Modify</h3>
+<ul><li>None. The spike is self-contained so the foundation workspace can be designed in Phase 1.</li></ul>
+
+<h2>Data and migrations</h2>
+<p>No production schema or migration is introduced. The spike may write temporary socket and diagnostic files beneath a <code>mkdtemp</code> directory and must delete them on clean shutdown. It shall not read or mutate the future application database. Any captured measurements must omit terminal content and secrets.</p>
+
+<h2>Edge cases</h2>
+<ul>
+  <li>Pi executable missing or non-executable: startup fails before listening with an actionable diagnostic.</li>
+  <li>Selected path is not a Git worktree: PTY is not started.</li>
+  <li>Status extension cannot connect: Pi remains fully usable and status capability is shown as degraded.</li>
+  <li>Browser closes while ask-user is open: Pi remains blocked; reconnect permits answering in the terminal.</li>
+  <li>Output buffer wraps while disconnected: server sends a reset marker and forces redraw rather than pretending replay is complete.</li>
+  <li>Zero-sized or hidden terminal host: do not send a zero resize; fit when visible again.</li>
+  <li>WebGL unavailable: use xterm's default renderer; WebGL is not required.</li>
+  <li>IME or Unicode wide characters: verify cursor alignment with Unicode11Addon and record limitations.</li>
+  <li>Pi exits itself through <code>/quit</code>: PTY exit is reported and the WebSocket remains able to display final state.</li>
+  <li>Daemon receives SIGINT/SIGTERM: one graceful cleanup path runs at most once.</li>
+</ul>
+
+<h2>Testing</h2>
+<h3>Unit</h3>
+<ul>
+  <li>Protocol schema acceptance/rejection, message-size limits, resize bounds, and Base64 binary decoding.</li>
+  <li>Ring-buffer sequence, replay, and overflow behavior.</li>
+  <li>Status reducer correlation for shared attention start/end, no preflight false positive, and stale runtime events.</li>
+  <li>Key translation helper for modified Enter without altering unrelated keys.</li>
+</ul>
+<h3>Integration</h3>
+<ul>
+  <li>Fake PTY fixture echoes input, emits ANSI/full-screen sequences, responds to resize, and exits with selected codes.</li>
+  <li>Real node-pty process survives WebSocket disconnect and is cleaned on server shutdown.</li>
+  <li>Status extension connects, authenticates, reconnects after reload, and fails open when the socket disappears.</li>
+  <li>Real Pi manual/guarded smoke covers selectors, ask-user, streaming, tools, and extension UI.</li>
+</ul>
+<h3>End-to-end</h3>
+<ul>
+  <li>Playwright opens the spike, types into a fake PTY, observes output, resizes, refreshes, reattaches, and exits.</li>
+  <li>A documented manual Linux run exercises the full keyboard matrix and records evidence in the decision record.</li>
+  <li>Repeated terminal creation/destruction verifies stable daemon handle counts and browser heap within an agreed tolerance.</li>
+</ul>
+
+<h2>Acceptance criteria</h2>
+<ul>
+  <li>☐ Real Pi and extension-provided terminal UI are usable in the browser.</li>
+  <li>☐ Required key chords, multiline input, paste, resize, and ask-user behavior pass the recorded Linux matrix.</li>
+  <li>☐ Browser disconnect/reconnect leaves Pi alive and restores a usable terminal.</li>
+  <li>☐ Status events identify working, blocked, and settled transitions without ANSI parsing.</li>
+  <li>☐ Alternate-screen recovery has a documented, bounded production design.</li>
+  <li>☐ Repeated lifecycle testing shows no unbounded terminal, listener, observer, socket, or child-process leak.</li>
+  <li>☐ Observable failures and package versions are recorded in <code>docs/architecture/terminal-feasibility.md</code>.</li>
+  <li>☐ Tests pass.</li>
+  <li>☐ Build, lint, and type checking pass.</li>
+  <li>☐ Documentation is updated.</li>
+</ul>
+
+<h2>Verification</h2>
+<pre><code>npm --prefix spikes/terminal-bridge ci
+npm --prefix spikes/terminal-bridge run dev -- --cwd /path/to/test-worktree
+npm --prefix spikes/terminal-bridge run test
+npm --prefix spikes/terminal-bridge run check
+npm --prefix spikes/terminal-bridge run test:e2e
+npm --prefix spikes/terminal-bridge run lint
+</code></pre>
+<p class="note"><strong>Exit gate:</strong> Phase 1 may begin only after the decision record says “proceed” and either validates bounded replay/redraw or names the replacement recovery mechanism that Phase 4 must implement.</p>
+</main></body></html>
