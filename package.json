@@ -1,0 +1,42 @@
+{
+  "name": "pi-dash",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "npm run build -w @pi-dash/contracts && npm run build -w @pi-dash/pi-extension && npm run build -w @pi-dash/web && npm run build -w @pi-dash/server",
+    "check": "npm run check --workspaces --if-present",
+    "db:migrate": "npm run db:migrate -w @pi-dash/server --",
+    "dev": "concurrently --kill-others-on-fail --names server,web \"npm run dev -w @pi-dash/server\" \"npm run dev -w @pi-dash/web\"",
+    "format": "prettier --write --ignore-path .gitignore --ignore-path .prettierignore .",
+    "format:check": "prettier --check --ignore-path .gitignore --ignore-path .prettierignore .",
+    "lint": "eslint apps packages tests *.ts",
+    "prod": "npm run build && npm start",
+    "start": "npm start -w @pi-dash/server --",
+    "test": "vitest run",
+    "test:e2e": "npm run build && playwright test"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.2",
+    "@playwright/test": "1.58.2",
+    "@types/node": "24.10.13",
+    "concurrently": "10.0.4",
+    "eslint": "9.39.2",
+    "eslint-plugin-svelte": "3.14.0",
+    "globals": "17.3.0",
+    "prettier": "3.9.6",
+    "prettier-plugin-svelte": "3.4.1",
+    "svelte-eslint-parser": "1.4.1",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.54.0",
+    "vitest": "4.1.10"
+  }
+}

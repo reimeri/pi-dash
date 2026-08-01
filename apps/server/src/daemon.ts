@@ -1,0 +1,134 @@
+import { fileURLToPath } from "node:url";
+import type { Logger } from "pino";
+import { buildHttpServer, type HttpServer } from "./app.js";
+import { createAuthService, type AuthService } from "./auth.js";
+import { loadConfig, type AppConfig } from "./config.js";
+import { openDatabase, type DatabaseService } from "./database.js";
+import { acquireDaemonLock, type DaemonLock } from "./lock.js";
+import { createLogger } from "./logger.js";
+import {
+  removeRuntimeFile,
+  resolveAppPaths,
+  secureWriteFile,
+  type AppPaths,
+} from "./paths.js";
+import { createOriginPolicy } from "./security.js";
+
+const migrationsDirectory = fileURLToPath(
+  new URL("../../../migrations", import.meta.url),
+);
+const defaultStaticDirectory = fileURLToPath(
+  new URL("../../web/dist", import.meta.url),
+);
+
+export interface Daemon {
+  app: HttpServer;
+  auth: AuthService;
+  config: AppConfig;
+  database: DatabaseService;
+  paths: AppPaths;
+  bootstrapUrl: string;
+  markReady(): void;
+  shutdown(): Promise<void>;
+}
+
+export async function createDaemon(
+  options: {
+    args?: readonly string[];
+    env?: NodeJS.ProcessEnv;
+    logger?: Logger;
+  } = {},
+): Promise<Daemon> {
+  const env = options.env ?? process.env;
+  const config = loadConfig(options.args ?? process.argv.slice(2), env);
+  const logger = options.logger ?? createLogger(config.logLevel);
+  const paths = resolveAppPaths(config, env);
+  let lock: DaemonLock | undefined;
+  let database: DatabaseService | undefined;
+  let app: HttpServer | undefined;
+  let auth: AuthService | undefined;
+  let shutdownPromise: Promise<void> | undefined;
+  let bootstrapOutputWritten = false;
+  let runtimeInfoWritten = false;
+
+  const cleanup = async (): Promise<void> => {
+    const failures: unknown[] = [];
+    const attempt = async (operation: () => void | Promise<void>) => {
+      try {
+        await operation();
+      } catch (error) {
+        failures.push(error);
+      }
+    };
+    if (app) await attempt(() => app!.close());
+    if (auth) await attempt(() => auth!.clear());
+    if (database) await attempt(() => database!.close());
+    if (runtimeInfoWritten)
+      await attempt(() => removeRuntimeFile(paths.runtimeInfo));
+    if (bootstrapOutputWritten && config.bootstrapOutput) {
+      await attempt(() => removeRuntimeFile(config.bootstrapOutput!));
+    }
+    if (lock) await attempt(() => lock!.release());
+    await attempt(() => logger.flush());
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        "One or more daemon cleanup operations failed",
+      );
+    }
+  };
+
+  try {
+    lock = acquireDaemonLock(paths.lock);
+    database = await openDatabase({
+      path: paths.database,
+      migrationsDirectory,
+    });
+    const policy = createOriginPolicy(config);
+    auth = createAuthService({ policy });
+    app = await buildHttpServer({
+      config,
+      database,
+      auth,
+      policy,
+      logger,
+      staticDirectory: config.staticDir ?? defaultStaticDirectory,
+    });
+    const bootstrapUrl = `${policy.serverOrigin}/auth/bootstrap?token=${encodeURIComponent(auth.bootstrapToken)}`;
+    if (config.bootstrapOutput) {
+      secureWriteFile(config.bootstrapOutput, `${bootstrapUrl}\n`);
+      bootstrapOutputWritten = true;
+    }
+
+    const daemon: Daemon = {
+      app,
+      auth,
+      config,
+      database,
+      paths,
+      bootstrapUrl,
+      markReady() {
+        secureWriteFile(
+          paths.runtimeInfo,
+          `${JSON.stringify({ pid: process.pid, host: config.host, port: config.port, version: "0.1.0" })}\n`,
+        );
+        runtimeInfoWritten = true;
+      },
+      shutdown() {
+        shutdownPromise ??= cleanup();
+        return shutdownPromise;
+      },
+    };
+    return daemon;
+  } catch (error) {
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Daemon startup and cleanup both failed",
+      );
+    }
+    throw error;
+  }
+}

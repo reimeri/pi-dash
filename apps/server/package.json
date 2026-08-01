@@ -1,0 +1,29 @@
+{
+  "name": "@pi-dash/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "check": "tsc -b --pretty false",
+    "db:migrate": "tsx src/migrate-cli.ts",
+    "dev": "NODE_ENV=development PI_DASH_UI_ORIGIN=http://127.0.0.1:5173 tsx watch src/cli.ts",
+    "start": "node dist/cli.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/cookie": "11.1.2",
+    "@fastify/static": "10.1.2",
+    "@pi-dash/contracts": "0.1.0",
+    "@sinclair/typebox": "0.34.52",
+    "better-sqlite3": "13.0.2",
+    "drizzle-orm": "0.45.2",
+    "fastify": "5.11.0",
+    "fs-ext": "2.1.1",
+    "pino": "10.3.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/fs-ext": "2.0.3"
+  }
+}

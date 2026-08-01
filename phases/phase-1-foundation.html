@@ -3,6 +3,18 @@
 <p><a href="phase-0-terminal-feasibility.html">← Previous phase</a> · <a href="../PLAN.html">Master plan</a> · <a href="phase-2-workspaces.html">Next phase →</a></p>
 <h1>Phase 1: Application foundation</h1>
 
+<p class="note"><strong>Status: Complete — exit gate passed.</strong> Phase 1 was implemented and verified on 2026-08-01. Phase 2 may build on the shared contracts, injected server services, repository interfaces, authenticated local API boundary, and migration infrastructure established here.</p>
+
+<h2>Completed work summary</h2>
+<ul>
+  <li>Created the Node.js 24 npm workspace with Svelte 5/Vite, Fastify, shared TypeBox contracts, a Pi extension placeholder, TypeScript project configuration, ESLint, Prettier, Vitest, and Playwright.</li>
+  <li>Implemented validated JSON, environment, and CLI configuration; private XDG data/config/runtime paths; structured secret-redacting logs; kernel-backed per-data-root locking; process signal handling; and failure-isolated idempotent shutdown.</li>
+  <li>Implemented SQLite through better-sqlite3 and Drizzle with foundation metadata, ordered checksum-tracked transactional migrations, foreign keys, WAL mode, busy timeout, newer-schema rejection, and verified WAL-safe backups before upgrades.</li>
+  <li>Implemented the Fastify composition root, production static SPA serving, development proxy contract, health and session APIs, stable request-ID error envelopes, strict loopback Host/Origin policy, one-use bootstrap authentication, HttpOnly SameSite=Strict sessions, CSRF enforcement, and the reusable WebSocket authentication helper.</li>
+  <li>Implemented the accessible dark two-pane Svelte shell, runtime-validated API client, empty workspace guidance, global live error region, and connecting, ready, disconnected, unauthorized, and migration-failed states.</li>
+  <li>Added operations, local-security, migration, and testing documentation plus unit, integration, multi-process lock, and production Chromium end-to-end coverage.</li>
+</ul>
+
 <h2>Outcome</h2>
 <p>A production-shaped local application starts through one npm command: a loopback Fastify daemon migrates a SQLite database, serves an authenticated Svelte 5 SPA in production, exposes health/version information, and supports shared validated contracts and structured errors. The UI displays its two-pane dashboard shell, connection state, empty workspace sidebar, and setup guidance. Unit, integration, and browser test infrastructure is operational.</p>
 
@@ -183,15 +195,15 @@ interface ApiErrorEnvelope {
 
 <h2>Acceptance criteria</h2>
 <ul>
-  <li>☐ One development command runs web and server with working API proxying; one production command serves the built SPA from Fastify.</li>
-  <li>☐ The daemon binds only to loopback and authenticated browser access succeeds through a one-time bootstrap URL.</li>
-  <li>☐ SQLite initializes and migrates deterministically in XDG data storage.</li>
-  <li>☐ Shared contracts validate requests on the server and type responses in the web app.</li>
-  <li>☐ The empty two-pane Svelte dashboard is keyboard accessible and shows connection/error states.</li>
-  <li>☐ No token, cookie, terminal placeholder, or sensitive path appears in normal logs.</li>
-  <li>☐ Tests pass.</li>
-  <li>☐ Build, lint, and type checking pass.</li>
-  <li>☐ Documentation is updated.</li>
+  <li>☑ One development command runs web and server with working API proxying; one production command serves the built SPA from Fastify.</li>
+  <li>☑ The daemon binds only to loopback and authenticated browser access succeeds through a one-time bootstrap URL.</li>
+  <li>☑ SQLite initializes and migrates deterministically in XDG data storage.</li>
+  <li>☑ Shared contracts validate requests on the server and type and runtime-validate responses in the web app.</li>
+  <li>☑ The empty two-pane Svelte dashboard is keyboard accessible and shows connection/error states.</li>
+  <li>☑ No token, cookie, terminal placeholder, or sensitive path appears in normal logs.</li>
+  <li>☑ Tests pass.</li>
+  <li>☑ Build, lint, formatting, and type checking pass.</li>
+  <li>☑ Documentation is updated.</li>
 </ul>
 
 <h2>Verification</h2>
@@ -204,5 +216,14 @@ npm test
 npm run test:e2e
 npm run dev
 </code></pre>
-<p class="note"><strong>Exit gate:</strong> later phases may depend only on documented contracts from <code>packages/contracts</code>, injected server services, and repository interfaces—not on route-internal or global mutable state.</p>
+<h3>Final verification status</h3>
+<ul>
+  <li><code>npm ci</code>, the migration command, formatting check, lint, type/Svelte checks, and all workspace builds passed.</li>
+  <li>Vitest passed 24 unit and integration tests.</li>
+  <li>Playwright passed 2 production Chromium end-to-end tests covering bootstrap history cleanup, authenticated reload, unauthorized access, and wrong Host/Origin denial.</li>
+  <li>The combined development command and Vite API proxy were smoke-tested successfully.</li>
+  <li>The production dependency audit reported zero vulnerabilities.</li>
+  <li>An independent implementation and security review found no remaining acceptance blockers.</li>
+</ul>
+<p class="note"><strong>Exit gate: Passed.</strong> Later phases may depend only on documented contracts from <code>packages/contracts</code>, injected server services, and repository interfaces—not on route-internal or global mutable state.</p>
 </main></body></html>

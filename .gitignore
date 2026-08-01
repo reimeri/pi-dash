@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+*.log
+.env
+.env.*
+!.env.example
+.pi-dash-data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite.backup-*
+.DS_Store
