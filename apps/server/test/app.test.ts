@@ -14,6 +14,10 @@ import {
 import type { AppConfig } from "../src/config.js";
 import { openDatabase, type DatabaseService } from "../src/database.js";
 import { createOriginPolicy } from "../src/security.js";
+import { createGitInspector } from "../src/git/git-inspector.js";
+import { createNativeDirectoryDialog } from "../src/platform/native-directory-dialog.js";
+import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
+import { createWorkspaceService } from "../src/workspaces/workspace-service.js";
 
 const migrationsDirectory = fileURLToPath(
   new URL("../../../migrations", import.meta.url),
@@ -30,6 +34,7 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
     host: "127.0.0.1",
     port: 4317,
     piExecutable: "pi",
+    nativeDialog: "disabled",
     logLevel: "silent",
     mode: "test",
   };
@@ -39,6 +44,12 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
   });
   const policy = createOriginPolicy(config);
   const auth = createAuthService({ policy });
+  const git = await createGitInspector();
+  const dialogs = await createNativeDirectoryDialog({ mode: "disabled" });
+  const workspaces = createWorkspaceService({
+    repository: createWorkspaceRepository(database.sqlite),
+    git,
+  });
   const app = await buildHttpServer({
     config,
     database,
@@ -46,6 +57,9 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
     policy,
     logger: pino({ level: "silent" }),
     staticDirectory: join(root, "unused"),
+    dialogs,
+    workspaces,
+    capabilities: { git: true, nativeDirectoryDialog: false },
   });
   resources.push({ root, app, database });
   return { app, auth };
@@ -77,11 +91,11 @@ describe("Fastify foundation API", () => {
     expect(response.json()).toEqual({
       status: "ready",
       version: "0.1.0",
-      schemaVersion: 1,
+      schemaVersion: 2,
       capabilities: {
-        git: "unknown",
+        git: "available",
         pi: "unknown",
-        nativeDirectoryDialog: "unknown",
+        nativeDirectoryDialog: "unavailable",
         pty: "unknown",
       },
     });

@@ -1,8 +1,10 @@
 import { Type, type Static } from "@sinclair/typebox";
 
+export * from "./workspaces.js";
+
 export const APP_VERSION = "0.1.0";
 export const API_VERSION = 1;
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 export const CapabilityStateSchema = Type.Union([
   Type.Literal("available"),
@@ -54,6 +56,15 @@ export const ApiErrorCodes = {
   CONFLICT: "CONFLICT",
   INTERNAL_ERROR: "INTERNAL_ERROR",
   MIGRATION_REQUIRED: "MIGRATION_REQUIRED",
+  DIALOG_BUSY: "DIALOG_BUSY",
+  DIALOG_UNAVAILABLE: "DIALOG_UNAVAILABLE",
+  PATH_NOT_FOUND: "PATH_NOT_FOUND",
+  PATH_INACCESSIBLE: "PATH_INACCESSIBLE",
+  NOT_A_GIT_WORKTREE: "NOT_A_GIT_WORKTREE",
+  WORKSPACE_EXISTS: "WORKSPACE_EXISTS",
+  WORKSPACE_HAS_WORKTREES: "WORKSPACE_HAS_WORKTREES",
+  GIT_UNAVAILABLE: "GIT_UNAVAILABLE",
+  GIT_TIMEOUT: "GIT_TIMEOUT",
 } as const;
 export type ApiErrorCode = (typeof ApiErrorCodes)[keyof typeof ApiErrorCodes];
 

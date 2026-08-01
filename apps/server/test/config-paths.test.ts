@@ -35,6 +35,7 @@ describe("configuration", () => {
       JSON.stringify({
         port: 4100,
         piExecutable: "pi-from-file",
+        nativeDialog: "kdialog",
         logLevel: "warn",
       }),
     );
@@ -46,12 +47,19 @@ describe("configuration", () => {
         "4300",
         "--pi-executable",
         "pi-from-cli",
+        "--native-dialog",
+        "auto",
       ],
-      { PI_DASH_PORT: "4200", NODE_ENV: "test" },
+      {
+        PI_DASH_PORT: "4200",
+        PI_DASH_NATIVE_DIALOG: "zenity",
+        NODE_ENV: "test",
+      },
     );
     expect(config.port).toBe(4300);
     expect(config.piExecutable).toBe("pi-from-cli");
     expect(config.logLevel).toBe("warn");
+    expect(config.nativeDialog).toBe("auto");
     expect(config.mode).toBe("test");
   });
 
@@ -70,6 +78,13 @@ describe("configuration", () => {
     );
     expect(() => loadConfig(["--config-dir", root], {})).toThrow(
       "unknown config key",
+    );
+    writeFileSync(
+      join(root, "config.json"),
+      JSON.stringify({ nativeDialog: "other" }),
+    );
+    expect(() => loadConfig(["--config-dir", root], {})).toThrow(
+      "config nativeDialog is invalid",
     );
   });
 

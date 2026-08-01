@@ -13,6 +13,16 @@ import {
   type AppPaths,
 } from "./paths.js";
 import { createOriginPolicy } from "./security.js";
+import { createGitInspector } from "./git/git-inspector.js";
+import {
+  createNativeDirectoryDialog,
+  type NativeDirectoryDialogService,
+} from "./platform/native-directory-dialog.js";
+import {
+  createWorkspaceService,
+  type WorkspaceService,
+} from "./workspaces/workspace-service.js";
+import { createWorkspaceRepository } from "./workspaces/workspace-repository.js";
 
 const migrationsDirectory = fileURLToPath(
   new URL("../../../migrations", import.meta.url),
@@ -47,6 +57,8 @@ export async function createDaemon(
   let database: DatabaseService | undefined;
   let app: HttpServer | undefined;
   let auth: AuthService | undefined;
+  let dialogs: NativeDirectoryDialogService | undefined;
+  let workspaces: WorkspaceService | undefined;
   let shutdownPromise: Promise<void> | undefined;
   let bootstrapOutputWritten = false;
   let runtimeInfoWritten = false;
@@ -61,6 +73,10 @@ export async function createDaemon(
       }
     };
     if (app) await attempt(() => app!.close());
+    else {
+      if (workspaces) await attempt(() => workspaces!.close());
+      if (dialogs) await attempt(() => dialogs!.close());
+    }
     if (auth) await attempt(() => auth!.clear());
     if (database) await attempt(() => database!.close());
     if (runtimeInfoWritten)
@@ -86,6 +102,19 @@ export async function createDaemon(
     });
     const policy = createOriginPolicy(config);
     auth = createAuthService({ policy });
+    const git = await createGitInspector({ env });
+    dialogs = await createNativeDirectoryDialog({
+      mode: config.nativeDialog,
+      env,
+    });
+    const [gitAvailable, dialogCapability] = await Promise.all([
+      git.probe(),
+      dialogs.probe(),
+    ]);
+    workspaces = createWorkspaceService({
+      repository: createWorkspaceRepository(database.sqlite),
+      git,
+    });
     app = await buildHttpServer({
       config,
       database,
@@ -93,7 +122,14 @@ export async function createDaemon(
       policy,
       logger,
       staticDirectory: config.staticDir ?? defaultStaticDirectory,
+      dialogs,
+      workspaces,
+      capabilities: {
+        git: gitAvailable,
+        nativeDirectoryDialog: dialogCapability.available,
+      },
     });
+    workspaces.startHealthRefresh();
     const bootstrapUrl = `${policy.serverOrigin}/auth/bootstrap?token=${encodeURIComponent(auth.bootstrapToken)}`;
     if (config.bootstrapOutput) {
       secureWriteFile(config.bootstrapOutput, `${bootstrapUrl}\n`);

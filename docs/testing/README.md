@@ -2,12 +2,12 @@
 
 ## Test layers
 
-- `npm test` runs Vitest contract, configuration/path, authentication, database/backup, Fastify integration, daemon-lock/lifecycle, and frontend reducer tests.
-- `npm run test:e2e` builds all workspaces, launches a production daemon with temporary XDG-style roots, and runs the Chromium bootstrap/dashboard smoke flow.
+- `npm test` runs Vitest contract, configuration/path, authentication, database/backup, safe-process, native-dialog, Git inspection, workspace service/API, daemon lifecycle, and frontend store/reducer tests.
+- `npm run test:e2e` builds all workspaces, launches production daemons with temporary XDG-style roots, and runs the Chromium bootstrap and workspace registration flows.
 - `npm run check` runs TypeScript and Svelte diagnostics.
 - `npm run lint` and `npm run format:check` enforce source style.
 
-Tests create isolated roots under the system temporary directory and remove them afterward. The E2E suite uses port `4318`; ensure it is free. A local Chrome installation is expected by the Playwright configuration.
+Tests create isolated roots and temporary Git repositories under the system temporary directory and remove them afterward. The E2E suite uses ports `4318` and `4319`; ensure they are free. A local Chrome installation is expected by the Playwright configuration.
 
 ## Migration fixtures
 

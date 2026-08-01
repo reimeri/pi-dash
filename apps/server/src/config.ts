@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import type { NativeDialogMode } from "./platform/native-directory-dialog.js";
 
 export const LOG_LEVELS = [
   "fatal",
@@ -21,6 +22,7 @@ export interface AppConfig {
   configDir?: string;
   runtimeDir?: string;
   piExecutable: string;
+  nativeDialog: NativeDialogMode;
   logLevel: LogLevel;
   uiOrigin?: string;
   staticDir?: string;
@@ -34,6 +36,7 @@ interface ConfigFile {
   dataDir?: string;
   runtimeDir?: string;
   piExecutable?: string;
+  nativeDialog?: NativeDialogMode;
   logLevel?: LogLevel;
   uiOrigin?: string;
   staticDir?: string;
@@ -47,6 +50,7 @@ const configFileKeys = new Set([
   "dataDir",
   "runtimeDir",
   "piExecutable",
+  "nativeDialog",
   "logLevel",
   "uiOrigin",
   "staticDir",
@@ -60,6 +64,7 @@ const cliNames = new Set([
   "config-dir",
   "runtime-dir",
   "pi-executable",
+  "native-dialog",
   "log-level",
   "ui-origin",
   "static-dir",
@@ -114,6 +119,13 @@ function readConfigFile(configDir: string): ConfigFile {
           !LOG_LEVELS.includes(value as LogLevel)
         ) {
           throw new Error("config logLevel is invalid");
+        }
+      } else if (key === "nativeDialog") {
+        if (
+          typeof value !== "string" ||
+          !["auto", "zenity", "kdialog", "disabled"].includes(value)
+        ) {
+          throw new Error("config nativeDialog is invalid");
         }
       } else if (typeof value !== "string" || value.length === 0) {
         throw new Error(`config ${key} must be a non-empty string`);
@@ -197,6 +209,18 @@ export function loadConfig(
   if (!LOG_LEVELS.includes(rawLogLevel as LogLevel))
     throw new Error(`Invalid log level: ${rawLogLevel}`);
 
+  const nativeDialog = String(
+    pick(
+      cli["native-dialog"],
+      env.PI_DASH_NATIVE_DIALOG,
+      file.nativeDialog,
+      "auto",
+    ),
+  );
+  if (!["auto", "zenity", "kdialog", "disabled"].includes(nativeDialog)) {
+    throw new Error(`Invalid native dialog mode: ${nativeDialog}`);
+  }
+
   const modeValue = env.NODE_ENV;
   const mode =
     modeValue === "test"
@@ -225,6 +249,7 @@ export function loadConfig(
         "pi",
       ),
     ),
+    nativeDialog: nativeDialog as NativeDialogMode,
     logLevel: rawLogLevel as LogLevel,
     uiOrigin: validateOrigin(
       String(

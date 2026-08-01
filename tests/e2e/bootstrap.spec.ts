@@ -93,7 +93,9 @@ test("bootstrap lands on a clean authenticated dashboard and survives reload", a
   await expect(
     page.getByRole("heading", { name: "Add a workspace to get started" }),
   ).toBeVisible();
-  await expect(page.getByRole("status")).toContainText("Connected");
+  await expect(
+    page.getByRole("status", { name: "Daemon connection" }),
+  ).toContainText("Connected");
   expect(page.url()).not.toContain("token");
   expect(await page.evaluate(() => Object.keys(localStorage))).toEqual([]);
   expect(await page.evaluate(() => Object.keys(sessionStorage))).toEqual([]);
@@ -101,9 +103,13 @@ test("bootstrap lands on a clean authenticated dashboard and survives reload", a
   await page.goBack();
   expect(page.url()).not.toContain("token=");
   await page.goto(`http://127.0.0.1:${port}/`);
-  await expect(page.getByRole("status")).toContainText("Connected");
+  await expect(
+    page.getByRole("status", { name: "Daemon connection" }),
+  ).toContainText("Connected");
   await page.reload();
-  await expect(page.getByRole("status")).toContainText("Connected");
+  await expect(
+    page.getByRole("status", { name: "Daemon connection" }),
+  ).toContainText("Connected");
 
   await page.goto(bootstrapUrl);
   await expect(page).toHaveURL(`http://127.0.0.1:${port}/auth/bootstrap`);

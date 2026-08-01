@@ -19,6 +19,9 @@ import type { AppConfig } from "./config.js";
 import type { DatabaseService } from "./database.js";
 import { ApiHttpError } from "./errors.js";
 import type { OriginPolicy } from "./security.js";
+import type { NativeDirectoryDialogService } from "./platform/native-directory-dialog.js";
+import type { WorkspaceService } from "./workspaces/workspace-service.js";
+import { registerWorkspaceRoutes } from "./workspaces/workspace-routes.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -44,6 +47,12 @@ export interface HttpServerOptions {
   policy: OriginPolicy;
   logger: Logger;
   staticDirectory: string;
+  dialogs: NativeDirectoryDialogService;
+  workspaces: WorkspaceService;
+  capabilities: {
+    git: boolean;
+    nativeDirectoryDialog: boolean;
+  };
 }
 
 export async function buildHttpServer(options: HttpServerOptions) {
@@ -169,9 +178,11 @@ export async function buildHttpServer(options: HttpServerOptions) {
       version: APP_VERSION,
       schemaVersion: options.database.schemaVersion,
       capabilities: {
-        git: "unknown",
+        git: options.capabilities.git ? "available" : "unavailable",
         pi: "unknown",
-        nativeDirectoryDialog: "unknown",
+        nativeDirectoryDialog: options.capabilities.nativeDirectoryDialog
+          ? "available"
+          : "unavailable",
         pty: "unknown",
       },
     }),
@@ -193,6 +204,11 @@ export async function buildHttpServer(options: HttpServerOptions) {
       csrfToken: request.piDashSession!.csrfToken,
     }),
   );
+
+  await registerWorkspaceRoutes(app, {
+    workspaces: options.workspaces,
+    dialogs: options.dialogs,
+  });
 
   app.get<{ Querystring: BootstrapQuery }>(
     BOOTSTRAP_PATH,

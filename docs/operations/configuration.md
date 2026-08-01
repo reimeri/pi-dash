@@ -10,6 +10,7 @@ Configuration precedence is **CLI → environment → JSON file → defaults**. 
 | Config root     | `--config-dir`       | `PI_DASH_CONFIG_DIR`       | —                 | `$XDG_CONFIG_HOME/pi-dash`                      |
 | Runtime root    | `--runtime-dir`      | `PI_DASH_RUNTIME_DIR`      | `runtimeDir`      | `$XDG_RUNTIME_DIR/pi-dash`, or `<data>/runtime` |
 | Pi executable   | `--pi-executable`    | `PI_DASH_PI_EXECUTABLE`    | `piExecutable`    | `pi`                                            |
+| Native dialog   | `--native-dialog`    | `PI_DASH_NATIVE_DIALOG`    | `nativeDialog`    | `auto`                                          |
 | Log level       | `--log-level`        | `PI_DASH_LOG_LEVEL`        | `logLevel`        | `info`                                          |
 | UI origin       | `--ui-origin`        | `PI_DASH_UI_ORIGIN`        | `uiOrigin`        | daemon origin                                   |
 | Static assets   | `--static-dir`       | `PI_DASH_STATIC_DIR`       | `staticDir`       | `apps/web/dist`                                 |
@@ -18,6 +19,8 @@ Configuration precedence is **CLI → environment → JSON file → defaults**. 
 Only numeric loopback addresses are accepted. `0.0.0.0`, LAN addresses, and hostnames are rejected. `uiOrigin` is intended for the loopback Vite development server and must also be an HTTP loopback origin.
 
 Directories are created with mode `0700`; the database, lock metadata, runtime metadata, and optional launch URL file use mode `0600`.
+
+`nativeDialog` accepts `auto`, `zenity`, `kdialog`, or `disabled`. `auto` prefers zenity and falls back to kdialog. A picker also requires a graphical display session; when probing fails, the workspace flow offers typed-path recovery rather than a generic directory browser. See [native directory dialog](native-directory-dialog.md).
 
 ## Migrations
 
