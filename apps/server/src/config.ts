@@ -35,6 +35,7 @@ export interface AppConfig {
   uiOrigin?: string;
   staticDir?: string;
   bootstrapOutput?: string;
+  openBrowser: boolean;
   mode: "development" | "production" | "test";
 }
 
@@ -101,7 +102,10 @@ const cliNames = new Set([
   "ui-origin",
   "static-dir",
   "bootstrap-output",
+  "no-open",
 ]);
+
+const cliFlags = new Set(["no-open"]);
 
 function expandPath(value: string): string {
   if (value === "~") return homedir();
@@ -118,6 +122,12 @@ function parseCli(args: readonly string[]): CliValues {
     const [rawName, inlineValue] = argument.slice(2).split("=", 2);
     if (!rawName || !cliNames.has(rawName))
       throw new Error(`Unknown option: --${rawName ?? ""}`);
+    if (cliFlags.has(rawName)) {
+      if (inlineValue !== undefined)
+        throw new Error(`Option --${rawName} does not accept a value`);
+      values[rawName] = "true";
+      continue;
+    }
     const value = inlineValue ?? args[index + 1];
     if (!value || (inlineValue === undefined && value.startsWith("--"))) {
       throw new Error(`Missing value for --${rawName}`);
@@ -233,6 +243,27 @@ function validateOrigin(value: string | undefined): string | undefined {
 
 function optionalPath(value: string | undefined): string | undefined {
   return value ? expandPath(value) : undefined;
+}
+
+function parseBooleanEnvironment(
+  name: string,
+  value: string | undefined,
+): boolean {
+  if (value === undefined) return false;
+  switch (value.trim().toLowerCase()) {
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+      return true;
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+      return false;
+    default:
+      throw new Error(`${name} must be a boolean`);
+  }
 }
 
 export function defaultConfigDirectory(
@@ -409,6 +440,9 @@ export function loadConfig(
         ) ?? "",
       ),
     ),
+    openBrowser:
+      cli["no-open"] !== "true" &&
+      !parseBooleanEnvironment("PI_DASH_NO_OPEN", env.PI_DASH_NO_OPEN),
     mode,
   };
 }

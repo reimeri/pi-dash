@@ -3,22 +3,38 @@ import type { TerminalServerFrame } from "@pi-dash/contracts";
 export const SHIFT_ENTER_SEQUENCE = "\u001b[13;2u";
 export const ALT_ENTER_SEQUENCE = "\u001b[13;3u";
 
-export function translateModifiedEnter(
+function csiU(codepoint: number, modifier: number): string {
+  return `\u001b[${codepoint};${modifier + 1}u`;
+}
+
+export function translateTerminalKey(
   event: Pick<
     KeyboardEvent,
-    "type" | "key" | "shiftKey" | "altKey" | "ctrlKey" | "metaKey"
+    "type" | "key" | "code" | "shiftKey" | "altKey" | "ctrlKey" | "metaKey"
   >,
 ): string | null {
-  if (
-    event.type !== "keydown" ||
-    event.key !== "Enter" ||
-    event.ctrlKey ||
-    event.metaKey
-  ) {
+  if (event.type !== "keydown" || event.metaKey) return null;
+  if (event.key === "Enter" && !event.ctrlKey) {
+    if (event.shiftKey && !event.altKey) return SHIFT_ENTER_SEQUENCE;
+    if (event.altKey && !event.shiftKey) return ALT_ENTER_SEQUENCE;
     return null;
   }
-  if (event.shiftKey && !event.altKey) return SHIFT_ENTER_SEQUENCE;
-  if (event.altKey && !event.shiftKey) return ALT_ENTER_SEQUENCE;
+  if (
+    event.ctrlKey &&
+    event.shiftKey &&
+    !event.altKey &&
+    event.key.length === 1 &&
+    !["c", "v"].includes(event.key.toLowerCase())
+  ) {
+    const codepoint = event.key.toLowerCase().codePointAt(0);
+    if (codepoint === undefined) return null;
+    const baseLayout = /^Key[A-Z]$/.test(event.code)
+      ? event.code.slice(3).toLowerCase().codePointAt(0)
+      : undefined;
+    return baseLayout !== undefined && baseLayout !== codepoint
+      ? `\u001b[${codepoint}::${baseLayout};6u`
+      : csiU(codepoint, 5);
+  }
   return null;
 }
 

@@ -55,7 +55,11 @@ test.beforeAll(async () => {
     ],
     {
       cwd: resolve("."),
-      env: { ...process.env, NODE_ENV: "production" },
+      env: {
+        ...process.env,
+        NODE_ENV: "production",
+        PI_DASH_NO_OPEN: "true",
+      },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );

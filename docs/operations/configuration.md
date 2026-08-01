@@ -23,8 +23,13 @@ Configuration precedence is **CLI → environment → JSON file → defaults**. 
 | UI origin                    | `--ui-origin`                          | `PI_DASH_UI_ORIGIN`                          | `uiOrigin`                       | daemon origin                                   |
 | Static assets                | `--static-dir`                         | `PI_DASH_STATIC_DIR`                         | `staticDir`                      | `apps/web/dist`                                 |
 | Launch URL file              | `--bootstrap-output`                   | `PI_DASH_BOOTSTRAP_OUTPUT`                   | `bootstrapOutput`                | unset                                           |
+| Suppress browser launch      | `--no-open`                            | `PI_DASH_NO_OPEN`                            | —                                | `false`                                         |
 
 Only numeric loopback addresses are accepted. `0.0.0.0`, LAN addresses, and hostnames are rejected. `uiOrigin` is intended for the loopback Vite development server and must also be an HTTP loopback origin.
+
+The Electron desktop host accepts the ordinary daemon CLI options, but owns `--bootstrap-output`, `--static-dir`, and `--ui-origin`; passing those options to `npm run desktop -- ...` is rejected. It uses `node` from `PATH` for the daemon so native modules use the system Node ABI. `PI_DASH_NODE_EXECUTABLE` can select another Node.js 24+ executable, which must be ABI-compatible with the runtime used to install the native modules.
+
+After the standalone daemon starts listening, it opens the one-use bootstrap URL in the default browser and prints the URL as a fallback. Browser launch failures do not stop the daemon. Use `--no-open` or set `PI_DASH_NO_OPEN` to `1`, `true`, `yes`, or `on` for headless and automated runs; `0`, `false`, `no`, and `off` leave automatic launch enabled. Development server restarts open each replacement bootstrap URL because the previous in-memory session is no longer valid.
 
 Directories are created with mode `0700`; the database, lock metadata, runtime metadata, persistent snapshot-signing key, and optional launch URL file use mode `0600`. The workflow status side channel has no independent setting: it uses `<runtime-root>/status.sock` with mode `0600`, a fixed 16 KiB lifecycle-frame limit, and per-runtime credentials injected only into the managed Pi process.
 

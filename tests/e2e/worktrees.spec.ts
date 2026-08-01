@@ -63,7 +63,11 @@ async function restartDaemon(): Promise<void> {
     ],
     {
       cwd: resolve("."),
-      env: { ...process.env, NODE_ENV: "production" },
+      env: {
+        ...process.env,
+        NODE_ENV: "production",
+        PI_DASH_NO_OPEN: "true",
+      },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -103,7 +107,11 @@ test.beforeAll(async () => {
     ],
     {
       cwd: resolve("."),
-      env: { ...process.env, NODE_ENV: "production" },
+      env: {
+        ...process.env,
+        NODE_ENV: "production",
+        PI_DASH_NO_OPEN: "true",
+      },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );

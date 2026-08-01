@@ -19,7 +19,7 @@
     isTerminalServerFrame,
     splitBinaryInput,
     splitUtf8Input,
-    translateModifiedEnter,
+    translateTerminalKey,
   } from "./protocol.js";
 
   export let worktree: WorktreeDto;
@@ -379,11 +379,32 @@
 
   function handleHostKeydown(event: KeyboardEvent): void {
     if (!(event.target instanceof Node) || !host.contains(event.target)) return;
-    const translated = translateModifiedEnter(event);
+    const translated = translateTerminalKey(event);
     if (translated === null) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     sendTextInput(translated);
+  }
+
+  function handleTerminalKey(event: KeyboardEvent): boolean {
+    if (
+      event.type !== "keydown" ||
+      !event.ctrlKey ||
+      !event.shiftKey ||
+      event.altKey ||
+      event.metaKey ||
+      event.key.toLowerCase() !== "c"
+    ) {
+      return true;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (terminal?.hasSelection()) {
+      void navigator.clipboard
+        .writeText(terminal.getSelection())
+        .catch(() => (errorMessage = "Unable to copy the terminal selection."));
+    }
+    return false;
   }
 
   async function handleLoad(loadedTerminal: Terminal): Promise<void> {
@@ -393,6 +414,7 @@
       return;
     }
     try {
+      loadedTerminal.attachCustomKeyEventHandler(handleTerminalKey);
       const [{ FitAddon }, { Unicode11Addon }] = await Promise.all([
         import("@xterm/addon-fit"),
         import("@xterm/addon-unicode11"),

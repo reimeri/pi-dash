@@ -43,6 +43,7 @@ describe("configuration", () => {
       [
         "--config-dir",
         configDirectory,
+        "--no-open",
         "--port",
         "4300",
         "--pi-executable",
@@ -60,7 +61,23 @@ describe("configuration", () => {
     expect(config.piExecutable).toBe("pi-from-cli");
     expect(config.logLevel).toBe("warn");
     expect(config.nativeDialog).toBe("auto");
+    expect(config.openBrowser).toBe(false);
     expect(config.mode).toBe("test");
+  });
+
+  it("supports environment browser-launch suppression", () => {
+    const root = temporaryRoot();
+    expect(
+      loadConfig(["--config-dir", root], { PI_DASH_NO_OPEN: "true" })
+        .openBrowser,
+    ).toBe(false);
+    expect(
+      loadConfig(["--config-dir", root], { PI_DASH_NO_OPEN: "false" })
+        .openBrowser,
+    ).toBe(true);
+    expect(() =>
+      loadConfig(["--config-dir", root], { PI_DASH_NO_OPEN: "sometimes" }),
+    ).toThrow("PI_DASH_NO_OPEN must be a boolean");
   });
 
   it("rejects unknown and incorrectly typed JSON settings", () => {

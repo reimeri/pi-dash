@@ -67,6 +67,7 @@ test.beforeAll(async () => {
       env: {
         ...process.env,
         NODE_ENV: "production",
+        PI_DASH_NO_OPEN: "true",
         FAKE_PI_STATUS: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],

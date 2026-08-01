@@ -4,6 +4,7 @@
     { "path": "packages/contracts" },
     { "path": "packages/pi-extension" },
     { "path": "apps/server" },
-    { "path": "apps/web" }
+    { "path": "apps/web" },
+    { "path": "apps/desktop" }
   ]
 }

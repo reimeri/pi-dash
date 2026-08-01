@@ -11,6 +11,18 @@ Selecting a ready, healthy managed worktree lazily starts Pi directly under a `n
 
 Pi receives the packaged no-op dashboard extension with `--extension`. Phase 5 adds lifecycle status transport at that same path without changing the launch contract. Pi Dash does not override Pi's agent/session directories, theme, tools, approvals, trusted project resources, or login/trust prompts.
 
+## Desktop keyboard behavior
+
+Use the Electron desktop application for interactive Pi terminals. A normal browser tab reserves combinations such as `Ctrl+W` and cannot provide Pi's complete keymap. The desktop host removes native menu accelerators and disables DevTools so xterm receives those keys.
+
+- Pi's control bindings, including `Ctrl+W`, `Ctrl+L`, `Ctrl+T`, `Ctrl+O`, `Ctrl+G`, `Ctrl+P`, `Ctrl+K`, `Ctrl+C`, `Ctrl+D`, and `Ctrl+Z`, are forwarded to the PTY.
+- `Shift+Ctrl+P`, `Shift+Enter`, and `Alt+Enter` use CSI-u sequences so Pi can distinguish their modifiers.
+- `Shift+Tab` and `Alt+Up` use their standard terminal escape sequences.
+- `Ctrl+Shift+C` copies the current xterm selection and does nothing when there is no selection. It never opens DevTools.
+- `Ctrl+V` is intentionally left on the existing Pi image/text paste path.
+
+Linux desktop or compositor-level global shortcuts remain outside application control and must not overlap Pi bindings.
+
 ## Lifecycle
 
 Runtime states are `stopped`, `starting`, `running`, `stopping`, and `crashed`. A clean `/quit` is stopped; an unexpected nonzero exit is crashed. Exit code and signal remain visible until a start/restart replaces the runtime.

@@ -47,6 +47,7 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
     terminalCacheSize: 3,
     nativeDialog: "disabled",
     logLevel: "silent",
+    openBrowser: false,
     mode: "test",
   };
   const database = await openDatabase({

@@ -48,6 +48,7 @@ async function fixture() {
     terminalCacheSize: 3,
     nativeDialog: "auto",
     logLevel: "silent",
+    openBrowser: false,
     mode: "test",
   };
   const database = await openDatabase({

@@ -1,4 +1,5 @@
 import { createDaemon } from "./daemon.js";
+import { listenAndLaunchDashboard } from "./startup.js";
 
 async function main(): Promise<void> {
   const daemon = await createDaemon();
@@ -22,12 +23,7 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => handleSignal("SIGTERM"));
 
   try {
-    await daemon.app.listen({
-      host: daemon.config.host,
-      port: daemon.config.port,
-    });
-    daemon.markReady();
-    process.stdout.write(`Open Pi Dash: ${daemon.bootstrapUrl}\n`);
+    await listenAndLaunchDashboard(daemon);
   } catch (error) {
     await daemon.shutdown();
     throw error;

@@ -11,9 +11,10 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "npm run build -w @pi-dash/contracts && npm run build -w @pi-dash/pi-extension && npm run build -w @pi-dash/web && npm run build -w @pi-dash/server",
+    "build": "npm run build -w @pi-dash/contracts && npm run build -w @pi-dash/pi-extension && npm run build -w @pi-dash/web && npm run build -w @pi-dash/server && npm run build -w @pi-dash/desktop",
     "check": "npm run check --workspaces --if-present",
     "db:migrate": "npm run db:migrate -w @pi-dash/server --",
+    "desktop": "npm run build && npm start -w @pi-dash/desktop --",
     "dev": "concurrently --kill-others-on-fail --names server,web \"npm run dev -w @pi-dash/server\" \"npm run dev -w @pi-dash/web\"",
     "format": "prettier --write --ignore-path .gitignore --ignore-path .prettierignore .",
     "format:check": "prettier --check --ignore-path .gitignore --ignore-path .prettierignore .",

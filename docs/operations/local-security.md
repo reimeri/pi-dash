@@ -10,6 +10,8 @@ Pi Dash is a single-user local application, not a remote service.
 - Bootstrap responses are `no-store` and `no-referrer`. Failed launch pages replace their token-bearing URL before displaying guidance; successful exchanges redirect to a clean URL.
 - Logs redact cookies, authorization values, session/CSRF/bootstrap fields, and token query parameters. Health and browser errors omit local filesystem paths.
 - Data ownership is protected by a kernel `flock`; stale lock metadata is ignored only after the process acquires the OS lock.
+- The Electron renderer is sandboxed without Node integration or DevTools. Navigation and new windows are denied outside the authenticated loopback origin; only clipboard writes from the main frame are permitted.
+- Electron spawns the daemon with the system Node.js executable, consumes the bootstrap URL without logging it, and sends SIGTERM on application shutdown.
 
 The optional bootstrap output file contains a live secret. It is mode `0600`, should be used only by launch/test automation, and is removed during graceful shutdown. Anyone with the same Unix-account privileges can inspect this process and its files; Unix account isolation remains the outer trust boundary.
 

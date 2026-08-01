@@ -5,28 +5,71 @@ import {
   isTerminalServerFrame,
   splitBinaryInput,
   splitUtf8Input,
-  translateModifiedEnter,
+  translateTerminalKey,
 } from "../src/lib/terminal/protocol.js";
 
 describe("terminal browser protocol", () => {
-  it("translates only Shift+Enter and Alt+Enter keydown events", () => {
+  it("translates modified Enter and distinguishable Ctrl+Shift keys", () => {
     const event = {
       type: "keydown",
       key: "Enter",
+      code: "Enter",
       shiftKey: false,
       altKey: false,
       ctrlKey: false,
       metaKey: false,
     };
-    expect(translateModifiedEnter({ ...event, shiftKey: true })).toBe(
+    expect(translateTerminalKey({ ...event, shiftKey: true })).toBe(
       SHIFT_ENTER_SEQUENCE,
     );
-    expect(translateModifiedEnter({ ...event, altKey: true })).toBe(
+    expect(translateTerminalKey({ ...event, altKey: true })).toBe(
       ALT_ENTER_SEQUENCE,
     );
-    expect(translateModifiedEnter(event)).toBeNull();
     expect(
-      translateModifiedEnter({ ...event, shiftKey: true, ctrlKey: true }),
+      translateTerminalKey({
+        ...event,
+        key: "P",
+        code: "KeyP",
+        shiftKey: true,
+        ctrlKey: true,
+      }),
+    ).toBe("\u001b[112;6u");
+    expect(
+      translateTerminalKey({
+        ...event,
+        key: "O",
+        code: "KeyO",
+        shiftKey: true,
+        ctrlKey: true,
+      }),
+    ).toBe("\u001b[111;6u");
+    expect(
+      translateTerminalKey({
+        ...event,
+        key: "З",
+        code: "KeyP",
+        shiftKey: true,
+        ctrlKey: true,
+      }),
+    ).toBe("\u001b[1079::112;6u");
+    expect(translateTerminalKey(event)).toBeNull();
+    expect(
+      translateTerminalKey({ ...event, shiftKey: true, ctrlKey: true }),
+    ).toBeNull();
+  });
+
+  it("leaves browser copy and paste combinations to their dedicated handlers", () => {
+    const event = {
+      type: "keydown",
+      code: "KeyC",
+      shiftKey: true,
+      altKey: false,
+      ctrlKey: true,
+      metaKey: false,
+    };
+    expect(translateTerminalKey({ ...event, key: "C" })).toBeNull();
+    expect(
+      translateTerminalKey({ ...event, key: "V", code: "KeyV" }),
     ).toBeNull();
   });
 
