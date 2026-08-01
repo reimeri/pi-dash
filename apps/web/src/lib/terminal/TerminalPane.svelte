@@ -9,6 +9,7 @@
   import "@xterm/xterm/css/xterm.css";
   import { onDestroy, onMount } from "svelte";
   import { api } from "../../api.js";
+  import type { TerminalControlsChange } from "./controls.js";
   import {
     encodeBinaryInput,
     isTerminalServerFrame,
@@ -21,6 +22,10 @@
   export let workspaceName: string;
   export let visible: boolean;
   export let maxFrameBytes: number;
+  export let onControlsChange: (
+    worktreeId: string,
+    controls: Parameters<TerminalControlsChange>[0],
+  ) => void;
 
   let host: HTMLDivElement;
   let terminal: Terminal | undefined;
@@ -38,6 +43,7 @@
   let runtime: RuntimeDto | undefined;
   let runtimeId: string | undefined;
   let inputOwner = false;
+  let inputOwnerKnown = false;
   let busy = false;
   let errorMessage = "";
   let lastReceivedSeq = 0;
@@ -66,7 +72,20 @@
     },
   };
 
-  $: if (visible) scheduleFit();
+  $: if (visible) {
+    onControlsChange(worktree.id, {
+      runtimeState: runtime?.state ?? "starting",
+      socketState: connection,
+      inputOwner,
+      inputOwnerKnown,
+      busy,
+      focus: focusTerminal,
+      start: startRuntime,
+      stop: stopRuntime,
+      restart: restartRuntime,
+    });
+    scheduleFit();
+  }
 
   function scheduleFit(): void {
     requestAnimationFrame(() => {
@@ -163,6 +182,7 @@
     if (frame.type === "hello") {
       runtime = frame.runtime;
       inputOwner = frame.inputOwner;
+      inputOwnerKnown = true;
       if (runtimeId !== frame.runtime.runtimeId) {
         runtimeId = frame.runtime.runtimeId ?? undefined;
         resetOutput(frame.earliestSeq - 1);
@@ -191,6 +211,7 @@
     if (disposed || socket) return;
     intentionalClose = false;
     connection = "connecting";
+    inputOwnerKnown = false;
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const candidate = new WebSocket(
       `${scheme}://${location.host}/api/v1/worktrees/${encodeURIComponent(worktree.id)}/terminal/socket`,
@@ -225,6 +246,7 @@
       heartbeatTimer = undefined;
       socket = undefined;
       connection = "disconnected";
+      inputOwnerKnown = false;
       const permanent = [1000, 1001, 1002, 1008].includes(event.code);
       if (
         !disposed &&
@@ -321,6 +343,10 @@
     }
   }
 
+  function focusTerminal(): void {
+    terminal?.focus();
+  }
+
   function handleHostKeydown(event: KeyboardEvent): void {
     if (!(event.target instanceof Node) || !host.contains(event.target)) return;
     const translated = translateModifiedEnter(event);
@@ -386,64 +412,13 @@
     unicodeAddon = undefined;
     terminal?.dispose();
     terminal = undefined;
+    onControlsChange(worktree.id, undefined);
     socket?.close(1000, "Terminal pane evicted");
     socket = undefined;
   });
 </script>
 
-<section
-  class:hidden={!visible}
-  class="terminal-pane"
-  aria-labelledby={`terminal-title-${worktree.id}`}
->
-  <header class="terminal-header">
-    <div>
-      <p class="terminal-kicker">Interactive Pi</p>
-      <h3 id={`terminal-title-${worktree.id}`}>{worktree.name}</h3>
-      <p class="terminal-meta">
-        Runtime: {runtime?.state ?? "starting"} · Socket: {connection}
-        {#if connection === "connected" && !inputOwner}
-          · Observer only{/if}
-      </p>
-    </div>
-    <div class="terminal-actions">
-      <button
-        type="button"
-        class="terminal-button"
-        on:click={() => terminal?.focus()}
-      >
-        Focus terminal
-      </button>
-      {#if runtime?.state === "stopped" || runtime?.state === "crashed"}
-        <button
-          type="button"
-          class="terminal-button primary"
-          disabled={busy}
-          on:click={startRuntime}
-        >
-          {busy ? "Starting…" : "Start"}
-        </button>
-      {:else}
-        <button
-          type="button"
-          class="terminal-button"
-          disabled={busy}
-          on:click={stopRuntime}
-        >
-          {busy ? "Stopping…" : "Stop"}
-        </button>
-      {/if}
-      <button
-        type="button"
-        class="terminal-button"
-        disabled={busy}
-        on:click={restartRuntime}
-      >
-        Restart
-      </button>
-    </div>
-  </header>
-
+<section class:hidden={!visible} class="terminal-pane">
   {#if errorMessage}
     <div class="terminal-alert" role="alert">
       <span>{errorMessage}</span>
@@ -479,85 +454,17 @@
 
 <style>
   .terminal-pane {
-    margin: 0 0 24px;
-    border: 1px solid #27272a;
-    border-radius: 8px;
+    display: flex;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    flex-direction: column;
     background: #09090b;
     overflow: hidden;
   }
 
   .terminal-pane.hidden {
     display: none;
-  }
-
-  .terminal-header {
-    min-height: 66px;
-    padding: 12px 14px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    border-bottom: 1px solid #27272a;
-    background: #111113;
-  }
-
-  .terminal-header h3,
-  .terminal-header p {
-    margin: 0;
-  }
-
-  .terminal-kicker {
-    color: #a1a1aa;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .terminal-meta {
-    margin-top: 3px !important;
-    color: #a1a1aa;
-    font-size: 12px;
-  }
-
-  .terminal-actions {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 7px;
-  }
-
-  .terminal-button {
-    min-height: 32px;
-    padding: 0 10px;
-    border: 1px solid #3f3f46;
-    border-radius: 5px;
-    background: #18181b;
-    color: #e4e4e7;
-    font: inherit;
-    font-size: 12px;
-    cursor: pointer;
-  }
-
-  .terminal-button:hover:not(:disabled) {
-    border-color: #71717a;
-    background: #27272a;
-  }
-
-  .terminal-button.primary {
-    border-color: #3b82f6;
-    background: #2563eb;
-    color: white;
-  }
-
-  .terminal-button:focus-visible {
-    outline: 2px solid #60a5fa;
-    outline-offset: 2px;
-  }
-
-  .terminal-button:disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
   }
 
   .terminal-alert {
@@ -579,8 +486,8 @@
   }
 
   .terminal-region {
-    height: clamp(360px, 58vh, 720px);
-    min-height: 240px;
+    min-height: 0;
+    flex: 1;
     padding: 8px;
     overflow: hidden;
     background: #09090b;
@@ -589,20 +496,5 @@
   .terminal-region:focus-within {
     outline: 2px solid #3b82f6;
     outline-offset: -2px;
-  }
-
-  @media (max-width: 760px) {
-    .terminal-header {
-      align-items: flex-start;
-      flex-direction: column;
-    }
-
-    .terminal-actions {
-      justify-content: flex-start;
-    }
-
-    .terminal-region {
-      height: 52vh;
-    }
   }
 </style>

@@ -166,6 +166,10 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
   await restartDaemon();
   await page.goto(bootstrapUrl);
   await expect(
+    page.getByRole("heading", { name: "Select a workspace" }),
+  ).toBeVisible();
+  await page.locator(".workspace-select", { hasText: "Worktree E2E" }).click();
+  await expect(
     page.locator(".worktree-card", { hasText: "Feature work" }),
   ).toBeVisible();
 
@@ -197,4 +201,11 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
     .getByRole("button", { name: "Delete merged branch" })
     .click();
   await expect(card).toContainText("Branch deleted safely");
+
+  await page.getByRole("button", { name: "Expand Worktree E2E" }).click();
+  const removedSidebarWorktree = page
+    .locator(".worktree-sidebar-list")
+    .getByRole("button", { name: /Feature work/ });
+  await expect(removedSidebarWorktree).toBeVisible();
+  await expect(removedSidebarWorktree).toBeDisabled();
 });

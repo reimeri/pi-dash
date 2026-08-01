@@ -143,12 +143,36 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     );
   }
   const card = page.locator(".worktree-card", { hasText: "Terminal work" });
-  await card.getByRole("button", { name: "Open Pi terminal" }).click();
+  await expect(card).toBeVisible();
+  await page.getByRole("button", { name: "Expand Terminal E2E" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Terminal E2E" }),
+  ).toBeVisible();
+  const sidebarWorktree = page
+    .locator(".worktree-sidebar-list")
+    .getByRole("button", { name: /Terminal work/ });
+  await sidebarWorktree.click();
 
   const terminal = page.getByRole("application", {
     name: "Terminal E2E Terminal work interactive Pi terminal",
   });
   await expect(terminal).toContainText("FAKE_PI_READY");
+  await expect(page.getByRole("heading", { name: "Terminal E2E" })).toHaveCount(
+    0,
+  );
+  await expect(page.locator(".terminal-header")).toHaveCount(0);
+  const terminalPane = page.locator(".terminal-pane:not(.hidden)");
+  const main = page.getByRole("main");
+  const [terminalBox, mainBox] = await Promise.all([
+    terminalPane.boundingBox(),
+    main.boundingBox(),
+  ]);
+  expect(terminalBox).not.toBeNull();
+  expect(mainBox).not.toBeNull();
+  expect(Math.abs(terminalBox!.width - mainBox!.width)).toBeLessThanOrEqual(1);
+  expect(Math.abs(terminalBox!.height - mainBox!.height)).toBeLessThanOrEqual(
+    1,
+  );
 
   const cookieHeader = (await page.context().cookies())
     .map((cookie) => `${cookie.name}=${cookie.value}`)
@@ -200,18 +224,35 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
   });
   expect(protocolError).toBe("TERMINAL_PROTOCOL_MISMATCH");
 
-  await page.getByRole("button", { name: "Focus terminal" }).click();
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  const terminalControls = page.getByLabel("Terminal controls");
+  await expect(terminalControls).toContainText("running");
+  await expect(terminalControls).toContainText("connected");
+  await expect(terminalControls).toContainText("Interactive");
+  await terminalControls
+    .getByRole("button", { name: "Focus terminal" })
+    .click();
   await page.keyboard.type("echo-terminal");
   await expect(terminal).toContainText("echo-terminal");
 
   await page.reload();
-  await card.getByRole("button", { name: "Open Pi terminal" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Select a workspace" }),
+  ).toBeVisible();
+  await sidebarWorktree.click();
   await expect(terminal).toContainText("echo-terminal");
-  await page.getByRole("button", { name: "Stop", exact: true }).click();
-  await expect(page.getByText(/Runtime: stopped/)).toBeVisible();
-  await page.getByRole("button", { name: "Start", exact: true }).click();
-  await expect(page.getByText(/Runtime: running/)).toBeVisible();
-  await page.getByRole("button", { name: "Focus terminal" }).click();
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await terminalControls
+    .getByRole("button", { name: "Stop", exact: true })
+    .click();
+  await expect(terminalControls).toContainText("stopped");
+  await terminalControls
+    .getByRole("button", { name: "Start", exact: true })
+    .click();
+  await expect(terminalControls).toContainText("running");
+  await terminalControls
+    .getByRole("button", { name: "Focus terminal" })
+    .click();
   await page.keyboard.type("after-restart");
   await expect(terminal).toContainText("after-restart");
 });

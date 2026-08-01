@@ -13,6 +13,7 @@
   import WorkspaceSidebar from "./lib/workspaces/WorkspaceSidebar.svelte";
   import { workspaceStore } from "./lib/workspaces/store.js";
   import { displayPath } from "./lib/workspaces/display.js";
+  import type { TerminalControls } from "./lib/terminal/controls.js";
   import LazyTerminalWorkspace from "./lib/terminal/LazyTerminalWorkspace.svelte";
   import CreateWorktreeDialog from "./lib/worktrees/CreateWorktreeDialog.svelte";
   import DeleteBranchDialog from "./lib/worktrees/DeleteBranchDialog.svelte";
@@ -33,6 +34,10 @@
   let showCreateWorktree = false;
   let removeWorktreeTarget: WorktreeDto | undefined;
   let deleteBranchTarget: WorktreeDto | undefined;
+  let terminalControls: TerminalControls | undefined;
+  let terminalMenuOpen = false;
+  let terminalMenu: HTMLDivElement;
+  let terminalMenuTrigger: HTMLButtonElement;
   let reconciling = false;
   $: selectedWorkspace = $workspaceStore.workspaces.find(
     (workspace) => workspace.id === selectedId,
@@ -45,8 +50,16 @@
     : undefined;
   $: liveTerminalWorktreeIds = Object.values($worktreeStore.byWorkspace)
     .flat()
-    .filter((worktree) => worktree.lifecycle === "ready")
+    .filter(canOpenTerminal)
     .map((worktree) => worktree.id);
+  $: terminalOpen =
+    startup.status === "ready" &&
+    !!selectedWorktree &&
+    canOpenTerminal(selectedWorktree);
+  $: if (!terminalOpen) {
+    terminalControls = undefined;
+    terminalMenuOpen = false;
+  }
 
   async function connect() {
     startup = reduceStartupState(startup, { type: "CONNECT" });
@@ -63,9 +76,6 @@
       await api.session();
       await workspaceStore.load();
       startup = reduceStartupState(startup, { type: "READY" });
-      if (!selectedId && $workspaceStore.workspaces[0]) {
-        selectedId = $workspaceStore.workspaces[0].id;
-      }
       if (selectedId) await worktreeStore.load(selectedId);
     } catch (error) {
       if (error instanceof ApiClientError && error.status === 401) {
@@ -93,7 +103,8 @@
   function removeWorkspace(id: string) {
     workspaceStore.remove(id);
     if (selectedId === id) {
-      selectedId = $workspaceStore.workspaces[0]?.id;
+      selectedId = undefined;
+      selectedWorktreeId = undefined;
     }
     workspaceActionError = "";
   }
@@ -125,15 +136,57 @@
     void worktreeStore.load(id);
   }
 
+  function loadWorkspaceWorktrees(id: string) {
+    void worktreeStore.load(id);
+  }
+
+  function canOpenTerminal(worktree: WorktreeDto): boolean {
+    return worktree.lifecycle === "ready" && worktree.health === "healthy";
+  }
+
   function selectWorktree(worktree: WorktreeDto) {
+    if (!canOpenTerminal(worktree)) return;
     selectedId = worktree.workspaceId;
     selectedWorktreeId = worktree.id;
   }
 
+  function terminalInputStatus(controls: TerminalControls | undefined): string {
+    if (!controls || controls.socketState === "connecting") return "Connecting";
+    if (controls.socketState === "disconnected") return "Disconnected";
+    if (!controls.inputOwnerKnown) return "Negotiating";
+    return controls.inputOwner ? "Interactive" : "Observer only";
+  }
+
+  function handleTerminalControlsChange(
+    controls: TerminalControls | undefined,
+  ): void {
+    terminalControls = controls;
+  }
+
+  function handleWindowPointerdown(event: PointerEvent): void {
+    if (
+      terminalMenuOpen &&
+      event.target instanceof Node &&
+      !terminalMenu?.contains(event.target)
+    ) {
+      terminalMenuOpen = false;
+    }
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent): void {
+    if (event.key !== "Escape" || !terminalMenuOpen) return;
+    terminalMenuOpen = false;
+    requestAnimationFrame(() => terminalMenuTrigger?.focus());
+  }
+
   function upsertWorktree(worktree: WorktreeDto) {
     worktreeStore.upsert(worktree);
-    selectedWorktreeId =
-      worktree.lifecycle === "removed" ? undefined : worktree.id;
+    if (
+      worktree.lifecycle === "removed" &&
+      selectedWorktreeId === worktree.id
+    ) {
+      selectedWorktreeId = undefined;
+    }
     workspaceActionError = "";
     void workspaceStore.load();
   }
@@ -161,6 +214,10 @@
 </script>
 
 <svelte:head><title>Pi Dash</title></svelte:head>
+<svelte:window
+  on:pointerdown={handleWindowPointerdown}
+  on:keydown={handleWindowKeydown}
+/>
 
 <a class="skip-link" href="#main-content">Skip to main content</a>
 <div class="app-frame">
@@ -168,16 +225,99 @@
     <div class="brand" aria-label="Pi Dash home">
       <span class="brand-mark" aria-hidden="true">π</span><span>Pi Dash</span>
     </div>
-    <div
-      class={`connection connection-${startup.status}`}
-      role="status"
-      aria-label="Daemon connection"
-      aria-live="polite"
-      aria-atomic="true"
-    >
-      <span class="status-dot" aria-hidden="true"></span><span
-        >{startup.message}</span
+    <div class="topbar-statuses">
+      {#if terminalOpen}
+        <div class="terminal-menu" bind:this={terminalMenu}>
+          <button
+            class="terminal-menu-trigger"
+            type="button"
+            bind:this={terminalMenuTrigger}
+            aria-expanded={terminalMenuOpen}
+            aria-controls="terminal-controls"
+            on:click={() => (terminalMenuOpen = !terminalMenuOpen)}
+          >
+            <span class="terminal-glyph" aria-hidden="true">›_</span>
+            <span>Terminal</span>
+            <span class="menu-chevron" aria-hidden="true"
+              >{terminalMenuOpen ? "⌃" : "⌄"}</span
+            >
+          </button>
+          {#if terminalMenuOpen}
+            <section
+              id="terminal-controls"
+              class="terminal-menu-panel"
+              aria-label="Terminal controls"
+            >
+              <div class="terminal-status-list" aria-live="polite">
+                <div>
+                  <span>Runtime</span>
+                  <strong>
+                    <span
+                      class={`menu-status-dot runtime-${terminalControls?.runtimeState ?? "starting"}`}
+                      aria-hidden="true"
+                    ></span>
+                    {terminalControls?.runtimeState ?? "starting"}
+                  </strong>
+                </div>
+                <div>
+                  <span>Socket</span>
+                  <strong>
+                    <span
+                      class={`menu-status-dot socket-${terminalControls?.socketState ?? "connecting"}`}
+                      aria-hidden="true"
+                    ></span>
+                    {terminalControls?.socketState ?? "connecting"}
+                  </strong>
+                </div>
+                <div>
+                  <span>Input</span>
+                  <strong>{terminalInputStatus(terminalControls)}</strong>
+                </div>
+              </div>
+              <div class="terminal-menu-actions">
+                <button
+                  type="button"
+                  disabled={!terminalControls}
+                  on:click={() => terminalControls?.focus()}
+                  >Focus terminal</button
+                >
+                {#if terminalControls?.runtimeState === "stopped" || terminalControls?.runtimeState === "crashed"}
+                  <button
+                    class="primary"
+                    type="button"
+                    disabled={terminalControls.busy}
+                    on:click={() => terminalControls?.start()}
+                    >{terminalControls.busy ? "Starting…" : "Start"}</button
+                  >
+                {:else}
+                  <button
+                    type="button"
+                    disabled={!terminalControls || terminalControls.busy}
+                    on:click={() => terminalControls?.stop()}
+                    >{terminalControls?.busy ? "Stopping…" : "Stop"}</button
+                  >
+                {/if}
+                <button
+                  type="button"
+                  disabled={!terminalControls || terminalControls.busy}
+                  on:click={() => terminalControls?.restart()}>Restart</button
+                >
+              </div>
+            </section>
+          {/if}
+        </div>
+      {/if}
+      <div
+        class={`connection connection-${startup.status}`}
+        role="status"
+        aria-label="Daemon connection"
+        aria-live="polite"
+        aria-atomic="true"
       >
+        <span class="status-dot" aria-hidden="true"></span><span
+          >{startup.message}</span
+        >
+      </div>
     </div>
   </header>
 
@@ -221,7 +361,10 @@
         {selectedId}
         {selectedWorktreeId}
         worktreesByWorkspace={$worktreeStore.byWorkspace}
+        worktreeLoadingByWorkspace={$worktreeStore.loadingByWorkspace}
+        worktreeErrorsByWorkspace={$worktreeStore.errorsByWorkspace}
         onSelect={selectWorkspace}
+        onExpand={loadWorkspaceWorktrees}
         onSelectWorktree={selectWorktree}
         onRename={(workspace) => (renameTarget = workspace)}
         onRemove={(workspace) => (removeTarget = workspace)}
@@ -232,13 +375,14 @@
       </div>
     </aside>
 
-    <main id="main-content" tabindex="-1">
+    <main id="main-content" class:terminal-open={terminalOpen} tabindex="-1">
       <LazyTerminalWorkspace
-        selected={selectedWorktree}
+        selected={terminalOpen ? selectedWorktree : undefined}
         workspaceName={selectedWorkspace?.name ?? ""}
         cacheSize={terminalCacheSize}
         maxFrameBytes={terminalMaxFrameBytes}
         {liveTerminalWorktreeIds}
+        onControlsChange={handleTerminalControlsChange}
       />
       {#if workspaceActionError}
         <div class="content-alert" role="alert">
@@ -251,7 +395,9 @@
         </div>
       {/if}
 
-      {#if startup.status === "unauthorized"}
+      {#if terminalOpen}
+        <!-- The terminal workspace above owns the entire main content area. -->
+      {:else if startup.status === "unauthorized"}
         <div class="empty-state">
           <span class="empty-state-icon" aria-hidden="true">↗</span>
           <p class="eyebrow">Authentication required</p>
@@ -398,13 +544,15 @@
                 >
               </div>
             </div>
-            {#if $worktreeStore.loadingWorkspaceId === selectedWorkspace.id && selectedWorktrees.length === 0}
+            {#if $worktreeStore.loadingByWorkspace[selectedWorkspace.id] && selectedWorktrees.length === 0}
               <div class="dialog-progress" role="status">
                 <span class="spinner" aria-hidden="true"></span>
                 <p>Loading managed worktrees…</p>
               </div>
-            {:else if $worktreeStore.message}
-              <p class="field-error" role="alert">{$worktreeStore.message}</p>
+            {:else if $worktreeStore.errorsByWorkspace[selectedWorkspace.id]}
+              <p class="field-error" role="alert">
+                {$worktreeStore.errorsByWorkspace[selectedWorkspace.id]}
+              </p>
             {:else if selectedWorktrees.length === 0}
               <div class="phase-placeholder">
                 <h3>No managed worktrees</h3>
@@ -434,7 +582,9 @@
                     <dl class="repository-facts compact-facts">
                       <div>
                         <dt>Base</dt>
-                        <dd><code>{worktree.baseCommit.slice(0, 12)}</code></dd>
+                        <dd>
+                          <code>{worktree.baseCommit.slice(0, 12)}</code>
+                        </dd>
                       </div>
                       <div>
                         <dt>Changes</dt>
@@ -458,6 +608,10 @@
                         <button
                           class="button primary"
                           type="button"
+                          disabled={!canOpenTerminal(worktree)}
+                          title={canOpenTerminal(worktree)
+                            ? "Open Pi terminal"
+                            : "Terminal unavailable until this worktree is healthy"}
                           on:click={() => selectWorktree(worktree)}
                           >Open Pi terminal</button
                         >
@@ -495,16 +649,24 @@
         <div class="empty-state">
           <span class="empty-state-icon" aria-hidden="true">⌁</span>
           <p class="eyebrow">Dashboard ready</p>
-          <h2>Add a workspace to get started</h2>
-          <p>
-            Register an existing Git repository. Pi Dash canonicalizes and
-            validates it without modifying repository contents.
-          </p>
-          <button
-            class="button primary empty-action"
-            type="button"
-            on:click={() => (showAdd = true)}>Add workspace</button
-          >
+          {#if $workspaceStore.workspaces.length > 0}
+            <h2>Select a workspace</h2>
+            <p>
+              Choose a workspace card for repository details, or expand it to
+              open a managed worktree terminal.
+            </p>
+          {:else}
+            <h2>Add a workspace to get started</h2>
+            <p>
+              Register an existing Git repository. Pi Dash canonicalizes and
+              validates it without modifying repository contents.
+            </p>
+            <button
+              class="button primary empty-action"
+              type="button"
+              on:click={() => (showAdd = true)}>Add workspace</button
+            >
+          {/if}
         </div>
       {/if}
     </main>

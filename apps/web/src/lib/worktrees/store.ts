@@ -3,9 +3,9 @@ import { writable } from "svelte/store";
 import { api } from "../../api.js";
 
 export interface WorktreeState {
-  loadingWorkspaceId?: string;
+  loadingByWorkspace: Record<string, boolean>;
+  errorsByWorkspace: Record<string, string | undefined>;
   byWorkspace: Record<string, WorktreeDto[]>;
-  message?: string;
 }
 
 function sortWorktrees(worktrees: WorktreeDto[]): WorktreeDto[] {
@@ -24,14 +24,24 @@ function sortWorktrees(worktrees: WorktreeDto[]): WorktreeDto[] {
 export function createWorktreeStore(
   client: Pick<typeof api, "worktrees" | "reconcileWorktrees"> = api,
 ) {
-  const { subscribe, update } = writable<WorktreeState>({ byWorkspace: {} });
+  const { subscribe, update } = writable<WorktreeState>({
+    loadingByWorkspace: {},
+    errorsByWorkspace: {},
+    byWorkspace: {},
+  });
   const generations = new Map<string, number>();
 
   const replace = (workspaceId: string, worktrees: WorktreeDto[]) =>
     update((state) => ({
       ...state,
-      loadingWorkspaceId: undefined,
-      message: undefined,
+      loadingByWorkspace: {
+        ...state.loadingByWorkspace,
+        [workspaceId]: false,
+      },
+      errorsByWorkspace: {
+        ...state.errorsByWorkspace,
+        [workspaceId]: undefined,
+      },
       byWorkspace: {
         ...state.byWorkspace,
         [workspaceId]: sortWorktrees(worktrees),
@@ -45,8 +55,14 @@ export function createWorktreeStore(
       generations.set(workspaceId, generation);
       update((state) => ({
         ...state,
-        loadingWorkspaceId: workspaceId,
-        message: undefined,
+        loadingByWorkspace: {
+          ...state.loadingByWorkspace,
+          [workspaceId]: true,
+        },
+        errorsByWorkspace: {
+          ...state.errorsByWorkspace,
+          [workspaceId]: undefined,
+        },
       }));
       try {
         const response = await client.worktrees(workspaceId);
@@ -57,9 +73,17 @@ export function createWorktreeStore(
         if (generations.get(workspaceId) !== generation) return;
         update((state) => ({
           ...state,
-          loadingWorkspaceId: undefined,
-          message:
-            error instanceof Error ? error.message : "Unable to load worktrees",
+          loadingByWorkspace: {
+            ...state.loadingByWorkspace,
+            [workspaceId]: false,
+          },
+          errorsByWorkspace: {
+            ...state.errorsByWorkspace,
+            [workspaceId]:
+              error instanceof Error
+                ? error.message
+                : "Unable to load worktrees",
+          },
         }));
       }
     },
@@ -74,6 +98,14 @@ export function createWorktreeStore(
       );
       update((state) => ({
         ...state,
+        loadingByWorkspace: {
+          ...state.loadingByWorkspace,
+          [worktree.workspaceId]: false,
+        },
+        errorsByWorkspace: {
+          ...state.errorsByWorkspace,
+          [worktree.workspaceId]: undefined,
+        },
         byWorkspace: {
           ...state.byWorkspace,
           [worktree.workspaceId]: sortWorktrees([
@@ -88,8 +120,17 @@ export function createWorktreeStore(
     clearWorkspace(workspaceId: string) {
       update((state) => {
         const byWorkspace = { ...state.byWorkspace };
+        const loadingByWorkspace = { ...state.loadingByWorkspace };
+        const errorsByWorkspace = { ...state.errorsByWorkspace };
         delete byWorkspace[workspaceId];
-        return { ...state, byWorkspace };
+        delete loadingByWorkspace[workspaceId];
+        delete errorsByWorkspace[workspaceId];
+        return {
+          ...state,
+          byWorkspace,
+          loadingByWorkspace,
+          errorsByWorkspace,
+        };
       });
     },
   };

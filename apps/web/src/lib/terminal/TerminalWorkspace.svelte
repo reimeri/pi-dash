@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { WorktreeDto } from "@pi-dash/contracts";
+  import type { TerminalControls, TerminalControlsChange } from "./controls.js";
   import TerminalPane from "./TerminalPane.svelte";
 
   export let selected: WorktreeDto | undefined;
@@ -7,6 +8,7 @@
   export let cacheSize = 3;
   export let maxFrameBytes = 64 * 1024;
   export let liveTerminalWorktreeIds: string[] = [];
+  export let onControlsChange: TerminalControlsChange;
 
   interface CacheEntry {
     worktree: WorktreeDto;
@@ -14,6 +16,14 @@
   }
 
   let entries: CacheEntry[] = [];
+  let controlsSelectionId: string | undefined;
+
+  function reportControls(
+    worktreeId: string,
+    controls: TerminalControls | undefined,
+  ): void {
+    if (selected?.id === worktreeId) onControlsChange(controls);
+  }
 
   function synchronizeCache(
     worktree: WorktreeDto | undefined,
@@ -37,6 +47,10 @@
     cacheSize,
     liveTerminalWorktreeIds,
   );
+  $: if (selected?.id !== controlsSelectionId) {
+    controlsSelectionId = selected?.id;
+    onControlsChange(undefined);
+  }
 </script>
 
 {#if entries.length > 0}
@@ -51,6 +65,7 @@
         workspaceName={entry.workspaceName}
         visible={selected?.id === entry.worktree.id}
         {maxFrameBytes}
+        onControlsChange={reportControls}
       />
     {/each}
   </section>
@@ -58,6 +73,8 @@
 
 <style>
   .terminal-workspace {
+    width: 100%;
+    height: 100%;
     min-height: 0;
   }
 

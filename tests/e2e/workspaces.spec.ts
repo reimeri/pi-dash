@@ -116,6 +116,10 @@ test("typed recovery registers, persists, renames, and removes workspace metadat
   await expect(page.getByText("Repository ready")).toBeVisible();
   await page.reload();
   await expect(
+    page.getByRole("heading", { name: "Select a workspace" }),
+  ).toBeVisible();
+  await page.locator(".workspace-select", { hasText: "E2E Workspace" }).click();
+  await expect(
     page.getByRole("heading", { name: "E2E Workspace" }),
   ).toBeVisible();
 
