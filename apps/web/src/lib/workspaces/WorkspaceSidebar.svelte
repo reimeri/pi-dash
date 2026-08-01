@@ -2,7 +2,6 @@
   import type { WorkspaceDto, WorktreeDto } from "@pi-dash/contracts";
   import { onMount } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import { displayPath } from "./display.js";
 
   export let workspaces: WorkspaceDto[];
   export let status: "idle" | "loading" | "ready" | "error";
@@ -15,9 +14,6 @@
   export let onSelect: (id: string) => void;
   export let onExpand: (id: string) => void;
   export let onSelectWorktree: (worktree: WorktreeDto) => void;
-  export let onRename: (workspace: WorkspaceDto) => void;
-  export let onRemove: (workspace: WorkspaceDto) => void;
-  export let onRetry: (workspace: WorkspaceDto) => void;
 
   const storageKey = "pi-dash.expanded-workspaces.v1";
   let expanded = new SvelteSet<string>();
@@ -136,10 +132,6 @@
             >
               <span class="workspace-copy">
                 <strong>{workspace.name}</strong>
-                <span
-                  >{workspace.repository.currentBranch ??
-                    "Detached or unborn HEAD"}</span
-                >
               </span>
               <span
                 class={`health-dot health-${workspace.repository.health}`}
@@ -153,12 +145,6 @@
             id={`workspace-panel-${workspace.id}`}
             hidden={!expanded.has(workspace.id)}
           >
-            <p
-              class="workspace-path"
-              title={displayPath(workspace.repositoryPath)}
-            >
-              {displayPath(workspace.repositoryPath)}
-            </p>
             {#if workspace.repository.health !== "healthy"}
               <p class="workspace-health" role="status">
                 {healthLabel(workspace)}
@@ -190,14 +176,7 @@
                         class={`worktree-state state-${worktree.health}`}
                         aria-hidden="true"
                       ></span>
-                      <span
-                        ><strong>{worktree.name}</strong><small
-                          >{worktree.lifecycle.replace("_", " ")} · {worktree.health.replace(
-                            "_",
-                            " ",
-                          )}</small
-                        ></span
-                      >
+                      <span><strong>{worktree.name}</strong></span>
                     </button>
                   </li>
                 {/each}
@@ -205,19 +184,6 @@
             {:else}
               <p class="workspace-health">No managed worktrees</p>
             {/if}
-            <div class="workspace-actions">
-              {#if workspace.repository.health !== "healthy"}
-                <button type="button" on:click={() => onRetry(workspace)}
-                  >Retry</button
-                >
-              {/if}
-              <button type="button" on:click={() => onRename(workspace)}
-                >Rename</button
-              >
-              <button type="button" on:click={() => onRemove(workspace)}
-                >Remove</button
-              >
-            </div>
           </div>
         </li>
       {/each}

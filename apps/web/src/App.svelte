@@ -342,7 +342,6 @@
     <aside class="sidebar" aria-labelledby="workspaces-heading">
       <div class="sidebar-heading">
         <div>
-          <p class="eyebrow">Local projects</p>
           <h1 id="workspaces-heading">Workspaces</h1>
         </div>
         <button
@@ -366,13 +365,7 @@
         onSelect={selectWorkspace}
         onExpand={loadWorkspaceWorktrees}
         onSelectWorktree={selectWorktree}
-        onRename={(workspace) => (renameTarget = workspace)}
-        onRemove={(workspace) => (removeTarget = workspace)}
-        onRetry={refresh}
       />
-      <div class="sidebar-footer">
-        <span class="local-indicator" aria-hidden="true"></span>Local only
-      </div>
     </aside>
 
     <main id="main-content" class:terminal-open={terminalOpen} tabindex="-1">
