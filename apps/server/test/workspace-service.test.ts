@@ -119,12 +119,27 @@ describe("WorkspaceService", () => {
     const { root, database, service } = await fixture();
     const repository = createGitRepository(root, "project");
     const created = await service.create({ path: repository, name: "Project" });
-    database.sqlite.exec(
-      "CREATE TABLE worktrees (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL);",
-    );
     database.sqlite
-      .prepare("INSERT INTO worktrees(id, workspace_id) VALUES (?, ?)")
-      .run("worktree-1", created.id);
+      .prepare(
+        `
+        INSERT INTO worktrees (
+          id, workspace_id, name, slug, path, branch_ref, base_ref, base_commit,
+          lifecycle, health, branch_deleted, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 'healthy', 0, ?, ?)
+      `,
+      )
+      .run(
+        "worktree-1",
+        created.id,
+        "Feature",
+        "feature",
+        `${root}/managed-feature`,
+        "refs/heads/pi-dash/feature",
+        "HEAD",
+        "a".repeat(40),
+        "2026-02-03T04:05:06.000Z",
+        "2026-02-03T04:05:06.000Z",
+      );
 
     expect(service.get(created.id).worktreeCount).toBe(1);
     expect(() => service.remove(created.id)).toThrow(

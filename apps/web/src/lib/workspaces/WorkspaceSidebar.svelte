@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { WorkspaceDto } from "@pi-dash/contracts";
+  import type { WorkspaceDto, WorktreeDto } from "@pi-dash/contracts";
   import { onMount } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { displayPath } from "./display.js";
@@ -8,7 +8,10 @@
   export let status: "idle" | "loading" | "ready" | "error";
   export let message: string | undefined;
   export let selectedId: string | undefined;
+  export let selectedWorktreeId: string | undefined;
+  export let worktreesByWorkspace: Record<string, WorktreeDto[]>;
   export let onSelect: (id: string) => void;
+  export let onSelectWorktree: (worktree: WorktreeDto) => void;
   export let onRename: (workspace: WorkspaceDto) => void;
   export let onRemove: (workspace: WorkspaceDto) => void;
   export let onRetry: (workspace: WorkspaceDto) => void;
@@ -126,6 +129,37 @@
               <p class="workspace-health" role="status">
                 {healthLabel(workspace)}
               </p>
+            {/if}
+            {#if (worktreesByWorkspace[workspace.id] ?? []).length > 0}
+              <ul
+                class="worktree-sidebar-list"
+                aria-label={`${workspace.name} managed worktrees`}
+              >
+                {#each worktreesByWorkspace[workspace.id] ?? [] as worktree (worktree.id)}
+                  <li>
+                    <button
+                      type="button"
+                      class:active={selectedWorktreeId === worktree.id}
+                      on:click={() => onSelectWorktree(worktree)}
+                    >
+                      <span
+                        class={`worktree-state state-${worktree.health}`}
+                        aria-hidden="true"
+                      ></span>
+                      <span
+                        ><strong>{worktree.name}</strong><small
+                          >{worktree.lifecycle.replace("_", " ")} · {worktree.health.replace(
+                            "_",
+                            " ",
+                          )}</small
+                        ></span
+                      >
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="workspace-health">No managed worktrees</p>
             {/if}
             <div class="workspace-actions">
               {#if workspace.repository.health !== "healthy"}

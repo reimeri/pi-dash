@@ -18,6 +18,7 @@ import { createGitInspector } from "../src/git/git-inspector.js";
 import { createNativeDirectoryDialog } from "../src/platform/native-directory-dialog.js";
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
 import { createWorkspaceService } from "../src/workspaces/workspace-service.js";
+import { createUnavailableWorktreeService } from "./worktree-service-stub.js";
 
 const migrationsDirectory = fileURLToPath(
   new URL("../../../migrations", import.meta.url),
@@ -59,6 +60,7 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
     staticDirectory: join(root, "unused"),
     dialogs,
     workspaces,
+    worktrees: createUnavailableWorktreeService(),
     capabilities: { git: true, nativeDirectoryDialog: false },
   });
   resources.push({ root, app, database });
@@ -91,7 +93,7 @@ describe("Fastify foundation API", () => {
     expect(response.json()).toEqual({
       status: "ready",
       version: "0.1.0",
-      schemaVersion: 2,
+      schemaVersion: 3,
       capabilities: {
         git: "available",
         pi: "unknown",

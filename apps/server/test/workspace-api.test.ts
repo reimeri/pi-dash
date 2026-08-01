@@ -15,6 +15,7 @@ import type { NativeDirectoryDialogService } from "../src/platform/native-direct
 import { createOriginPolicy } from "../src/security.js";
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
 import { createWorkspaceService } from "../src/workspaces/workspace-service.js";
+import { createUnavailableWorktreeService } from "./worktree-service-stub.js";
 
 const migrationsDirectory = fileURLToPath(
   new URL("../../../migrations", import.meta.url),
@@ -68,6 +69,7 @@ async function fixture() {
     staticDirectory: join(root, "unused"),
     dialogs,
     workspaces,
+    worktrees: createUnavailableWorktreeService(),
     capabilities: { git: true, nativeDirectoryDialog: true },
   });
   resources.push({ root, app, database });

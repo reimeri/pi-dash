@@ -22,6 +22,8 @@ import type { OriginPolicy } from "./security.js";
 import type { NativeDirectoryDialogService } from "./platform/native-directory-dialog.js";
 import type { WorkspaceService } from "./workspaces/workspace-service.js";
 import { registerWorkspaceRoutes } from "./workspaces/workspace-routes.js";
+import type { WorktreeService } from "./worktrees/worktree-service.js";
+import { registerWorktreeRoutes } from "./worktrees/worktree-routes.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -49,6 +51,7 @@ export interface HttpServerOptions {
   staticDirectory: string;
   dialogs: NativeDirectoryDialogService;
   workspaces: WorkspaceService;
+  worktrees: WorktreeService;
   capabilities: {
     git: boolean;
     nativeDirectoryDialog: boolean;
@@ -209,6 +212,7 @@ export async function buildHttpServer(options: HttpServerOptions) {
     workspaces: options.workspaces,
     dialogs: options.dialogs,
   });
+  await registerWorktreeRoutes(app, { worktrees: options.worktrees });
 
   app.get<{ Querystring: BootstrapQuery }>(
     BOOTSTRAP_PATH,

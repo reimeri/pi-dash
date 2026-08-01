@@ -103,8 +103,8 @@ export function createWorkspaceRepository(
     WHERE id = ?
   `);
   const deleteStatement = sqlite.prepare("DELETE FROM workspaces WHERE id = ?");
-  const hasWorktreesTable = sqlite.prepare(
-    "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'worktrees'",
+  const worktreeCountStatement = sqlite.prepare(
+    "SELECT count(*) AS count FROM worktrees WHERE workspace_id = ? AND lifecycle <> 'removed'",
   );
 
   return {
@@ -160,12 +160,7 @@ export function createWorkspaceRepository(
       return fromRow(row);
     },
     worktreeCount(id) {
-      if (!hasWorktreesTable.get()) return 0;
-      const result = sqlite
-        .prepare(
-          "SELECT count(*) AS count FROM worktrees WHERE workspace_id = ?",
-        )
-        .get(id) as { count: number };
+      const result = worktreeCountStatement.get(id) as { count: number };
       return result.count;
     },
     delete(id) {

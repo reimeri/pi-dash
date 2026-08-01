@@ -312,7 +312,7 @@ class CommandGitInspector implements GitInspector {
     );
     const headCommit =
       headResult.exitCode === 0 ? outputValue(headResult) : null;
-    if (headCommit && !/^[0-9a-f]{40,64}$/.test(headCommit)) {
+    if (headCommit && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(headCommit)) {
       throw new GitInspectionError(
         "NOT_A_GIT_WORKTREE",
         "Git returned an invalid HEAD commit",

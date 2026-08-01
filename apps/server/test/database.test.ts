@@ -40,8 +40,8 @@ describe("foundation database", () => {
       path: target.path,
       migrationsDirectory,
     });
-    expect(database.schemaVersion).toBe(2);
-    expect(database.foundation.getSchemaVersion()).toBe(2);
+    expect(database.schemaVersion).toBe(3);
+    expect(database.foundation.getSchemaVersion()).toBe(3);
     expect(
       database.sqlite
         .prepare(
@@ -64,6 +64,47 @@ describe("foundation database", () => {
     expect(statSync(target.path).mode & 0o777).toBe(0o600);
   });
 
+  it("enforces hexadecimal object IDs in worktree lifecycle rows", async () => {
+    const target = temporaryDatabase();
+    const database = await openDatabase({
+      path: target.path,
+      migrationsDirectory,
+    });
+    database.sqlite
+      .prepare(
+        `
+        INSERT INTO workspaces (
+          id, name, slug, repository_path, git_common_dir, created_at, updated_at
+        ) VALUES (?, 'Workspace', 'workspace', '/repo', '/repo/.git', ?, ?)
+      `,
+      )
+      .run(
+        "11111111-1111-4111-8111-111111111111",
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+      );
+    expect(() =>
+      database.sqlite
+        .prepare(
+          `
+          INSERT INTO worktrees (
+            id, workspace_id, name, slug, path, branch_ref, base_ref,
+            base_commit, lifecycle, created_at, updated_at
+          ) VALUES (?, ?, 'Feature', 'feature', '/managed/feature',
+            'refs/heads/pi-dash/feature', 'HEAD', ?, 'creating', ?, ?)
+        `,
+        )
+        .run(
+          "22222222-2222-4222-8222-222222222222",
+          "11111111-1111-4111-8111-111111111111",
+          `a${"z".repeat(39)}`,
+          "2026-01-01T00:00:00.000Z",
+          "2026-01-01T00:00:00.000Z",
+        ),
+    ).toThrow();
+    database.close();
+  });
+
   it("backs up an existing version-zero database before automatic migration", async () => {
     const target = temporaryDatabase();
     const legacy = new BetterSqlite3(target.path);
@@ -77,8 +118,8 @@ describe("foundation database", () => {
       migrationsDirectory,
       now: () => new Date("2026-01-01T00:00:00Z"),
     });
-    expect(database.schemaVersion).toBe(2);
-    expect(database.backupPaths).toHaveLength(2);
+    expect(database.schemaVersion).toBe(3);
+    expect(database.backupPaths).toHaveLength(3);
     const backup = new BetterSqlite3(database.backupPaths[0]!, {
       readonly: true,
     });

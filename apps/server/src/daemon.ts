@@ -7,6 +7,7 @@ import { openDatabase, type DatabaseService } from "./database.js";
 import { acquireDaemonLock, type DaemonLock } from "./lock.js";
 import { createLogger } from "./logger.js";
 import {
+  loadOrCreateSnapshotKey,
   removeRuntimeFile,
   resolveAppPaths,
   secureWriteFile,
@@ -14,6 +15,7 @@ import {
 } from "./paths.js";
 import { createOriginPolicy } from "./security.js";
 import { createGitInspector } from "./git/git-inspector.js";
+import { createGitWorktreeManager } from "./git/git-worktree-manager.js";
 import {
   createNativeDirectoryDialog,
   type NativeDirectoryDialogService,
@@ -23,6 +25,14 @@ import {
   type WorkspaceService,
 } from "./workspaces/workspace-service.js";
 import { createWorkspaceRepository } from "./workspaces/workspace-repository.js";
+import { createBaseSnapshotSigner } from "./worktrees/base-snapshot.js";
+import { createGitMutationLock } from "./worktrees/git-mutation-lock.js";
+import { createWorktreeLifecycleCoordinator } from "./worktrees/worktree-lifecycle.js";
+import { createWorktreeRepository } from "./worktrees/worktree-repository.js";
+import {
+  createWorktreeService,
+  type WorktreeService,
+} from "./worktrees/worktree-service.js";
 
 const migrationsDirectory = fileURLToPath(
   new URL("../../../migrations", import.meta.url),
@@ -59,6 +69,7 @@ export async function createDaemon(
   let auth: AuthService | undefined;
   let dialogs: NativeDirectoryDialogService | undefined;
   let workspaces: WorkspaceService | undefined;
+  let worktrees: WorktreeService | undefined;
   let shutdownPromise: Promise<void> | undefined;
   let bootstrapOutputWritten = false;
   let runtimeInfoWritten = false;
@@ -103,6 +114,7 @@ export async function createDaemon(
     const policy = createOriginPolicy(config);
     auth = createAuthService({ policy });
     const git = await createGitInspector({ env });
+    const gitWorktrees = await createGitWorktreeManager({ env });
     dialogs = await createNativeDirectoryDialog({
       mode: config.nativeDialog,
       env,
@@ -111,10 +123,27 @@ export async function createDaemon(
       git.probe(),
       dialogs.probe(),
     ]);
+    const workspaceRepository = createWorkspaceRepository(database.sqlite);
+    const worktreeRepository = createWorktreeRepository(database.sqlite);
     workspaces = createWorkspaceService({
-      repository: createWorkspaceRepository(database.sqlite),
+      repository: workspaceRepository,
       git,
     });
+    const lifecycle = createWorktreeLifecycleCoordinator({
+      repository: worktreeRepository,
+    });
+    worktrees = createWorktreeService({
+      repository: worktreeRepository,
+      workspaces: workspaceRepository,
+      git: gitWorktrees,
+      lock: createGitMutationLock(),
+      lifecycle,
+      snapshots: createBaseSnapshotSigner({
+        key: loadOrCreateSnapshotKey(paths.snapshotKey),
+      }),
+      managedRoot: paths.worktrees,
+    });
+    await worktrees.reconcile();
     app = await buildHttpServer({
       config,
       database,
@@ -124,6 +153,7 @@ export async function createDaemon(
       staticDirectory: config.staticDir ?? defaultStaticDirectory,
       dialogs,
       workspaces,
+      worktrees,
       capabilities: {
         git: gitAvailable,
         nativeDirectoryDialog: dialogCapability.available,

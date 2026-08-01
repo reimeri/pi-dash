@@ -4,7 +4,7 @@
 <h1>Phase 3: Managed worktrees</h1>
 
 <h2>Outcome</h2>
-<p>Users can create a named Git worktree beneath a registered workspace, using a new branch named <code>pi-dash/&lt;workspace&gt;/&lt;slug&gt;</code> from the workspace repository's current HEAD or another selected valid ref. Managed worktrees appear under their workspace, persist across restarts, and can be safely removed with dirty-tree protection and optional separate safe branch deletion. Interrupted and externally changed worktrees are detected and represented explicitly.</p>
+<p>Users can create a named Git worktree beneath a registered workspace, using a new branch named <code>pi-dash/&lt;slug&gt;</code> from the workspace repository's current HEAD or another selected valid ref. Managed worktrees appear under their workspace, persist across restarts, and can be safely removed with dirty-tree protection and optional separate safe branch deletion. Interrupted and externally changed worktrees are detected and represented explicitly.</p>
 
 <h2>Purpose</h2>
 <p>Managed worktrees provide isolated filesystem and branch contexts for independent Pi agents. This phase implements the project's primary Git mutation boundary before PTYs are introduced, allowing worktree invariants, failure recovery, and destructive safeguards to be tested without process-lifecycle complexity.</p>
@@ -45,7 +45,7 @@
 <h2>Requirements</h2>
 <ul>
   <li><strong>REQ-03-01:</strong> The creation form shall snapshot the workspace's current <code>HEAD</code> (or selected ref) to an exact object ID and receive a short-lived signed token binding workspace ID, ref, commit, and expiry. Creation shall require the token plus matching <code>baseRef</code>/<code>baseCommit</code> and use that exact commit even if the ref moves.</li>
-  <li><strong>REQ-03-02:</strong> The default branch shall be <code>pi-dash/&lt;workspace-slug&gt;/&lt;worktree-slug&gt;</code> and shall pass <code>git check-ref-format --branch</code>.</li>
+  <li><strong>REQ-03-02:</strong> The default branch shall be <code>pi-dash/&lt;worktree-slug&gt;</code> and shall pass <code>git check-ref-format --branch</code>.</li>
   <li><strong>REQ-03-03:</strong> The target path shall be allocated beneath <code>&lt;data&gt;/worktrees/&lt;workspace-id&gt;</code>, contain the worktree ID, and be rejected if canonical containment cannot be established.</li>
   <li><strong>REQ-03-04:</strong> Creation shall execute <code>git worktree add -b &lt;branch&gt; &lt;path&gt; &lt;base&gt;</code> with argument arrays, explicit repository <code>cwd</code>, timeout, and bounded output.</li>
   <li><strong>REQ-03-05:</strong> Mutating operations sharing a Git common directory shall be serialized through both daemon-local and OS-visible cross-process locks and return a busy/conflict response rather than overlap.</li>

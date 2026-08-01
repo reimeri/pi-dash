@@ -2,12 +2,19 @@ import {
   DirectoryDialogResponseSchema,
   HealthResponseSchema,
   isApiErrorEnvelope,
+  RemoveWorktreeResponseSchema,
   SessionResponseSchema,
   WorkspaceListResponseSchema,
+  WorkspaceRefsResponseSchema,
+  WorktreeListResponseSchema,
+  WorktreeResponseSchema,
+  DeleteWorktreeBranchResponseSchema,
   WorkspacePreviewResponseSchema,
   WorkspaceResponseSchema,
   type ApiErrorEnvelope,
   type CreateWorkspaceRequest,
+  type CreateWorktreeRequest,
+  type DeleteWorktreeBranchRequest,
   type RenameWorkspaceRequest,
   type WorkspacePathRequest,
 } from "@pi-dash/contracts";
@@ -37,6 +44,7 @@ async function requestJson<T extends TSchema>(
     method?: "GET" | "POST" | "PATCH" | "DELETE";
     body?: unknown;
     signal?: AbortSignal;
+    idempotencyKey?: string;
   } = {},
 ): Promise<Static<T>> {
   const method = options.method ?? "GET";
@@ -51,6 +59,9 @@ async function requestJson<T extends TSchema>(
         ? {
             "Content-Type": "application/json",
             ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+            ...(options.idempotencyKey
+              ? { "Idempotency-Key": options.idempotencyKey }
+              : {}),
           }
         : {}),
     },
@@ -139,4 +150,47 @@ export const api = {
     requestEmpty(`/api/v1/workspaces/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
+  worktreeRefs: (workspaceId: string, query = "", limit = 50) =>
+    requestJson(
+      `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/refs?query=${encodeURIComponent(query)}&limit=${limit}`,
+      WorkspaceRefsResponseSchema,
+    ),
+  worktrees: (workspaceId: string) =>
+    requestJson(
+      `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/worktrees`,
+      WorktreeListResponseSchema,
+    ),
+  createWorktree: (
+    workspaceId: string,
+    body: CreateWorktreeRequest,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ) =>
+    requestJson(
+      `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/worktrees`,
+      WorktreeResponseSchema,
+      { method: "POST", body, idempotencyKey, signal },
+    ),
+  removeWorktree: (id: string, idempotencyKey: string) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(id)}/remove`,
+      RemoveWorktreeResponseSchema,
+      { method: "POST", body: {}, idempotencyKey },
+    ),
+  deleteWorktreeBranch: (
+    id: string,
+    body: DeleteWorktreeBranchRequest,
+    idempotencyKey: string,
+  ) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(id)}/delete-branch`,
+      DeleteWorktreeBranchResponseSchema,
+      { method: "POST", body, idempotencyKey },
+    ),
+  reconcileWorktrees: (workspaceId: string) =>
+    requestJson(
+      `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/worktrees/reconcile`,
+      WorktreeListResponseSchema,
+      { method: "POST", body: {} },
+    ),
 };

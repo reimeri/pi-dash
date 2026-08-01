@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { WorkspaceDto } from "@pi-dash/contracts";
+  import type { WorkspaceDto, WorktreeDto } from "@pi-dash/contracts";
   import { onMount } from "svelte";
   import { ApiClientError, api } from "./api.js";
   import {
@@ -13,6 +13,10 @@
   import WorkspaceSidebar from "./lib/workspaces/WorkspaceSidebar.svelte";
   import { workspaceStore } from "./lib/workspaces/store.js";
   import { displayPath } from "./lib/workspaces/display.js";
+  import CreateWorktreeDialog from "./lib/worktrees/CreateWorktreeDialog.svelte";
+  import DeleteBranchDialog from "./lib/worktrees/DeleteBranchDialog.svelte";
+  import RemoveWorktreeDialog from "./lib/worktrees/RemoveWorktreeDialog.svelte";
+  import { worktreeStore } from "./lib/worktrees/store.js";
 
   let startup: StartupState = initialStartupState;
   let nativeDialogAvailable = false;
@@ -22,9 +26,17 @@
   let selectedId: string | undefined;
   let workspaceActionError = "";
   let refreshingId: string | undefined;
+  let selectedWorktreeId: string | undefined;
+  let showCreateWorktree = false;
+  let removeWorktreeTarget: WorktreeDto | undefined;
+  let deleteBranchTarget: WorktreeDto | undefined;
+  let reconciling = false;
   $: selectedWorkspace = $workspaceStore.workspaces.find(
     (workspace) => workspace.id === selectedId,
   );
+  $: selectedWorktrees = selectedWorkspace
+    ? ($worktreeStore.byWorkspace[selectedWorkspace.id] ?? [])
+    : [];
 
   async function connect() {
     startup = reduceStartupState(startup, { type: "CONNECT" });
@@ -42,6 +54,7 @@
       if (!selectedId && $workspaceStore.workspaces[0]) {
         selectedId = $workspaceStore.workspaces[0].id;
       }
+      if (selectedId) await worktreeStore.load(selectedId);
     } catch (error) {
       if (error instanceof ApiClientError && error.status === 401) {
         startup = reduceStartupState(startup, { type: "UNAUTHORIZED" });
@@ -90,8 +103,43 @@
   }
 
   function focusExisting(id: string) {
-    selectedId = id;
+    selectWorkspace(id);
     showAdd = false;
+  }
+
+  function selectWorkspace(id: string) {
+    selectedId = id;
+    selectedWorktreeId = undefined;
+    void worktreeStore.load(id);
+  }
+
+  function selectWorktree(worktree: WorktreeDto) {
+    selectedId = worktree.workspaceId;
+    selectedWorktreeId = worktree.id;
+  }
+
+  function upsertWorktree(worktree: WorktreeDto) {
+    worktreeStore.upsert(worktree);
+    selectedWorktreeId = worktree.id;
+    workspaceActionError = "";
+    void workspaceStore.load();
+  }
+
+  async function reconcileWorktrees() {
+    if (!selectedWorkspace) return;
+    reconciling = true;
+    workspaceActionError = "";
+    try {
+      await worktreeStore.reconcile(selectedWorkspace.id);
+      await workspaceStore.load();
+    } catch (error) {
+      workspaceActionError =
+        error instanceof Error
+          ? error.message
+          : "Unable to reconcile worktrees.";
+    } finally {
+      reconciling = false;
+    }
   }
 
   onMount(() => {
@@ -158,7 +206,10 @@
         status={$workspaceStore.status}
         message={$workspaceStore.message}
         {selectedId}
-        onSelect={(id) => (selectedId = id)}
+        {selectedWorktreeId}
+        worktreesByWorkspace={$worktreeStore.byWorkspace}
+        onSelect={selectWorkspace}
+        onSelectWorktree={selectWorktree}
         onRename={(workspace) => (renameTarget = workspace)}
         onRemove={(workspace) => (removeTarget = workspace)}
         onRetry={refresh}
@@ -304,11 +355,115 @@
               </div>
             {/if}
           </div>
-          <div class="phase-placeholder">
-            <p class="eyebrow">Managed worktrees</p>
-            <h3>No managed worktrees</h3>
-            <p>Worktree management will be available in Phase 3.</p>
-          </div>
+          <section class="worktree-section" aria-labelledby="worktree-heading">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Managed worktrees</p>
+                <h3 id="worktree-heading">Isolated branches</h3>
+              </div>
+              <div class="detail-actions">
+                <button
+                  class="button secondary"
+                  type="button"
+                  disabled={reconciling}
+                  on:click={reconcileWorktrees}
+                  >{reconciling ? "Reconciling…" : "Reconcile"}</button
+                >
+                <button
+                  class="button primary"
+                  type="button"
+                  disabled={selectedWorkspace.repository.health !== "healthy"}
+                  on:click={() => (showCreateWorktree = true)}
+                  >Create worktree</button
+                >
+              </div>
+            </div>
+            {#if $worktreeStore.loadingWorkspaceId === selectedWorkspace.id && selectedWorktrees.length === 0}
+              <div class="dialog-progress" role="status">
+                <span class="spinner" aria-hidden="true"></span>
+                <p>Loading managed worktrees…</p>
+              </div>
+            {:else if $worktreeStore.message}
+              <p class="field-error" role="alert">{$worktreeStore.message}</p>
+            {:else if selectedWorktrees.length === 0}
+              <div class="phase-placeholder">
+                <h3>No managed worktrees</h3>
+                <p>
+                  Create an isolated branch and linked worktree from an exact
+                  local commit.
+                </p>
+              </div>
+            {:else}
+              <div class="worktree-grid">
+                {#each selectedWorktrees as worktree (worktree.id)}
+                  <article
+                    class:selected={selectedWorktreeId === worktree.id}
+                    class="worktree-card"
+                  >
+                    <div class="worktree-card-heading">
+                      <div>
+                        <p class="eyebrow">{worktree.lifecycle}</p>
+                        <h4>{worktree.name}</h4>
+                      </div>
+                      <span class={`health-badge health-${worktree.health}`}
+                        >{worktree.health.replace("_", " ")}</span
+                      >
+                    </div>
+                    <code class="branch-line">{worktree.branchRef}</code>
+                    <p class="detail-path">{displayPath(worktree.path)}</p>
+                    <dl class="repository-facts compact-facts">
+                      <div>
+                        <dt>Base</dt>
+                        <dd><code>{worktree.baseCommit.slice(0, 12)}</code></dd>
+                      </div>
+                      <div>
+                        <dt>Changes</dt>
+                        <dd>
+                          {worktree.dirty === true
+                            ? "Dirty"
+                            : worktree.dirty === false
+                              ? "Clean"
+                              : "Unknown"}
+                        </dd>
+                      </div>
+                    </dl>
+                    {#if worktree.lastError}
+                      <p class="worktree-warning" role="status">
+                        <strong>{worktree.lastError.code}</strong> — {worktree
+                          .lastError.message}
+                      </p>
+                    {/if}
+                    <div class="detail-actions worktree-actions">
+                      {#if worktree.lifecycle === "ready"}
+                        <button
+                          class="button danger"
+                          type="button"
+                          on:click={() => (removeWorktreeTarget = worktree)}
+                          >Remove clean worktree</button
+                        >
+                      {:else if worktree.lifecycle === "removed" && !worktree.branchDeleted}
+                        <button
+                          class="button danger"
+                          type="button"
+                          on:click={() => (deleteBranchTarget = worktree)}
+                          >Delete merged branch</button
+                        >
+                      {:else if worktree.lifecycle === "removed" && worktree.branchDeleted}
+                        <span class="muted-label">Branch deleted safely</span>
+                      {:else}
+                        <button
+                          class="button secondary"
+                          type="button"
+                          on:click={reconcileWorktrees}
+                          >Inspect and reconcile</button
+                        >
+                      {/if}
+                    </div>
+                  </article>
+                {/each}
+              </div>
+            {/if}
+          </section>
         </section>
       {:else}
         <div class="empty-state">
@@ -350,5 +505,27 @@
     workspace={removeTarget}
     onClose={() => (removeTarget = undefined)}
     onRemoved={removeWorkspace}
+  />
+{/if}
+{#if showCreateWorktree && selectedWorkspace}
+  <CreateWorktreeDialog
+    workspace={selectedWorkspace}
+    onClose={() => (showCreateWorktree = false)}
+    onCreated={upsertWorktree}
+  />
+{/if}
+{#if removeWorktreeTarget}
+  <RemoveWorktreeDialog
+    worktree={removeWorktreeTarget}
+    onClose={() => (removeWorktreeTarget = undefined)}
+    onRemoved={upsertWorktree}
+  />
+{/if}
+{#if deleteBranchTarget && selectedWorkspace}
+  <DeleteBranchDialog
+    workspace={selectedWorkspace}
+    worktree={deleteBranchTarget}
+    onClose={() => (deleteBranchTarget = undefined)}
+    onDeleted={upsertWorktree}
   />
 {/if}
