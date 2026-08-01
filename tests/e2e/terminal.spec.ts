@@ -174,6 +174,29 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     1,
   );
 
+  const terminalHeights = await terminal.evaluate((region) => {
+    const emulator = region.querySelector<HTMLElement>(".terminal-emulator");
+    const xterm = region.querySelector<HTMLElement>(".xterm");
+    if (!emulator || !xterm) return undefined;
+
+    const regionStyle = getComputedStyle(region);
+    return {
+      available:
+        region.clientHeight -
+        Number.parseFloat(regionStyle.paddingTop) -
+        Number.parseFloat(regionStyle.paddingBottom),
+      emulator: emulator.getBoundingClientRect().height,
+      xterm: xterm.getBoundingClientRect().height,
+    };
+  });
+  expect(terminalHeights).toBeDefined();
+  expect(
+    Math.abs(terminalHeights!.emulator - terminalHeights!.available),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(terminalHeights!.xterm - terminalHeights!.available),
+  ).toBeLessThanOrEqual(1);
+
   const cookieHeader = (await page.context().cookies())
     .map((cookie) => `${cookie.name}=${cookie.value}`)
     .join("; ");

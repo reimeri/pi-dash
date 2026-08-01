@@ -437,6 +437,7 @@
     aria-label={`${workspaceName} ${worktree.name} interactive Pi terminal`}
   >
     <Xterm
+      class="terminal-emulator"
       bind:terminal
       options={xtermOptions}
       onLoad={handleLoad}
@@ -491,6 +492,11 @@
     padding: 8px;
     overflow: hidden;
     background: #09090b;
+  }
+
+  .terminal-region > :global(.terminal-emulator),
+  .terminal-region :global(.xterm) {
+    height: 100%;
   }
 
   .terminal-region:focus-within {
