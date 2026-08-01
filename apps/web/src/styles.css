@@ -347,6 +347,7 @@ a:focus-visible,
   display: grid;
   min-height: 0;
   overflow: hidden;
+  grid-row: 3;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
 }
 

@@ -96,6 +96,13 @@ test("bootstrap lands on a clean authenticated dashboard and survives reload", a
   await expect(
     page.getByRole("status", { name: "Daemon connection" }),
   ).toContainText("Connected");
+  const dashboardBox = await page.locator(".dashboard").boundingBox();
+  expect(dashboardBox).not.toBeNull();
+  expect(
+    Math.abs(
+      dashboardBox!.y + dashboardBox!.height - page.viewportSize()!.height,
+    ),
+  ).toBeLessThanOrEqual(1);
   expect(page.url()).not.toContain("token");
   expect(await page.evaluate(() => Object.keys(localStorage))).toEqual([]);
   expect(await page.evaluate(() => Object.keys(sessionStorage))).toEqual([]);
