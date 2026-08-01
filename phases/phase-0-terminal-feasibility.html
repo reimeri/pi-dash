@@ -3,6 +3,22 @@
 <p><a href="../PLAN.html">← Master plan</a> · <a href="phase-1-foundation.html">Next phase →</a></p>
 <h1>Phase 0: Terminal and Pi feasibility</h1>
 
+<section id="completion-summary">
+<h2>Completion summary</h2>
+<p class="note"><strong>Status: Complete — proceed.</strong> Phase 0 passed its exit gate on 2026-08-01. The executable spike is implemented under <code>spikes/terminal-bridge</code>, and the evidence-backed decision record at <a href="../docs/architecture/terminal-feasibility.md"><code>docs/architecture/terminal-feasibility.md</code></a> authorizes Phase 1 to begin.</p>
+<table><thead><tr><th>Area</th><th>Current status</th></tr></thead><tbody>
+<tr><td>Terminal bridge</td><td>Passed. Fastify launches Pi directly through <code>node-pty</code>, validates the Git top-level <code>cwd</code>, and uses a bounded, versioned WebSocket protocol with atomic replay, reset, resize redraw, and slow-client protection.</td></tr>
+<tr><td>Browser terminal</td><td>Passed. Svelte 5 and <code>@battlefieldduck/xterm-svelte</code> render the real Pi TUI, selectors, tools, editor, footer, Unicode, and extension-provided custom UI. FitAddon, Unicode11Addon, terminal, observer, listeners, timers, and socket resources are explicitly disposed.</td></tr>
+<tr><td>Input behavior</td><td>Passed. Enter, Shift+Enter, Alt+Enter, Escape, Ctrl+C, Ctrl+O, Ctrl+T, Ctrl+L, arrows, Tab, Backspace, printable Unicode, and multiline bracketed paste were exercised. Modified Enter must remain capture-phase CSI-u translation in the production component.</td></tr>
+<tr><td>Reconnect and recovery</td><td>Passed. Browser refresh and unmount leave Pi alive. Bounded replay plus a forced resize restored a usable alternate-screen UI, including a real ask-user interaction while blocked. Final measured usable reconnect time was 95.3 ms against the 2-second budget.</td></tr>
+<tr><td>Status side channel</td><td>Passed. The bundled Pi extension authenticates LF-delimited lifecycle events over a private Unix socket, reports working/blocked/done without ANSI parsing, reconnects from coherent state, shows degraded capability when absent, and sends no prompt or terminal content.</td></tr>
+<tr><td>Performance and lifecycle</td><td>Passed. Input-to-echo measured 0.44 ms p95. The browser handled 150 MiB at 5 MiB/s for 30 seconds with an in-page heartbeat peak of 101.7 ms. One hundred mount/unmount cycles ended with no live terminal, addon, observer, host key listener, WebSocket, PTY child, or status socket; retained heap was 0.997× baseline.</td></tr>
+<tr><td>Verification</td><td>Passed. Build, ESLint, Svelte checking, 17 unit/integration tests, and the Chrome Playwright end-to-end test pass. An independent final review returned <strong>GO</strong>.</td></tr>
+<tr><td>Recorded caveats</td><td>Non-blocking follow-ups are Firefox coverage and a physical desktop clipboard smoke in packaged builds. Unicode11Addon requires xterm's proposed API option, xterm-svelte teardown cannot be assumed, and the spike remains disposable. npm audit reports one low-severity esbuild advisory limited to a Windows development-server path.</td></tr>
+</tbody></table>
+<p><strong>Production constraints carried forward:</strong> retain capture-phase modified-Enter translation, explicit xterm resource ownership, authenticated status events, bounded browser/server output queues, identity-validated process-tree cleanup, and the tested replay/reset/resize recovery contract.</p>
+</section>
+
 <h2>Outcome</h2>
 <p>An executable Linux spike proves that a Svelte 5 page using <code>@battlefieldduck/xterm-svelte</code> can drive an ordinary interactive Pi process through <code>node-pty</code> and a WebSocket without losing Pi's terminal UI. The spike demonstrates resizing, essential key chords, paste, ask-user custom UI, worktree-specific <code>cwd</code>, disconnect/reconnect, process exit, and a non-invasive lifecycle status side channel. A written decision record captures measured behavior and any design changes required before product construction.</p>
 
@@ -162,16 +178,16 @@ type ServerFrame =
 
 <h2>Acceptance criteria</h2>
 <ul>
-  <li>☐ Real Pi and extension-provided terminal UI are usable in the browser.</li>
-  <li>☐ Required key chords, multiline input, paste, resize, and ask-user behavior pass the recorded Linux matrix.</li>
-  <li>☐ Browser disconnect/reconnect leaves Pi alive and restores a usable terminal.</li>
-  <li>☐ Status events identify working, blocked, and settled transitions without ANSI parsing.</li>
-  <li>☐ Alternate-screen recovery has a documented, bounded production design.</li>
-  <li>☐ Repeated lifecycle testing shows no unbounded terminal, listener, observer, socket, or child-process leak.</li>
-  <li>☐ Observable failures and package versions are recorded in <code>docs/architecture/terminal-feasibility.md</code>.</li>
-  <li>☐ Tests pass.</li>
-  <li>☐ Build, lint, and type checking pass.</li>
-  <li>☐ Documentation is updated.</li>
+  <li>☑ Real Pi and extension-provided terminal UI are usable in the browser.</li>
+  <li>☑ Required key chords, multiline input, paste, resize, and ask-user behavior pass the recorded Linux matrix.</li>
+  <li>☑ Browser disconnect/reconnect leaves Pi alive and restores a usable terminal.</li>
+  <li>☑ Status events identify working, blocked, and settled transitions without ANSI parsing.</li>
+  <li>☑ Alternate-screen recovery has a documented, bounded production design.</li>
+  <li>☑ Repeated lifecycle testing shows no unbounded terminal, listener, observer, socket, or child-process leak.</li>
+  <li>☑ Observable failures and package versions are recorded in <code>docs/architecture/terminal-feasibility.md</code>.</li>
+  <li>☑ Tests pass.</li>
+  <li>☑ Build, lint, and type checking pass.</li>
+  <li>☑ Documentation is updated.</li>
 </ul>
 
 <h2>Verification</h2>
