@@ -180,11 +180,6 @@
                 labelPrefix={`${workspace.name} workflow`}
                 channel={statusChannel}
               />
-              <span
-                class={`health-dot health-${workspace.repository.health}`}
-                title={healthLabel(workspace)}
-                aria-label={healthLabel(workspace)}
-              ></span>
             </button>
           </div>
           <div
