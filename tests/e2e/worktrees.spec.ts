@@ -156,8 +156,19 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
   await workspaceDialog.getByRole("button", { name: "Continue" }).click();
   await workspaceDialog.getByLabel("Workspace name").fill("Worktree E2E");
   await workspaceDialog.getByRole("button", { name: "Add workspace" }).click();
+  await expect(
+    page.getByRole("button", { name: "New worktree in Worktree E2E" }),
+  ).toBeVisible();
 
-  await page.getByRole("button", { name: "Create worktree" }).click();
+  await page.reload();
+  const selectWorkspaceHeading = page.getByRole("heading", {
+    name: "Select a workspace",
+  });
+  await expect(selectWorkspaceHeading).toBeVisible();
+  await page
+    .getByRole("button", { name: "New worktree in Worktree E2E" })
+    .click();
+  await expect(page.locator("main h2")).toHaveText("Select a workspace");
   const createDialog = page.getByRole("dialog", {
     name: "Create managed worktree",
   });
@@ -165,6 +176,7 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
   await createDialog.getByLabel("Name").fill("Feature work");
   await expect(createDialog.getByLabel("Slug")).toHaveValue("feature-work");
   await createDialog.getByRole("button", { name: "Create worktree" }).click();
+  await page.locator(".workspace-select", { hasText: "Worktree E2E" }).click();
 
   const card = page.locator(".worktree-card", { hasText: "Feature work" });
   await expect(card).toContainText("ready");

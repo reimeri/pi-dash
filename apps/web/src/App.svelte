@@ -37,7 +37,7 @@
   let workspaceActionError = "";
   let refreshingId: string | undefined;
   let selectedWorktreeId: string | undefined;
-  let showCreateWorktree = false;
+  let createWorktreeTarget: WorkspaceDto | undefined;
   let removeWorktreeTarget: WorktreeDto | undefined;
   let deleteBranchTarget: WorktreeDto | undefined;
   let terminalControls: TerminalControls | undefined;
@@ -151,6 +151,10 @@
 
   function loadWorkspaceWorktrees(id: string) {
     void worktreeStore.load(id);
+  }
+
+  function openCreateWorktree(workspace: WorkspaceDto) {
+    createWorktreeTarget = workspace;
   }
 
   function canOpenTerminal(worktree: WorktreeDto): boolean {
@@ -418,6 +422,7 @@
         statusChannel={$workflowStatusStore.channel}
         onSelect={selectWorkspace}
         onExpand={loadWorkspaceWorktrees}
+        onCreateWorktree={openCreateWorktree}
         onSelectWorktree={selectWorktree}
       />
     </aside>
@@ -587,7 +592,7 @@
                   class="button primary"
                   type="button"
                   disabled={selectedWorkspace.repository.health !== "healthy"}
-                  on:click={() => (showCreateWorktree = true)}
+                  on:click={() => openCreateWorktree(selectedWorkspace)}
                   >Create worktree</button
                 >
               </div>
@@ -743,10 +748,10 @@
     onRemoved={removeWorkspace}
   />
 {/if}
-{#if showCreateWorktree && selectedWorkspace}
+{#if createWorktreeTarget}
   <CreateWorktreeDialog
-    workspace={selectedWorkspace}
-    onClose={() => (showCreateWorktree = false)}
+    workspace={createWorktreeTarget}
+    onClose={() => (createWorktreeTarget = undefined)}
     onCreated={upsertWorktree}
   />
 {/if}

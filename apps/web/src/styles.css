@@ -567,7 +567,8 @@ main {
 }
 
 .workspace-chevron,
-.workspace-select {
+.workspace-select,
+.workspace-create {
   border: 0;
   color: var(--text);
   background: transparent;
@@ -575,17 +576,33 @@ main {
 }
 
 .workspace-chevron:hover,
-.workspace-select:hover {
+.workspace-select:hover,
+.workspace-create:hover:not(:disabled) {
   background: rgb(255 255 255 / 0.025);
 }
 
-.workspace-chevron {
+.workspace-chevron,
+.workspace-create {
   display: grid;
   width: 28px;
   flex: 0 0 auto;
   padding: 0;
   place-items: center;
   border-radius: 6px;
+}
+
+.workspace-create {
+  color: var(--subtle);
+  font-size: 17px;
+}
+
+.workspace-create:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.workspace-create:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .workspace-select {

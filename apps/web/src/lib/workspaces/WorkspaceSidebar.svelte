@@ -22,6 +22,7 @@
   export let statusChannel: "connecting" | "connected" | "disconnected";
   export let onSelect: (id: string) => void;
   export let onExpand: (id: string) => void;
+  export let onCreateWorktree: (workspace: WorkspaceDto) => void;
   export let onSelectWorktree: (worktree: WorktreeDto) => void;
 
   const storageKey = "pi-dash.expanded-workspaces.v1";
@@ -154,6 +155,18 @@
                   channel={statusChannel}
                 />
               {/if}
+            </button>
+            <button
+              class="workspace-create"
+              type="button"
+              disabled={workspace.repository.health !== "healthy"}
+              aria-label={`New worktree in ${workspace.name}`}
+              title={workspace.repository.health === "healthy"
+                ? `Create a worktree in ${workspace.name}`
+                : "Worktree creation requires a healthy repository"}
+              on:click={() => onCreateWorktree(workspace)}
+            >
+              <span aria-hidden="true">+</span>
             </button>
           </div>
           <div
