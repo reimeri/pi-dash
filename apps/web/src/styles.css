@@ -1125,8 +1125,7 @@ code {
 
 .workflow-indicator.integration-disconnected,
 .workflow-indicator.integration-unsupported {
-  outline: 1px dashed var(--subtle);
-  outline-offset: 2px;
+  opacity: 20%;
 }
 
 .workflow-glyph {
