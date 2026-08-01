@@ -1,4 +1,5 @@
 import {
+  APPLICATION_EVENTS_PROTOCOL_VERSION,
   ApplicationEventsServerFrameSchema,
   type ApplicationEventsServerFrame,
 } from "@pi-dash/contracts";
@@ -41,7 +42,7 @@ export function createStatusEventClient(
       attempts = 0;
       candidate.send(
         JSON.stringify({
-          v: 1,
+          v: APPLICATION_EVENTS_PROTOCOL_VERSION,
           type: "subscribe",
           afterCursor: workflowStatusStore.current().cursor,
         }),

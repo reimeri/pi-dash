@@ -2,7 +2,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 export const STATUS_PROTOCOL_VERSION = 1 as const;
 export const STATUS_MAX_FRAME_BYTES = 16 * 1024;
-export const APPLICATION_EVENTS_PROTOCOL_VERSION = 1 as const;
+export const APPLICATION_EVENTS_PROTOCOL_VERSION = 2 as const;
 
 const UuidSchema = Type.String({
   pattern:
@@ -137,6 +137,7 @@ export const WorkspaceAttentionSchema = Type.Object(
     workspaceId: UuidSchema,
     state: WorkflowStateSchema,
     count: Type.Integer({ minimum: 0 }),
+    integration: StatusIntegrationSchema,
   },
   { additionalProperties: false },
 );

@@ -171,6 +171,10 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
   await expect(
     page.getByRole("heading", { name: "Terminal E2E" }),
   ).toBeVisible();
+  const workspaceSelect = page.locator(".workspace-select", {
+    hasText: "Terminal E2E",
+  });
+  const workspaceActivity = workspaceSelect.getByRole("img");
   const sidebarWorktree = page
     .locator(".worktree-sidebar-list")
     .getByRole("button", { name: /Terminal work/ });
@@ -179,16 +183,31 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
   const terminal = page.getByRole("application", {
     name: "Terminal E2E Terminal work interactive Pi terminal",
   });
+  async function expectCollapsedWorkspaceActivity(
+    accessibleName: RegExp,
+  ): Promise<void> {
+    await page.getByRole("button", { name: "Collapse Terminal E2E" }).click();
+    await expect(workspaceActivity).toHaveAccessibleName(accessibleName);
+    await page.getByRole("button", { name: "Expand Terminal E2E" }).click();
+    await expect(workspaceActivity).toHaveCount(0);
+  }
   await expect(terminal).toContainText("FAKE_PI_READY");
   const workflowIndicator = sidebarWorktree.getByRole("img");
   await expect(workflowIndicator).toHaveAccessibleName(
     /Terminal work workflow: Idle/,
   );
+  await page.getByRole("button", { name: "Collapse Terminal E2E" }).click();
+  await expect(workspaceActivity).toHaveCount(0);
+  await page.getByRole("button", { name: "Expand Terminal E2E" }).click();
   await terminal.click();
   await page.keyboard.type("__WORKING__");
   await expect(workflowIndicator).toHaveAccessibleName(
     /Terminal work workflow: Working/,
   );
+  await expectCollapsedWorkspaceActivity(
+    /Terminal E2E workflow: Running; 1 worktree with activity/,
+  );
+  await terminal.click();
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect
     .poll(() =>
@@ -201,6 +220,10 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
   await expect(workflowIndicator).toHaveAccessibleName(
     /Terminal work workflow: Blocked waiting for an answer/,
   );
+  await expectCollapsedWorkspaceActivity(
+    /Terminal E2E workflow: Needs attention; 1 worktree with activity/,
+  );
+  await terminal.click();
   await page.keyboard.type("__BLOCK_END__");
   await expect(workflowIndicator).toHaveAccessibleName(
     /Terminal work workflow: Working/,
@@ -208,6 +231,9 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
   await page.keyboard.type("__SETTLED__");
   await expect(workflowIndicator).toHaveAccessibleName(
     /Terminal work workflow: Done, acknowledgement required/,
+  );
+  await expectCollapsedWorkspaceActivity(
+    /Terminal E2E workflow: All done; 1 completion awaiting acknowledgement/,
   );
   await expect
     .poll(() =>

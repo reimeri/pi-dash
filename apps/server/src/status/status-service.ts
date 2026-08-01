@@ -39,6 +39,7 @@ export interface StatusService {
   list(): WorkflowStatusDto[];
   get(worktreeId: string): WorkflowStatusDto | undefined;
   workspaceAttention(): WorkspaceAttentionDto[];
+  publishCurrent(worktreeId: string): void;
   registerRuntime(worktreeId: string, runtimeId: string, token: string): void;
   resetRuntime(worktreeId: string, runtimeId: string): void;
   process(frame: StatusExtensionFrame): WorkflowStatusDto;
@@ -52,9 +53,15 @@ const MAX_RETIRED_EPOCHS = 64;
 
 const ATTENTION_PRIORITY = {
   idle: 0,
-  working: 1,
-  done: 2,
+  done: 1,
+  working: 2,
   blocked: 3,
+} as const;
+
+const INTEGRATION_PRIORITY = {
+  connected: 0,
+  disconnected: 1,
+  unsupported: 2,
 } as const;
 
 function tokenMatches(expected: Buffer, received: string): boolean {
@@ -125,6 +132,7 @@ export function createStatusService(options: {
           workspaceId,
           state: "idle" as const,
           count: 0,
+          integration: "connected" as const,
         };
         if (status.state !== "idle") current.count += 1;
         if (
@@ -132,9 +140,20 @@ export function createStatusService(options: {
         ) {
           current.state = status.state;
         }
+        if (
+          INTEGRATION_PRIORITY[status.integration] >
+          INTEGRATION_PRIORITY[current.integration]
+        ) {
+          current.integration = status.integration;
+        }
         aggregates.set(workspaceId, current);
       }
       return [...aggregates.values()];
+    },
+    publishCurrent(worktreeId) {
+      const current = options.repository.get(worktreeId);
+      if (!current) throw new StatusProcessingError("STATUS_RUNTIME_UNKNOWN");
+      publish(current);
     },
     registerRuntime(worktreeId, runtimeId, token) {
       const priorRuntimeId = runtimeByWorktree.get(worktreeId);

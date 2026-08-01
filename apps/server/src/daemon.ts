@@ -209,6 +209,7 @@ export async function createDaemon(
         await terminals.stop(worktree.id);
         await terminals.dispose(worktree.id);
       },
+      onMembershipChange: (worktreeId) => statuses!.publishCurrent(worktreeId),
     });
     terminals = createTerminalManager({
       lifecycle,

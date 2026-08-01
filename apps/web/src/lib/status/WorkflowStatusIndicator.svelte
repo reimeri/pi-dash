@@ -16,13 +16,16 @@
   $: state = stateOverride ?? status?.state ?? ("idle" as WorkflowState);
   $: integration =
     integrationOverride ?? status?.integration ?? ("disconnected" as const);
-  $: label = statusLabel(state, integration);
+  $: label =
+    aggregateCount === undefined
+      ? statusLabel(state, integration)
+      : aggregateStatusLabel(state);
   $: channelDetail =
     channel === "connected" ? "" : `; status channel ${channel}`;
   $: detail =
     aggregateCount === undefined
       ? `${labelPrefix}: ${label}${status ? `; changed ${new Date(status.changedAt).toLocaleString()}` : ""}${channelDetail}`
-      : `${labelPrefix}: ${label}; ${aggregateCount} worktree${aggregateCount === 1 ? "" : "s"} need attention${channelDetail}`;
+      : aggregateDetail(labelPrefix, state, aggregateCount, channelDetail);
 
   function statusLabel(
     workflow: WorkflowState,
@@ -37,6 +40,28 @@
     return health === "connected"
       ? stateLabel
       : `${stateLabel}; status integration ${health}`;
+  }
+
+  function aggregateStatusLabel(workflow: WorkflowState): string {
+    return {
+      idle: "No activity",
+      working: "Running",
+      blocked: "Needs attention",
+      done: "All done",
+    }[workflow];
+  }
+
+  function aggregateDetail(
+    prefix: string,
+    workflow: WorkflowState,
+    count: number,
+    channelSuffix: string,
+  ): string {
+    const countDetail =
+      workflow === "done"
+        ? `${count} completion${count === 1 ? "" : "s"} awaiting acknowledgement`
+        : `${count} worktree${count === 1 ? "" : "s"} with activity`;
+    return `${prefix}: ${aggregateStatusLabel(workflow)}; ${countDetail}${channelSuffix}`;
   }
 </script>
 

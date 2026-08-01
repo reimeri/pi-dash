@@ -35,7 +35,12 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-async function fixture(options: { stopRuntime?: () => Promise<void> } = {}) {
+async function fixture(
+  options: {
+    stopRuntime?: () => Promise<void>;
+    onMembershipChange?: (worktreeId: string) => void;
+  } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "pi-dash-worktree-service-"));
   roots.push(root);
   const repositoryPath = createGitRepository(root, "repository");
@@ -68,6 +73,7 @@ async function fixture(options: { stopRuntime?: () => Promise<void> } = {}) {
     snapshots: createBaseSnapshotSigner({ key: Buffer.alloc(32, 7) }),
     managedRoot: join(root, "managed"),
     stopRuntime: options.stopRuntime,
+    onMembershipChange: options.onMembershipChange,
   });
   return {
     root,
@@ -341,7 +347,10 @@ describe("WorktreeService integration", () => {
   });
 
   it("blocks dirty removal, then removes cleanly and atomically deletes a merged branch", async () => {
-    const { database, workspace, service } = await fixture();
+    const membershipChanges: string[] = [];
+    const { database, workspace, service } = await fixture({
+      onMembershipChange: (worktreeId) => membershipChanges.push(worktreeId),
+    });
     const snapshot = (await service.refs(workspace.id)).head!;
     const created = await service.create(
       workspace.id,
@@ -383,6 +392,10 @@ describe("WorktreeService integration", () => {
     );
     expect(removed.worktree.lifecycle).toBe("removed");
     expect(removed.worktree.branchDeleted).toBe(false);
+    expect(membershipChanges).toEqual([
+      created.worktree.id,
+      created.worktree.id,
+    ]);
 
     const deleted = await service.deleteBranch(
       created.worktree.id,

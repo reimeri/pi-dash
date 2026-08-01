@@ -20,7 +20,7 @@ const status: WorkflowStatusDto = {
 
 function snapshot(): ApplicationEventsServerFrame {
   return {
-    v: 1,
+    v: 2,
     type: "snapshot",
     cursor: 4,
     statuses: [status],
@@ -50,7 +50,7 @@ describe("workflow status store", () => {
       snapshot(),
     ).state;
     const working = reduceWorkflowStatusState(initialized, {
-      v: 1,
+      v: 2,
       type: "status",
       cursor: 5,
       status: { ...status, state: "working", reason: "agent", revision: 1 },
@@ -59,7 +59,7 @@ describe("workflow status store", () => {
     expect(working.state.byWorktree[status.worktreeId]?.state).toBe("working");
     expect(
       reduceWorkflowStatusState(working.state, {
-        v: 1,
+        v: 2,
         type: "status",
         cursor: 7,
         status: { ...status, state: "done", reason: "settled", revision: 2 },
@@ -75,7 +75,7 @@ describe("workflow status store", () => {
     ).state;
     const workspaceId = "22222222-2222-4222-8222-222222222222";
     const next = reduceWorkflowStatusState(initialized, {
-      v: 1,
+      v: 2,
       type: "status",
       cursor: 5,
       status: {
@@ -84,11 +84,23 @@ describe("workflow status store", () => {
         reason: "settled",
         revision: 1,
       },
-      workspaceAttention: [{ workspaceId, state: "done", count: 1 }],
+      workspaceAttention: [
+        {
+          workspaceId,
+          state: "done",
+          count: 1,
+          integration: "connected",
+        },
+      ],
     });
     expect(next.state.byWorktree[status.worktreeId]?.state).toBe("done");
     expect(next.state.workspaceAttention).toEqual([
-      { workspaceId, state: "done", count: 1 },
+      {
+        workspaceId,
+        state: "done",
+        count: 1,
+        integration: "connected",
+      },
     ]);
   });
 });

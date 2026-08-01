@@ -1,8 +1,9 @@
-import type {
-  ApplicationEventsServerFrame,
-  RuntimeDto,
-  WorkflowStatusDto,
-  WorkspaceAttentionDto,
+import {
+  APPLICATION_EVENTS_PROTOCOL_VERSION,
+  type ApplicationEventsServerFrame,
+  type RuntimeDto,
+  type WorkflowStatusDto,
+  type WorkspaceAttentionDto,
 } from "@pi-dash/contracts";
 
 export interface ApplicationEventTransport {
@@ -69,7 +70,7 @@ export function createApplicationEvents(options: {
     publishStatus(status) {
       cursor += 1;
       append({
-        v: 1,
+        v: APPLICATION_EVENTS_PROTOCOL_VERSION,
         type: "status",
         cursor,
         status,
@@ -78,14 +79,19 @@ export function createApplicationEvents(options: {
     },
     publishRuntime(runtime) {
       cursor += 1;
-      append({ v: 1, type: "runtime", cursor, runtime });
+      append({
+        v: APPLICATION_EVENTS_PROTOCOL_VERSION,
+        type: "runtime",
+        cursor,
+        runtime,
+      });
     },
     subscribe(transport) {
       const subscriber: Subscriber = { transport, snapshotSent: false };
       subscribers.add(subscriber);
       const snapshotCursor = cursor;
       send(subscriber, {
-        v: 1,
+        v: APPLICATION_EVENTS_PROTOCOL_VERSION,
         type: "snapshot",
         cursor: snapshotCursor,
         statuses: options.statuses(),

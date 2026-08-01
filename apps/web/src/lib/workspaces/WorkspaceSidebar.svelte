@@ -1,6 +1,5 @@
 <script lang="ts">
   import type {
-    WorkflowState,
     WorkflowStatusDto,
     WorkspaceAttentionDto,
     WorkspaceDto,
@@ -51,35 +50,6 @@
 
   function canOpenTerminal(worktree: WorktreeDto): boolean {
     return worktree.lifecycle === "ready" && worktree.health === "healthy";
-  }
-
-  function workspaceAttention(workspaceId: string): {
-    state: WorkflowState;
-    count: number;
-    integration: "connected" | "disconnected" | "unsupported";
-  } {
-    const aggregate = workspaceAttentionStatuses.find(
-      (attention) => attention.workspaceId === workspaceId,
-    );
-    const state: WorkflowState = aggregate?.state ?? "idle";
-    const count = aggregate?.count ?? 0;
-    let integration: "connected" | "disconnected" | "unsupported" =
-      statusChannel === "connected" ? "connected" : "disconnected";
-    for (const worktree of worktreesByWorkspace[workspaceId] ?? []) {
-      const workflow = workflowStatuses[worktree.id];
-      if (!workflow) {
-        integration = "disconnected";
-        continue;
-      }
-      if (workflow.integration === "unsupported") integration = "unsupported";
-      else if (
-        workflow.integration === "disconnected" &&
-        integration !== "unsupported"
-      ) {
-        integration = "disconnected";
-      }
-    }
-    return { state, count, integration };
   }
 
   function healthLabel(workspace: WorkspaceDto): string {
@@ -144,6 +114,9 @@
     {/if}
     <ul class="workspace-list">
       {#each workspaces as workspace (workspace.id)}
+        {@const activity = workspaceAttentionStatuses.find(
+          (attention) => attention.workspaceId === workspace.id,
+        )}
         <li
           class:selected={selectedId === workspace.id && !selectedWorktreeId}
           class:degraded={workspace.repository.health !== "healthy"}
@@ -172,14 +145,15 @@
               <span class="workspace-copy">
                 <strong>{workspace.name}</strong>
               </span>
-              <WorkflowStatusIndicator
-                stateOverride={workspaceAttention(workspace.id).state}
-                integrationOverride={workspaceAttention(workspace.id)
-                  .integration}
-                aggregateCount={workspaceAttention(workspace.id).count}
-                labelPrefix={`${workspace.name} workflow`}
-                channel={statusChannel}
-              />
+              {#if !expanded.has(workspace.id) && statusChannel === "connected" && activity && activity.state !== "idle" && activity.integration === "connected"}
+                <WorkflowStatusIndicator
+                  stateOverride={activity.state}
+                  integrationOverride={activity.integration}
+                  aggregateCount={activity.count}
+                  labelPrefix={`${workspace.name} workflow`}
+                  channel={statusChannel}
+                />
+              {/if}
             </button>
           </div>
           <div

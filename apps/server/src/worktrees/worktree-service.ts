@@ -184,6 +184,7 @@ export function createWorktreeService(options: {
   snapshots: BaseSnapshotSigner;
   managedRoot: string;
   stopRuntime?: (worktree: WorktreeDto) => Promise<void>;
+  onMembershipChange?: (worktreeId: string) => void;
   now?: () => Date;
   id?: () => string;
 }): WorktreeService {
@@ -607,6 +608,7 @@ export function createWorktreeService(options: {
           );
           return candidate;
         });
+        options.onMembershipChange?.(record.id);
 
         await options.lock.runExclusive(workspace.gitCommonDir, async () => {
           if (
@@ -837,6 +839,7 @@ export function createWorktreeService(options: {
             })!;
           },
         );
+        options.onMembershipChange?.(removed.id);
         const response: RemoveWorktreeResponse = {
           operationId: started.operation.id,
           removed: true,
@@ -1121,6 +1124,7 @@ export function createWorktreeService(options: {
                         dirty: null,
                         updatedAt: now().toISOString(),
                       });
+                      options.onMembershipChange?.(removed.id);
                     }
                   }
                 } else if (exact) {

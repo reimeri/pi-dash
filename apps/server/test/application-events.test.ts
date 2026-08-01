@@ -46,6 +46,7 @@ describe("application event stream", () => {
       "status",
       "runtime",
     ]);
+    expect(received.map((frame) => frame.v)).toEqual([2, 2, 2]);
     expect(received.map((frame) => "cursor" in frame && frame.cursor)).toEqual([
       0, 1, 2,
     ]);

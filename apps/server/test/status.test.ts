@@ -17,6 +17,7 @@ const migrationsDirectory = fileURLToPath(
 const roots: string[] = [];
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const worktreeId = "22222222-2222-4222-8222-222222222222";
+const secondWorktreeId = "99999999-9999-4999-8999-999999999999";
 const runtimeId = "33333333-3333-4333-8333-333333333333";
 const epoch = "44444444-4444-4444-8444-444444444444";
 const secondEpoch = "55555555-5555-4555-8555-555555555555";
@@ -186,6 +187,55 @@ describe("workflow status", () => {
     );
     const reset = repository.resetActive("2026-01-01T00:00:12.000Z");
     expect(reset[0]).toMatchObject({ state: "idle", reason: "runtime_reset" });
+    database.close();
+  });
+
+  it("rolls workspace activity up with active work ahead of unread completions", async () => {
+    const { database, repository, service } = await fixture();
+    const timestamp = "2026-01-01T00:00:00.000Z";
+    database.sqlite
+      .prepare(
+        `INSERT INTO worktrees (
+          id, workspace_id, name, slug, path, branch_ref, base_ref, base_commit,
+          lifecycle, health, created_at, updated_at
+        ) VALUES (?, ?, 'Second', 'second', '/managed/second',
+          'refs/heads/pi-dash/second', 'HEAD', ?, 'ready', 'healthy', ?, ?)`,
+      )
+      .run(secondWorktreeId, workspaceId, "b".repeat(40), timestamp, timestamp);
+
+    repository.transition(worktreeId, "done", "settled", timestamp);
+    repository.transition(secondWorktreeId, "working", "agent", timestamp);
+    expect(service.workspaceAttention()[0]).toMatchObject({
+      state: "working",
+      integration: "disconnected",
+    });
+
+    repository.setIntegration(worktreeId, "connected");
+    repository.setIntegration(secondWorktreeId, "connected");
+    expect(service.workspaceAttention()).toEqual([
+      {
+        workspaceId,
+        state: "working",
+        count: 2,
+        integration: "connected",
+      },
+    ]);
+
+    repository.transition(secondWorktreeId, "blocked", "ask_user", timestamp);
+    expect(service.workspaceAttention()[0]?.state).toBe("blocked");
+
+    repository.transition(secondWorktreeId, "idle", "acknowledged", timestamp);
+    expect(service.workspaceAttention()[0]).toMatchObject({
+      state: "done",
+      count: 1,
+    });
+
+    repository.setIntegration(worktreeId, "unsupported");
+    repository.transition(secondWorktreeId, "working", "agent", timestamp);
+    expect(service.workspaceAttention()[0]).toMatchObject({
+      state: "working",
+      integration: "unsupported",
+    });
     database.close();
   });
 
