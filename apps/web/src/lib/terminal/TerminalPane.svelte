@@ -1,9 +1,13 @@
 <script lang="ts">
   import { Xterm } from "@battlefieldduck/xterm-svelte";
-  import type {
-    RuntimeDto,
-    TerminalServerFrame,
-    WorktreeDto,
+  import {
+    TERMINAL_MAX_COLS,
+    TERMINAL_MAX_ROWS,
+    TERMINAL_MIN_COLS,
+    TERMINAL_MIN_ROWS,
+    type RuntimeDto,
+    type TerminalServerFrame,
+    type WorktreeDto,
   } from "@pi-dash/contracts";
   import type { Terminal } from "@xterm/xterm";
   import "@xterm/xterm/css/xterm.css";
@@ -106,6 +110,27 @@
     return true;
   }
 
+  function sendTerminalSize(
+    cols: number | undefined = terminal?.cols,
+    rows: number | undefined = terminal?.rows,
+  ): void {
+    if (
+      !inputOwnerKnown ||
+      !inputOwner ||
+      cols === undefined ||
+      !Number.isInteger(cols) ||
+      cols < TERMINAL_MIN_COLS ||
+      cols > TERMINAL_MAX_COLS ||
+      rows === undefined ||
+      !Number.isInteger(rows) ||
+      rows < TERMINAL_MIN_ROWS ||
+      rows > TERMINAL_MAX_ROWS
+    ) {
+      return;
+    }
+    send({ v: 1, type: "resize", cols, rows });
+  }
+
   function sendTextInput(data: string): void {
     const maximum = Math.max(128, Math.min(64 * 1024, maxFrameBytes - 256));
     for (const chunk of splitUtf8Input(data, maximum)) {
@@ -183,6 +208,7 @@
       runtime = frame.runtime;
       inputOwner = frame.inputOwner;
       inputOwnerKnown = true;
+      if (inputOwner) sendTerminalSize();
       if (runtimeId !== frame.runtime.runtimeId) {
         runtimeId = frame.runtime.runtimeId ?? undefined;
         resetOutput(frame.earliestSeq - 1);
@@ -443,11 +469,7 @@
       onLoad={handleLoad}
       onData={sendTextInput}
       onBinary={sendBinaryInput}
-      onResize={({ cols, rows }) => {
-        if (visible && cols >= 2 && rows >= 1) {
-          send({ v: 1, type: "resize", cols, rows });
-        }
-      }}
+      onResize={({ cols, rows }) => sendTerminalSize(cols, rows)}
       aria-label="Pi terminal emulator"
     />
   </div>

@@ -44,6 +44,12 @@ if (process.env.FAKE_PI_CHILD_TREE === "1") {
   });
   child.stdout.on("data", (data) => process.stdout.write(data));
 }
+process.stdout.on("resize", () => {
+  process.stdout.write(
+    `FAKE_PI_SIZE ${process.stdout.columns}x${process.stdout.rows}\r\n`,
+  );
+});
+
 process.stdin.on("data", (chunk) => {
   const data = chunk.toString("utf8");
   if (data.includes("__CRASH__")) process.exit(7);

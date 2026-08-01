@@ -100,9 +100,28 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
   page,
 }) => {
   const pageErrors: string[] = [];
+  const terminalClientFrames: Array<Record<string, unknown>> = [];
   page.on("pageerror", (error) =>
     pageErrors.push(error.stack ?? error.message),
   );
+  page.on("websocket", (socket) => {
+    if (!socket.url().includes("/terminal/socket")) return;
+    socket.on("framesent", ({ payload }) => {
+      try {
+        terminalClientFrames.push(JSON.parse(payload.toString()));
+      } catch {
+        // Binary input is not relevant to this protocol assertion.
+      }
+    });
+  });
+  await page.routeWebSocket(/\/terminal\/socket$/, async (socketRoute) => {
+    const screen = page.locator(".xterm-screen");
+    await screen.waitFor({ state: "attached" });
+    await expect
+      .poll(async () => (await screen.boundingBox())?.width ?? 0)
+      .toBeGreaterThan(800);
+    socketRoute.connectToServer();
+  });
   await page.goto(bootstrapUrl);
   await page
     .getByRole("main")
@@ -157,6 +176,21 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     name: "Terminal E2E Terminal work interactive Pi terminal",
   });
   await expect(terminal).toContainText("FAKE_PI_READY");
+  await expect
+    .poll(() =>
+      terminalClientFrames.some(
+        (frame) => frame.type === "resize" && Number(frame.cols) > 80,
+      ),
+    )
+    .toBe(true);
+  await expect
+    .poll(async () => {
+      const contents = (await terminal.textContent()) ?? "";
+      return [...contents.matchAll(/FAKE_PI_SIZE (\d+)x\d+/g)].some(
+        (match) => Number(match[1]) > 80,
+      );
+    })
+    .toBe(true);
   await expect(page.getByRole("heading", { name: "Terminal E2E" })).toHaveCount(
     0,
   );
@@ -174,28 +208,55 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     1,
   );
 
-  const terminalHeights = await terminal.evaluate((region) => {
+  const terminalDimensions = await terminal.evaluate((region) => {
     const emulator = region.querySelector<HTMLElement>(".terminal-emulator");
     const xterm = region.querySelector<HTMLElement>(".xterm");
-    if (!emulator || !xterm) return undefined;
+    const screen = region.querySelector<HTMLElement>(".xterm-screen");
+    if (!emulator || !xterm || !screen) return undefined;
 
     const regionStyle = getComputedStyle(region);
     return {
-      available:
+      availableHeight:
         region.clientHeight -
         Number.parseFloat(regionStyle.paddingTop) -
         Number.parseFloat(regionStyle.paddingBottom),
-      emulator: emulator.getBoundingClientRect().height,
-      xterm: xterm.getBoundingClientRect().height,
+      availableWidth:
+        region.clientWidth -
+        Number.parseFloat(regionStyle.paddingLeft) -
+        Number.parseFloat(regionStyle.paddingRight),
+      emulatorHeight: emulator.getBoundingClientRect().height,
+      emulatorWidth: emulator.getBoundingClientRect().width,
+      screenWidth: screen.getBoundingClientRect().width,
+      xtermHeight: xterm.getBoundingClientRect().height,
+      xtermWidth: xterm.getBoundingClientRect().width,
     };
   });
-  expect(terminalHeights).toBeDefined();
+  expect(terminalDimensions).toBeDefined();
   expect(
-    Math.abs(terminalHeights!.emulator - terminalHeights!.available),
+    Math.abs(
+      terminalDimensions!.emulatorHeight - terminalDimensions!.availableHeight,
+    ),
   ).toBeLessThanOrEqual(1);
   expect(
-    Math.abs(terminalHeights!.xterm - terminalHeights!.available),
+    Math.abs(
+      terminalDimensions!.xtermHeight - terminalDimensions!.availableHeight,
+    ),
   ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(
+      terminalDimensions!.emulatorWidth - terminalDimensions!.availableWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(
+      terminalDimensions!.xtermWidth - terminalDimensions!.availableWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(
+      terminalDimensions!.availableWidth - terminalDimensions!.screenWidth,
+    ),
+  ).toBeLessThan(32);
 
   const cookieHeader = (await page.context().cookies())
     .map((cookie) => `${cookie.name}=${cookie.value}`)
