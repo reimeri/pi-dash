@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { WorkspaceDto, WorktreeDto } from "@pi-dash/contracts";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
+  import { SvelteMap } from "svelte/reactivity";
   import { ApiClientError, api } from "./api.js";
   import {
     initialStartupState,
@@ -15,6 +16,11 @@
   import { displayPath } from "./lib/workspaces/display.js";
   import type { TerminalControls } from "./lib/terminal/controls.js";
   import LazyTerminalWorkspace from "./lib/terminal/LazyTerminalWorkspace.svelte";
+  import {
+    createStatusEventClient,
+    type StatusEventClient,
+  } from "./lib/status/events.js";
+  import { workflowStatusStore } from "./lib/status/store.js";
   import CreateWorktreeDialog from "./lib/worktrees/CreateWorktreeDialog.svelte";
   import DeleteBranchDialog from "./lib/worktrees/DeleteBranchDialog.svelte";
   import RemoveWorktreeDialog from "./lib/worktrees/RemoveWorktreeDialog.svelte";
@@ -39,6 +45,8 @@
   let terminalMenu: HTMLDivElement;
   let terminalMenuTrigger: HTMLButtonElement;
   let reconciling = false;
+  let statusEvents: StatusEventClient | undefined;
+  const acknowledgements = new SvelteMap<string, number>();
   $: selectedWorkspace = $workspaceStore.workspaces.find(
     (workspace) => workspace.id === selectedId,
   );
@@ -52,6 +60,9 @@
     .flat()
     .filter(canOpenTerminal)
     .map((worktree) => worktree.id);
+  $: selectedWorkflowStatus = selectedWorktreeId
+    ? $workflowStatusStore.byWorktree[selectedWorktreeId]
+    : undefined;
   $: terminalOpen =
     startup.status === "ready" &&
     !!selectedWorktree &&
@@ -74,6 +85,8 @@
         return;
       }
       await api.session();
+      statusEvents ??= createStatusEventClient();
+      statusEvents.start();
       await workspaceStore.load();
       startup = reduceStartupState(startup, { type: "READY" });
       if (selectedId) await worktreeStore.load(selectedId);
@@ -148,6 +161,30 @@
     if (!canOpenTerminal(worktree)) return;
     selectedId = worktree.workspaceId;
     selectedWorktreeId = worktree.id;
+    requestAnimationFrame(() => acknowledgeWorkflow(worktree.id));
+  }
+
+  function acknowledgeWorkflow(worktreeId: string, explicit = false): void {
+    const status = workflowStatusStore.current().byWorktree[worktreeId];
+    if (!status || status.state !== "done") return;
+    if (acknowledgements.get(worktreeId) === status.revision) return;
+    acknowledgements.set(worktreeId, status.revision);
+    void api
+      .acknowledgeStatus(worktreeId, { revision: status.revision })
+      .catch((error) => {
+        // A newer event snapshot is authoritative; late automatic acknowledgements are safe to ignore.
+        if (explicit) {
+          workspaceActionError =
+            error instanceof Error
+              ? error.message
+              : "Unable to acknowledge workflow completion.";
+        }
+      })
+      .finally(() => {
+        if (acknowledgements.get(worktreeId) === status.revision) {
+          acknowledgements.delete(worktreeId);
+        }
+      });
   }
 
   function terminalInputStatus(controls: TerminalControls | undefined): string {
@@ -211,6 +248,8 @@
   onMount(() => {
     void connect();
   });
+
+  onDestroy(() => statusEvents?.close());
 </script>
 
 <svelte:head><title>Pi Dash</title></svelte:head>
@@ -273,6 +312,10 @@
                   <span>Input</span>
                   <strong>{terminalInputStatus(terminalControls)}</strong>
                 </div>
+                <div>
+                  <span>Workflow</span>
+                  <strong>{selectedWorkflowStatus?.state ?? "idle"}</strong>
+                </div>
               </div>
               <div class="terminal-menu-actions">
                 <button
@@ -302,6 +345,14 @@
                   disabled={!terminalControls || terminalControls.busy}
                   on:click={() => terminalControls?.restart()}>Restart</button
                 >
+                {#if selectedWorkflowStatus?.state === "done" && selectedWorktreeId}
+                  <button
+                    type="button"
+                    on:click={() =>
+                      acknowledgeWorkflow(selectedWorktreeId!, true)}
+                    >Acknowledge done</button
+                  >
+                {/if}
               </div>
             </section>
           {/if}
@@ -362,6 +413,9 @@
         worktreesByWorkspace={$worktreeStore.byWorkspace}
         worktreeLoadingByWorkspace={$worktreeStore.loadingByWorkspace}
         worktreeErrorsByWorkspace={$worktreeStore.errorsByWorkspace}
+        workflowStatuses={$workflowStatusStore.byWorktree}
+        workspaceAttentionStatuses={$workflowStatusStore.workspaceAttention}
+        statusChannel={$workflowStatusStore.channel}
         onSelect={selectWorkspace}
         onExpand={loadWorkspaceWorktrees}
         onSelectWorktree={selectWorktree}
@@ -376,6 +430,7 @@
         maxFrameBytes={terminalMaxFrameBytes}
         {liveTerminalWorktreeIds}
         onControlsChange={handleTerminalControlsChange}
+        onAcknowledge={acknowledgeWorkflow}
       />
       {#if workspaceActionError}
         <div class="content-alert" role="alert">

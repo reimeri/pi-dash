@@ -15,6 +15,7 @@ import type { NativeDirectoryDialogService } from "../src/platform/native-direct
 import { createOriginPolicy } from "../src/security.js";
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
 import { createWorkspaceService } from "../src/workspaces/workspace-service.js";
+import { createStatusTestServices } from "./status-stub.js";
 import { createUnavailableTerminalManager } from "./terminal-manager-stub.js";
 import { createUnavailableWorktreeService } from "./worktree-service-stub.js";
 
@@ -69,6 +70,7 @@ async function fixture() {
     repository: createWorkspaceRepository(database.sqlite),
     git: await createGitInspector(),
   });
+  const status = createStatusTestServices(database.sqlite);
   const app = await buildHttpServer({
     config,
     database,
@@ -80,6 +82,8 @@ async function fixture() {
     workspaces,
     worktrees: createUnavailableWorktreeService(),
     terminals: createUnavailableTerminalManager(),
+    statuses: status.statuses,
+    events: status.events,
     capabilities: {
       git: true,
       pi: false,

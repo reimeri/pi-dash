@@ -30,6 +30,7 @@
     worktreeId: string,
     controls: Parameters<TerminalControlsChange>[0],
   ) => void;
+  export let onAcknowledge: (worktreeId: string) => void;
 
   let host: HTMLDivElement;
   let terminal: Terminal | undefined;
@@ -132,6 +133,7 @@
   }
 
   function sendTextInput(data: string): void {
+    onAcknowledge(worktree.id);
     const maximum = Math.max(128, Math.min(64 * 1024, maxFrameBytes - 256));
     for (const chunk of splitUtf8Input(data, maximum)) {
       send({ v: 1, type: "input", data: chunk });
@@ -139,6 +141,7 @@
   }
 
   function sendBinaryInput(data: string): void {
+    onAcknowledge(worktree.id);
     const maximum = Math.max(
       64,
       Math.floor((Math.min(64 * 1024, maxFrameBytes - 256) * 3) / 4),
@@ -371,6 +374,7 @@
 
   function focusTerminal(): void {
     terminal?.focus();
+    onAcknowledge(worktree.id);
   }
 
   function handleHostKeydown(event: KeyboardEvent): void {
@@ -461,6 +465,8 @@
     bind:this={host}
     role="application"
     aria-label={`${workspaceName} ${worktree.name} interactive Pi terminal`}
+    on:pointerdown={() => visible && onAcknowledge(worktree.id)}
+    on:focusin={() => visible && onAcknowledge(worktree.id)}
   >
     <Xterm
       class="terminal-emulator"

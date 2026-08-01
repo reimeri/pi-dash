@@ -20,9 +20,12 @@ import type { AppConfig } from "./config.js";
 import type { DatabaseService } from "./database.js";
 import { ApiHttpError } from "./errors.js";
 import type { OriginPolicy } from "./security.js";
+import type { ApplicationEvents } from "./events/application-events.js";
 import type { NativeDirectoryDialogService } from "./platform/native-directory-dialog.js";
 import type { TerminalManager } from "./terminal/terminal-manager.js";
 import { registerTerminalRoutes } from "./terminal/terminal-routes.js";
+import { registerStatusRoutes } from "./status/status-routes.js";
+import type { StatusService } from "./status/status-service.js";
 import type { WorkspaceService } from "./workspaces/workspace-service.js";
 import { registerWorkspaceRoutes } from "./workspaces/workspace-routes.js";
 import type { WorktreeService } from "./worktrees/worktree-service.js";
@@ -56,6 +59,8 @@ export interface HttpServerOptions {
   workspaces: WorkspaceService;
   worktrees: WorktreeService;
   terminals: TerminalManager;
+  statuses: StatusService;
+  events: ApplicationEvents;
   capabilities: {
     git: boolean;
     pi: boolean;
@@ -231,6 +236,13 @@ export async function buildHttpServer(options: HttpServerOptions) {
   await registerWorktreeRoutes(app, { worktrees: options.worktrees });
   await registerTerminalRoutes(app, {
     terminals: options.terminals,
+    worktrees: options.worktrees,
+    auth: options.auth,
+    maxFrameBytes: options.config.terminalMaxFrameBytes,
+  });
+  await registerStatusRoutes(app, {
+    statuses: options.statuses,
+    events: options.events,
     worktrees: options.worktrees,
     auth: options.auth,
     maxFrameBytes: options.config.terminalMaxFrameBytes,

@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import type {
   RuntimeDto,
   TerminalRuntimeState,
@@ -33,6 +32,7 @@ export interface TerminalRuntimeOptions {
   cwd: string;
   inheritedEnv: NodeJS.ProcessEnv;
   runtimeDirectory: string;
+  statusToken: string;
   initialCols: number;
   initialRows: number;
   outputBufferBytes: number;
@@ -90,7 +90,11 @@ export class TerminalRuntime {
   ): void {
     this.dto.state = state;
     Object.assign(this.dto, fields);
-    this.options.onState?.({ ...this.dto });
+    try {
+      this.options.onState?.({ ...this.dto });
+    } catch {
+      // Status/event observers must never interfere with the PTY lifecycle.
+    }
     this.#broadcast({
       v: 1,
       type: "runtime",
@@ -102,7 +106,6 @@ export class TerminalRuntime {
 
   async start(pi: ResolvedPi): Promise<void> {
     const { spawn } = await import("node-pty");
-    const statusToken = randomBytes(32).toString("base64url");
     const pty = spawn(pi.executable, ["--extension", pi.extensionPath], {
       name: "xterm-256color",
       cols: this.#dimensions.cols,
@@ -112,7 +115,8 @@ export class TerminalRuntime {
         inherited: this.options.inheritedEnv,
         runtimeDirectory: this.options.runtimeDirectory,
         runtimeId: this.options.runtimeId,
-        statusToken,
+        worktreeId: this.options.worktreeId,
+        statusToken: this.options.statusToken,
       }),
     });
     this.#pty = pty;

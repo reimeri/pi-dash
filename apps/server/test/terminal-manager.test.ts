@@ -29,7 +29,7 @@ async function waitFor(check: () => boolean, timeoutMs = 3_000): Promise<void> {
   }
 }
 
-function fixture(options: { childTree?: boolean } = {}) {
+function fixture(options: { childTree?: boolean; statusFails?: boolean } = {}) {
   chmodSync(fakePi, 0o755);
   const cwd = mkdtempSync(join(tmpdir(), "pi-dash-terminal-"));
   roots.push(cwd);
@@ -100,6 +100,21 @@ function fixture(options: { childTree?: boolean } = {}) {
     outputBufferBytes: 64 * 1024,
     maxSocketBufferedBytes: 1024 * 1024,
     stopGraceMs: 1_000,
+    ...(options.statusFails
+      ? {
+          status: {
+            registerRuntime() {
+              throw new Error("status registration failed");
+            },
+            resetRuntime() {
+              throw new Error("status reset failed");
+            },
+          },
+          onRuntimeState() {
+            throw new Error("event fan-out failed");
+          },
+        }
+      : {}),
   });
   return { manager, records };
 }
@@ -202,6 +217,18 @@ describe("terminal manager integration", () => {
       descendants.every((pid) => !existsSync(`/proc/${pid}`)),
     );
     await manager.stop(worktreeId);
+    await manager.shutdown();
+  });
+
+  it("keeps terminal startup and shutdown fail-open when status observers throw", async () => {
+    const { manager } = fixture({ statusFails: true });
+    const worktreeId = "11111111-1111-4111-8111-111111111111";
+    await expect(manager.start(worktreeId)).resolves.toMatchObject({
+      state: "running",
+    });
+    await expect(manager.stop(worktreeId)).resolves.toMatchObject({
+      state: "stopped",
+    });
     await manager.shutdown();
   });
 

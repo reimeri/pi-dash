@@ -1,12 +1,13 @@
 import { Type, type Static } from "@sinclair/typebox";
 
+export * from "./status.js";
 export * from "./terminal.js";
 export * from "./workspaces.js";
 export * from "./worktrees.js";
 
 export const APP_VERSION = "0.1.0";
 export const API_VERSION = 1;
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 export const CapabilityStateSchema = Type.Union([
   Type.Literal("available"),
@@ -105,6 +106,12 @@ export const ApiErrorCodes = {
   INVALID_RESIZE: "INVALID_RESIZE",
   OUTPUT_REPLAY_EXPIRED: "OUTPUT_REPLAY_EXPIRED",
   NOT_INPUT_OWNER: "NOT_INPUT_OWNER",
+  STATUS_PROTOCOL_MISMATCH: "STATUS_PROTOCOL_MISMATCH",
+  STATUS_FRAME_TOO_LARGE: "STATUS_FRAME_TOO_LARGE",
+  STATUS_RUNTIME_UNKNOWN: "STATUS_RUNTIME_UNKNOWN",
+  STATUS_AUTH_FAILED: "STATUS_AUTH_FAILED",
+  STATUS_EVENT_INVALID: "STATUS_EVENT_INVALID",
+  STATUS_REVISION_CHANGED: "STATUS_REVISION_CHANGED",
 } as const;
 export type ApiErrorCode = (typeof ApiErrorCodes)[keyof typeof ApiErrorCodes];
 

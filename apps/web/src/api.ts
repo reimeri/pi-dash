@@ -6,6 +6,7 @@ import {
   RestartRuntimeResponseSchema,
   RuntimeResponseSchema,
   SessionResponseSchema,
+  StatusAcknowledgeResponseSchema,
   WorkspaceListResponseSchema,
   WorkspaceRefsResponseSchema,
   WorktreeListResponseSchema,
@@ -18,6 +19,7 @@ import {
   type CreateWorktreeRequest,
   type DeleteWorktreeBranchRequest,
   type RenameWorkspaceRequest,
+  type StatusAcknowledgeRequest,
   type WorkspacePathRequest,
 } from "@pi-dash/contracts";
 import type { Static, TSchema } from "@sinclair/typebox";
@@ -211,6 +213,12 @@ export const api = {
       `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/terminal/stop`,
       RuntimeResponseSchema,
       { method: "POST", body: {} },
+    ),
+  acknowledgeStatus: (worktreeId: string, body: StatusAcknowledgeRequest) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/status/acknowledge`,
+      StatusAcknowledgeResponseSchema,
+      { method: "POST", body },
     ),
   restartTerminal: (worktreeId: string, idempotencyKey: string) =>
     requestJson(

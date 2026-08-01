@@ -64,7 +64,11 @@ test.beforeAll(async () => {
     ],
     {
       cwd: resolve("."),
-      env: { ...process.env, NODE_ENV: "production" },
+      env: {
+        ...process.env,
+        NODE_ENV: "production",
+        FAKE_PI_STATUS: "1",
+      },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -176,6 +180,35 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     name: "Terminal E2E Terminal work interactive Pi terminal",
   });
   await expect(terminal).toContainText("FAKE_PI_READY");
+  const workflowIndicator = sidebarWorktree.getByRole("img");
+  await expect(workflowIndicator).toHaveAccessibleName(
+    /Terminal work workflow: Idle/,
+  );
+  await terminal.click();
+  await page.keyboard.type("__WORKING__");
+  await expect(workflowIndicator).toHaveAccessibleName(
+    /Terminal work workflow: Working/,
+  );
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect
+    .poll(() =>
+      workflowIndicator.evaluate(
+        (element) => getComputedStyle(element).animationName,
+      ),
+    )
+    .toBe("none");
+  await page.keyboard.type("__BLOCK_START__");
+  await expect(workflowIndicator).toHaveAccessibleName(
+    /Terminal work workflow: Blocked waiting for an answer/,
+  );
+  await page.keyboard.type("__BLOCK_END__");
+  await expect(workflowIndicator).toHaveAccessibleName(
+    /Terminal work workflow: Working/,
+  );
+  await page.keyboard.type("__SETTLED__");
+  await expect(workflowIndicator).toHaveAccessibleName(
+    /Terminal work workflow: Done, acknowledgement required/,
+  );
   await expect
     .poll(() =>
       terminalClientFrames.some(
@@ -310,6 +343,12 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
 
   await page.getByRole("button", { name: "Terminal", exact: true }).click();
   const terminalControls = page.getByLabel("Terminal controls");
+  await terminalControls
+    .getByRole("button", { name: "Acknowledge done" })
+    .click();
+  await expect(workflowIndicator).toHaveAccessibleName(
+    /Terminal work workflow: Idle/,
+  );
   await expect(terminalControls).toContainText("running");
   await expect(terminalControls).toContainText("connected");
   await expect(terminalControls).toContainText("Interactive");

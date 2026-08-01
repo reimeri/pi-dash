@@ -9,6 +9,7 @@
   export let maxFrameBytes = 64 * 1024;
   export let liveTerminalWorktreeIds: string[] = [];
   export let onControlsChange: TerminalControlsChange;
+  export let onAcknowledge: (worktreeId: string) => void;
 
   interface CacheEntry {
     worktree: WorktreeDto;
@@ -66,6 +67,7 @@
         visible={selected?.id === entry.worktree.id}
         {maxFrameBytes}
         onControlsChange={reportControls}
+        {onAcknowledge}
       />
     {/each}
   </section>

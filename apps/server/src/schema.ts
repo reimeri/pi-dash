@@ -103,6 +103,38 @@ export const worktrees = sqliteTable(
   ],
 );
 
+export const workflowStatus = sqliteTable(
+  "workflow_status",
+  {
+    worktreeId: text("worktree_id")
+      .primaryKey()
+      .references(() => worktrees.id, { onDelete: "cascade" }),
+    state: text("state", {
+      enum: ["idle", "working", "blocked", "done"],
+    })
+      .notNull()
+      .default("idle"),
+    reason: text("reason", {
+      enum: ["agent", "ask_user", "settled", "acknowledged", "runtime_reset"],
+    }),
+    revision: integer("revision").notNull().default(0),
+    changedAt: text("changed_at").notNull(),
+    acknowledgedAt: text("acknowledged_at"),
+    integration: text("integration", {
+      enum: ["connected", "disconnected", "unsupported"],
+    })
+      .notNull()
+      .default("disconnected"),
+  },
+  (table) => [
+    index("workflow_status_state_idx").on(
+      table.state,
+      table.changedAt,
+      table.worktreeId,
+    ),
+  ],
+);
+
 export const worktreeOperations = sqliteTable(
   "worktree_operations",
   {

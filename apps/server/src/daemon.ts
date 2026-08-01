@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
 import { buildHttpServer, type HttpServer } from "./app.js";
@@ -15,6 +16,19 @@ import {
 } from "./paths.js";
 import { createPiResolver } from "./pi/pi-resolver.js";
 import { createOriginPolicy } from "./security.js";
+import {
+  createApplicationEvents,
+  type ApplicationEvents,
+} from "./events/application-events.js";
+import { createStatusRepository } from "./status/status-repository.js";
+import {
+  createStatusService,
+  type StatusService,
+} from "./status/status-service.js";
+import {
+  createStatusSocketServer,
+  type StatusSocketServer,
+} from "./status/status-socket-server.js";
 import {
   createTerminalManager,
   type TerminalManager,
@@ -52,6 +66,7 @@ export interface Daemon {
   config: AppConfig;
   database: DatabaseService;
   terminals: TerminalManager;
+  statuses: StatusService;
   paths: AppPaths;
   bootstrapUrl: string;
   markReady(): void;
@@ -77,6 +92,9 @@ export async function createDaemon(
   let workspaces: WorkspaceService | undefined;
   let worktrees: WorktreeService | undefined;
   let terminals: TerminalManager | undefined;
+  let statuses: StatusService | undefined;
+  let statusSocket: StatusSocketServer | undefined;
+  let applicationEvents: ApplicationEvents | undefined;
   let shutdownPromise: Promise<void> | undefined;
   let bootstrapOutputWritten = false;
   let runtimeInfoWritten = false;
@@ -91,6 +109,8 @@ export async function createDaemon(
       }
     };
     if (terminals) await attempt(() => terminals!.shutdown());
+    if (statusSocket) await attempt(() => statusSocket!.close());
+    if (applicationEvents) await attempt(() => applicationEvents!.close());
     if (app) await attempt(() => app!.close());
     else {
       if (workspaces) await attempt(() => workspaces!.close());
@@ -147,6 +167,26 @@ export async function createDaemon(
       ]);
     const workspaceRepository = createWorkspaceRepository(database.sqlite);
     const worktreeRepository = createWorktreeRepository(database.sqlite);
+    const statusRepository = createStatusRepository(database.sqlite);
+    statusRepository.resetActive(new Date().toISOString());
+    statuses = createStatusService({ repository: statusRepository });
+    statusSocket = createStatusSocketServer({
+      path: join(paths.runtime, "status.sock"),
+      statuses,
+      logger,
+    });
+    let statusSocketAvailable = true;
+    try {
+      await statusSocket.start();
+    } catch (error) {
+      statusSocketAvailable = false;
+      logger.warn(
+        { errorName: (error as Error).name },
+        "Workflow status socket unavailable; terminal runtime remains enabled",
+      );
+      await statusSocket.close().catch(() => undefined);
+      statusSocket = undefined;
+    }
     workspaces = createWorkspaceService({
       repository: workspaceRepository,
       git,
@@ -182,7 +222,23 @@ export async function createDaemon(
       outputBufferBytes: config.terminalOutputBufferBytes,
       maxSocketBufferedBytes: config.terminalMaxSocketBufferedBytes,
       stopGraceMs: config.terminalStopGraceMs,
+      status: {
+        registerRuntime(worktreeId, runtimeId, token) {
+          statuses!.registerRuntime(worktreeId, runtimeId, token);
+          if (!statusSocketAvailable) statuses!.markUnsupported(worktreeId);
+        },
+        resetRuntime: (worktreeId, runtimeId) =>
+          statuses!.resetRuntime(worktreeId, runtimeId),
+      },
+      onRuntimeState: (runtime) => applicationEvents?.publishRuntime(runtime),
     });
+    applicationEvents = createApplicationEvents({
+      statuses: () => statuses!.list(),
+      runtimes: () =>
+        statuses!.list().map((status) => terminals!.get(status.worktreeId)),
+      workspaceAttention: () => statuses!.workspaceAttention(),
+    });
+    statuses.setPublisher((status) => applicationEvents!.publishStatus(status));
     await worktrees.reconcile();
     app = await buildHttpServer({
       config,
@@ -195,6 +251,8 @@ export async function createDaemon(
       workspaces,
       worktrees,
       terminals,
+      statuses,
+      events: applicationEvents,
       capabilities: {
         git: gitAvailable,
         pi: piAvailable,
@@ -215,6 +273,7 @@ export async function createDaemon(
       config,
       database,
       terminals,
+      statuses,
       paths,
       bootstrapUrl,
       markReady() {

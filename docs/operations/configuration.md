@@ -26,11 +26,11 @@ Configuration precedence is **CLI → environment → JSON file → defaults**. 
 
 Only numeric loopback addresses are accepted. `0.0.0.0`, LAN addresses, and hostnames are rejected. `uiOrigin` is intended for the loopback Vite development server and must also be an HTTP loopback origin.
 
-Directories are created with mode `0700`; the database, lock metadata, runtime metadata, persistent snapshot-signing key, and optional launch URL file use mode `0600`.
+Directories are created with mode `0700`; the database, lock metadata, runtime metadata, persistent snapshot-signing key, and optional launch URL file use mode `0600`. The workflow status side channel has no independent setting: it uses `<runtime-root>/status.sock` with mode `0600`, a fixed 16 KiB lifecycle-frame limit, and per-runtime credentials injected only into the managed Pi process.
 
 Managed worktrees are always allocated beneath `<data>/worktrees/<workspace-id>/<worktree-id>-<slug>`; this root is not independently configurable. Base-ref snapshot tokens are HMAC-signed with `<data>/.snapshot-signing-key`, so unexpired forms survive daemon restarts. Git mutation locks deliberately do not use the configurable data or runtime roots: related repositories serialize through `/run/user/<uid>/pi-dash-git-locks`, with a user-owned mode-`0700` `/tmp/pi-dash-<uid>` fallback.
 
-Terminal dimensions are constrained to 2–500 columns and 1–300 rows. Replay is configurable from 64 KiB to 16 MiB, socket backpressure from 64 KiB to 16 MiB, frame size from 1 KiB to 1 MiB, stop grace from 100 ms to 30 seconds, and browser terminal cache size from 1 to 12. See [terminal runtime operations](terminal-runtime.md) and [terminal protocol](../architecture/terminal-protocol.md).
+Terminal dimensions are constrained to 2–500 columns and 1–300 rows. Workflow status transport is independent from terminal output and never parses it; see [workflow status protocol](../architecture/status-protocol.md) and [status troubleshooting](status-troubleshooting.md). Replay is configurable from 64 KiB to 16 MiB, socket backpressure from 64 KiB to 16 MiB, frame size from 1 KiB to 1 MiB, stop grace from 100 ms to 30 seconds, and browser terminal cache size from 1 to 12. See [terminal runtime operations](terminal-runtime.md) and [terminal protocol](../architecture/terminal-protocol.md).
 
 `nativeDialog` accepts `auto`, `zenity`, `kdialog`, or `disabled`. `auto` prefers zenity and falls back to kdialog. A picker also requires a graphical display session; when probing fails, the workspace flow offers typed-path recovery rather than a generic directory browser. See [native directory dialog](native-directory-dialog.md).
 

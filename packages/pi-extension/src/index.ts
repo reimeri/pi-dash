@@ -1,3 +1,5 @@
+export * from "./attention.js";
+
 export const extensionResourceStrategy = {
   packageName: "@pi-dash/pi-extension",
   statusSocketEnvironmentVariable: "PI_DASH_STATUS_SOCKET",

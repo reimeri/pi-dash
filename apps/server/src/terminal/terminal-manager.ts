@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import type {
   ApiErrorCode,
@@ -40,6 +40,11 @@ export interface TerminalManagerOptions {
   outputBufferBytes: number;
   maxSocketBufferedBytes: number;
   stopGraceMs: number;
+  status?: {
+    registerRuntime(worktreeId: string, runtimeId: string, token: string): void;
+    resetRuntime(worktreeId: string, runtimeId: string): void;
+  };
+  onRuntimeState?: (runtime: RuntimeDto) => void;
   now?: () => Date;
   id?: () => string;
 }
@@ -143,21 +148,40 @@ export function createTerminalManager(options: TerminalManagerOptions) {
           "The managed worktree must be healthy before Pi can start",
         );
       }
+      const runtimeId = createId();
+      const statusToken = randomBytes(32).toString("base64url");
       runtime = new TerminalRuntime({
         worktreeId,
-        runtimeId: createId(),
+        runtimeId,
         cwd: claimed.path,
         inheritedEnv: options.inheritedEnv,
         runtimeDirectory: options.runtimeDirectory,
+        statusToken,
         initialCols: options.initialCols,
         initialRows: options.initialRows,
         outputBufferBytes: options.outputBufferBytes,
         maxSocketBufferedBytes: options.maxSocketBufferedBytes,
         stopGraceMs: options.stopGraceMs,
         now,
+        onState: (dto) => {
+          options.onRuntimeState?.(dto);
+          if (dto.state === "stopped" || dto.state === "crashed") {
+            options.status?.resetRuntime(worktreeId, runtimeId);
+          }
+        },
       });
       existing?.dispose();
       runtimes.set(worktreeId, runtime);
+      try {
+        options.status?.registerRuntime(worktreeId, runtimeId, statusToken);
+      } catch {
+        // Workflow status is fail-open and must not prevent Pi startup.
+      }
+      try {
+        options.onRuntimeState?.({ ...runtime.dto });
+      } catch {
+        // Application event fan-out is independent from terminal startup.
+      }
     } finally {
       options.lifecycle.releaseTerminalStart(worktreeId);
     }

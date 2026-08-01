@@ -1,6 +1,13 @@
 <script lang="ts">
-  import type { WorkspaceDto, WorktreeDto } from "@pi-dash/contracts";
+  import type {
+    WorkflowState,
+    WorkflowStatusDto,
+    WorkspaceAttentionDto,
+    WorkspaceDto,
+    WorktreeDto,
+  } from "@pi-dash/contracts";
   import { onMount } from "svelte";
+  import WorkflowStatusIndicator from "../status/WorkflowStatusIndicator.svelte";
   import { SvelteSet } from "svelte/reactivity";
 
   export let workspaces: WorkspaceDto[];
@@ -11,6 +18,9 @@
   export let worktreesByWorkspace: Record<string, WorktreeDto[]>;
   export let worktreeLoadingByWorkspace: Record<string, boolean>;
   export let worktreeErrorsByWorkspace: Record<string, string | undefined>;
+  export let workflowStatuses: Record<string, WorkflowStatusDto>;
+  export let workspaceAttentionStatuses: WorkspaceAttentionDto[];
+  export let statusChannel: "connecting" | "connected" | "disconnected";
   export let onSelect: (id: string) => void;
   export let onExpand: (id: string) => void;
   export let onSelectWorktree: (worktree: WorktreeDto) => void;
@@ -41,6 +51,35 @@
 
   function canOpenTerminal(worktree: WorktreeDto): boolean {
     return worktree.lifecycle === "ready" && worktree.health === "healthy";
+  }
+
+  function workspaceAttention(workspaceId: string): {
+    state: WorkflowState;
+    count: number;
+    integration: "connected" | "disconnected" | "unsupported";
+  } {
+    const aggregate = workspaceAttentionStatuses.find(
+      (attention) => attention.workspaceId === workspaceId,
+    );
+    const state: WorkflowState = aggregate?.state ?? "idle";
+    const count = aggregate?.count ?? 0;
+    let integration: "connected" | "disconnected" | "unsupported" =
+      statusChannel === "connected" ? "connected" : "disconnected";
+    for (const worktree of worktreesByWorkspace[workspaceId] ?? []) {
+      const workflow = workflowStatuses[worktree.id];
+      if (!workflow) {
+        integration = "disconnected";
+        continue;
+      }
+      if (workflow.integration === "unsupported") integration = "unsupported";
+      else if (
+        workflow.integration === "disconnected" &&
+        integration !== "unsupported"
+      ) {
+        integration = "disconnected";
+      }
+    }
+    return { state, count, integration };
   }
 
   function healthLabel(workspace: WorkspaceDto): string {
@@ -133,6 +172,14 @@
               <span class="workspace-copy">
                 <strong>{workspace.name}</strong>
               </span>
+              <WorkflowStatusIndicator
+                stateOverride={workspaceAttention(workspace.id).state}
+                integrationOverride={workspaceAttention(workspace.id)
+                  .integration}
+                aggregateCount={workspaceAttention(workspace.id).count}
+                labelPrefix={`${workspace.name} workflow`}
+                channel={statusChannel}
+              />
               <span
                 class={`health-dot health-${workspace.repository.health}`}
                 title={healthLabel(workspace)}
@@ -172,10 +219,11 @@
                         : "Terminal unavailable until this worktree is ready and healthy"}
                       on:click={() => onSelectWorktree(worktree)}
                     >
-                      <span
-                        class={`worktree-state state-${worktree.health}`}
-                        aria-hidden="true"
-                      ></span>
+                      <WorkflowStatusIndicator
+                        status={workflowStatuses[worktree.id]}
+                        labelPrefix={`${worktree.name} workflow`}
+                        channel={statusChannel}
+                      />
                       <span><strong>{worktree.name}</strong></span>
                     </button>
                   </li>

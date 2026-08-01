@@ -71,6 +71,7 @@ describe("terminal core contracts", () => {
       "PI_DASH_RUNTIME_ID",
       "PI_DASH_STATUS_SOCKET",
       "PI_DASH_STATUS_TOKEN",
+      "PI_DASH_WORKTREE_ID",
     ]);
   });
 });

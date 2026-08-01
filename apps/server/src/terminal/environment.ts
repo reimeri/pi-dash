@@ -4,6 +4,7 @@ export function createTerminalEnvironment(options: {
   inherited: NodeJS.ProcessEnv;
   runtimeDirectory: string;
   runtimeId: string;
+  worktreeId: string;
   statusToken: string;
 }): Record<string, string> {
   const env: Record<string, string> = {};
@@ -15,11 +16,9 @@ export function createTerminalEnvironment(options: {
     TERM: "xterm-256color",
     COLORTERM: "truecolor",
     LANG: env.LANG || "C.UTF-8",
-    PI_DASH_STATUS_SOCKET: join(
-      options.runtimeDirectory,
-      `${options.runtimeId}.status.sock`,
-    ),
+    PI_DASH_STATUS_SOCKET: join(options.runtimeDirectory, "status.sock"),
     PI_DASH_RUNTIME_ID: options.runtimeId,
+    PI_DASH_WORKTREE_ID: options.worktreeId,
     PI_DASH_STATUS_TOKEN: options.statusToken,
   };
 }

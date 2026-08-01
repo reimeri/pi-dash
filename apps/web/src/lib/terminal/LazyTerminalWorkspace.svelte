@@ -9,6 +9,7 @@
   export let maxFrameBytes = 64 * 1024;
   export let liveTerminalWorktreeIds: string[] = [];
   export let onControlsChange: TerminalControlsChange;
+  export let onAcknowledge: (worktreeId: string) => void;
 
   let WorkspaceComponent:
     typeof import("./TerminalWorkspace.svelte").default | undefined;
@@ -32,5 +33,6 @@
     {maxFrameBytes}
     {liveTerminalWorktreeIds}
     {onControlsChange}
+    {onAcknowledge}
   />
 {/if}

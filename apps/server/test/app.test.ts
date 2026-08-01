@@ -18,6 +18,7 @@ import { createGitInspector } from "../src/git/git-inspector.js";
 import { createNativeDirectoryDialog } from "../src/platform/native-directory-dialog.js";
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
 import { createWorkspaceService } from "../src/workspaces/workspace-service.js";
+import { createStatusTestServices } from "./status-stub.js";
 import { createUnavailableTerminalManager } from "./terminal-manager-stub.js";
 import { createUnavailableWorktreeService } from "./worktree-service-stub.js";
 
@@ -60,6 +61,7 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
     repository: createWorkspaceRepository(database.sqlite),
     git,
   });
+  const status = createStatusTestServices(database.sqlite);
   const app = await buildHttpServer({
     config,
     database,
@@ -71,6 +73,8 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
     workspaces,
     worktrees: createUnavailableWorktreeService(),
     terminals: createUnavailableTerminalManager(),
+    statuses: status.statuses,
+    events: status.events,
     capabilities: {
       git: true,
       pi: false,
@@ -108,7 +112,7 @@ describe("Fastify foundation API", () => {
     expect(response.json()).toEqual({
       status: "ready",
       version: "0.1.0",
-      schemaVersion: 3,
+      schemaVersion: 4,
       capabilities: {
         git: "available",
         pi: "unavailable",
