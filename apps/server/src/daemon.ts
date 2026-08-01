@@ -13,7 +13,12 @@ import {
   secureWriteFile,
   type AppPaths,
 } from "./paths.js";
+import { createPiResolver } from "./pi/pi-resolver.js";
 import { createOriginPolicy } from "./security.js";
+import {
+  createTerminalManager,
+  type TerminalManager,
+} from "./terminal/terminal-manager.js";
 import { createGitInspector } from "./git/git-inspector.js";
 import { createGitWorktreeManager } from "./git/git-worktree-manager.js";
 import {
@@ -46,6 +51,7 @@ export interface Daemon {
   auth: AuthService;
   config: AppConfig;
   database: DatabaseService;
+  terminals: TerminalManager;
   paths: AppPaths;
   bootstrapUrl: string;
   markReady(): void;
@@ -70,6 +76,7 @@ export async function createDaemon(
   let dialogs: NativeDirectoryDialogService | undefined;
   let workspaces: WorkspaceService | undefined;
   let worktrees: WorktreeService | undefined;
+  let terminals: TerminalManager | undefined;
   let shutdownPromise: Promise<void> | undefined;
   let bootstrapOutputWritten = false;
   let runtimeInfoWritten = false;
@@ -83,6 +90,7 @@ export async function createDaemon(
         failures.push(error);
       }
     };
+    if (terminals) await attempt(() => terminals!.shutdown());
     if (app) await attempt(() => app!.close());
     else {
       if (workspaces) await attempt(() => workspaces!.close());
@@ -115,14 +123,28 @@ export async function createDaemon(
     auth = createAuthService({ policy });
     const git = await createGitInspector({ env });
     const gitWorktrees = await createGitWorktreeManager({ env });
+    const pi = createPiResolver({
+      executable: config.piExecutable,
+      minimumVersion: config.piMinimumVersion,
+      env,
+    });
     dialogs = await createNativeDirectoryDialog({
       mode: config.nativeDialog,
       env,
     });
-    const [gitAvailable, dialogCapability] = await Promise.all([
-      git.probe(),
-      dialogs.probe(),
-    ]);
+    const [gitAvailable, dialogCapability, piAvailable, ptyAvailable] =
+      await Promise.all([
+        git.probe(),
+        dialogs.probe(),
+        pi.probe().then(
+          () => true,
+          () => false,
+        ),
+        import("node-pty").then(
+          () => true,
+          () => false,
+        ),
+      ]);
     const workspaceRepository = createWorkspaceRepository(database.sqlite);
     const worktreeRepository = createWorktreeRepository(database.sqlite);
     workspaces = createWorkspaceService({
@@ -142,6 +164,24 @@ export async function createDaemon(
         key: loadOrCreateSnapshotKey(paths.snapshotKey),
       }),
       managedRoot: paths.worktrees,
+      stopRuntime: async (worktree) => {
+        if (!terminals) return;
+        await terminals.stop(worktree.id);
+        await terminals.dispose(worktree.id);
+      },
+    });
+    terminals = createTerminalManager({
+      lifecycle,
+      pi,
+      getWorktree: (id) => worktrees!.get(id),
+      verifyWorktree: (id) => worktrees!.verifyTerminalStart(id),
+      inheritedEnv: env,
+      runtimeDirectory: paths.runtime,
+      initialCols: config.terminalInitialCols,
+      initialRows: config.terminalInitialRows,
+      outputBufferBytes: config.terminalOutputBufferBytes,
+      maxSocketBufferedBytes: config.terminalMaxSocketBufferedBytes,
+      stopGraceMs: config.terminalStopGraceMs,
     });
     await worktrees.reconcile();
     app = await buildHttpServer({
@@ -154,9 +194,12 @@ export async function createDaemon(
       dialogs,
       workspaces,
       worktrees,
+      terminals,
       capabilities: {
         git: gitAvailable,
+        pi: piAvailable,
         nativeDirectoryDialog: dialogCapability.available,
+        pty: ptyAvailable,
       },
     });
     workspaces.startHealthRefresh();
@@ -171,6 +214,7 @@ export async function createDaemon(
       auth,
       config,
       database,
+      terminals,
       paths,
       bootstrapUrl,
       markReady() {

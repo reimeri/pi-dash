@@ -68,6 +68,10 @@ export function createWorktreeStore(
       replace(workspaceId, response.worktrees);
     },
     upsert(worktree: WorktreeDto) {
+      generations.set(
+        worktree.workspaceId,
+        (generations.get(worktree.workspaceId) ?? 0) + 1,
+      );
       update((state) => ({
         ...state,
         byWorkspace: {

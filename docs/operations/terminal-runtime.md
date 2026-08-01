@@ -1,0 +1,51 @@
+# Terminal runtime operations
+
+Selecting a ready, healthy managed worktree lazily starts Pi directly under a `node-pty` pseudoterminal with that worktree as its exact working directory. There is no browser-controlled executable, argument, shell, or generic terminal endpoint. One daemon owns at most one live runtime per worktree.
+
+## Requirements
+
+- Linux, Node.js 24+, and the native build prerequisites needed by `node-pty` (a working C/C++ toolchain, Python, and platform PTY headers).
+- Pi **0.83.0 or newer** by default. Configure the executable and minimum version when using another installation.
+- A ready, healthy Pi Dash managed worktree.
+- User Pi credentials/settings in their normal HOME/XDG locations.
+
+Pi receives the packaged no-op dashboard extension with `--extension`. Phase 5 adds lifecycle status transport at that same path without changing the launch contract. Pi Dash does not override Pi's agent/session directories, theme, tools, approvals, trusted project resources, or login/trust prompts.
+
+## Lifecycle
+
+Runtime states are `stopped`, `starting`, `running`, `stopping`, and `crashed`. A clean `/quit` is stopped; an unexpected nonzero exit is crashed. Exit code and signal remain visible until a start/restart replaces the runtime.
+
+- **Start** is resource-idempotent; concurrent requests return the sole runtime.
+- **Stop** is idempotent. Linux stop captures the owned process-group identities, sends SIGTERM, waits for the configured grace interval, then safely escalates exact surviving identities to SIGKILL.
+- **Restart** requires a UUID `Idempotency-Key`; daemon-lifetime retries return the original operation and changed-input reuse fails.
+- Hiding, switching away, evicting a browser pane, or refreshing does not stop Pi.
+- Worktree removal first claims `removing`, awaits terminal stop, then performs Git removal.
+- Daemon shutdown drains every runtime. Runtime processes do not survive daemon restart.
+
+## Environment
+
+Pi inherits the user's ordinary environment, including HOME, PATH, SHELL, locale, XDG locations, SSH agent, Pi configuration, and provider credentials. Every inherited `PI_DASH_*` value is removed. Only these per-runtime status placeholders are introduced:
+
+- `PI_DASH_STATUS_SOCKET`
+- `PI_DASH_RUNTIME_ID`
+- `PI_DASH_STATUS_TOKEN`
+
+The token and terminal bytes are never logged.
+
+## Recovery and troubleshooting
+
+**PI_UNAVAILABLE** — verify `pi --version` works for the daemon user, or set `PI_DASH_PI_EXECUTABLE`/`--pi-executable` to an executable path.
+
+**PI_VERSION_UNSUPPORTED** — upgrade Pi or deliberately lower the configured minimum only after validating its TUI against the terminal feasibility checklist.
+
+**PTY_START_FAILED** — verify native `node-pty` installation, worktree permissions, executable permissions, and available PTYs. Reinstall dependencies after installing native build prerequisites.
+
+**WORKTREE_NOT_READY / WORKTREE_UNHEALTHY** — reconcile the managed worktree and restore its exact Git identity before starting Pi.
+
+**Replay buffer wrapped** — the pane resets, replays the retained suffix, and requests a Pi redraw. Scrollback older than the configured memory buffer is intentionally unavailable.
+
+**Observer only** — another attached browser owns input. Close the owner and reconnect; explicit takeover UX arrives in Phase 6.
+
+## Limitations
+
+Runtimes are local and daemon-lifetime only. There is no tmux persistence, remote/SSH/container runtime, arbitrary shell, durable terminal history, semantic parsing of Pi output, or guaranteed browser image protocol. Linux/Chromium is the validated baseline; default xterm rendering does not require WebGL.

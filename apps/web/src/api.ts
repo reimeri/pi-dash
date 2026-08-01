@@ -3,6 +3,8 @@ import {
   HealthResponseSchema,
   isApiErrorEnvelope,
   RemoveWorktreeResponseSchema,
+  RestartRuntimeResponseSchema,
+  RuntimeResponseSchema,
   SessionResponseSchema,
   WorkspaceListResponseSchema,
   WorkspaceRefsResponseSchema,
@@ -192,5 +194,28 @@ export const api = {
       `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/worktrees/reconcile`,
       WorktreeListResponseSchema,
       { method: "POST", body: {} },
+    ),
+  terminal: (worktreeId: string) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/terminal`,
+      RuntimeResponseSchema,
+    ),
+  startTerminal: (worktreeId: string) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/terminal/start`,
+      RuntimeResponseSchema,
+      { method: "POST", body: {} },
+    ),
+  stopTerminal: (worktreeId: string) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/terminal/stop`,
+      RuntimeResponseSchema,
+      { method: "POST", body: {} },
+    ),
+  restartTerminal: (worktreeId: string, idempotencyKey: string) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/terminal/restart`,
+      RestartRuntimeResponseSchema,
+      { method: "POST", body: {}, idempotencyKey },
     ),
 };

@@ -9,6 +9,8 @@ export interface WorktreeLifecycleCoordinator {
     id: string,
     warning?: { code: string; message: string },
   ): WorktreeRecord | undefined;
+  claimTerminalStart(id: string): WorktreeRecord | undefined;
+  releaseTerminalStart(id: string): void;
   canStartTerminal(id: string): boolean;
 }
 
@@ -17,8 +19,10 @@ export function createWorktreeLifecycleCoordinator(options: {
   now?: () => Date;
 }): WorktreeLifecycleCoordinator {
   const now = options.now ?? (() => new Date());
+  const terminalStarts = new Set<string>();
   return {
     claimRemoval(id) {
+      if (terminalStarts.has(id)) return undefined;
       return options.repository.compareAndSetLifecycle(
         id,
         "ready",
@@ -40,8 +44,21 @@ export function createWorktreeLifecycleCoordinator(options: {
         updatedAt: now().toISOString(),
       });
     },
+    claimTerminalStart(id) {
+      if (terminalStarts.has(id)) return undefined;
+      const record = options.repository.get(id);
+      if (record?.lifecycle !== "ready") return undefined;
+      terminalStarts.add(id);
+      return record;
+    },
+    releaseTerminalStart(id) {
+      terminalStarts.delete(id);
+    },
     canStartTerminal(id) {
-      return options.repository.get(id)?.lifecycle === "ready";
+      return (
+        !terminalStarts.has(id) &&
+        options.repository.get(id)?.lifecycle === "ready"
+      );
     },
   };
 }

@@ -19,6 +19,10 @@ describe("shared contracts", () => {
           nativeDirectoryDialog: "unknown",
           pty: "unknown",
         },
+        settings: {
+          terminalCacheSize: 3,
+          terminalMaxFrameBytes: 64 * 1024,
+        },
       }),
     ).toBe(true);
     expect(

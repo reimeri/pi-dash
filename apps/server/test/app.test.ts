@@ -18,6 +18,7 @@ import { createGitInspector } from "../src/git/git-inspector.js";
 import { createNativeDirectoryDialog } from "../src/platform/native-directory-dialog.js";
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
 import { createWorkspaceService } from "../src/workspaces/workspace-service.js";
+import { createUnavailableTerminalManager } from "./terminal-manager-stub.js";
 import { createUnavailableWorktreeService } from "./worktree-service-stub.js";
 
 const migrationsDirectory = fileURLToPath(
@@ -35,6 +36,14 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
     host: "127.0.0.1",
     port: 4317,
     piExecutable: "pi",
+    piMinimumVersion: "0.83.0",
+    terminalInitialCols: 100,
+    terminalInitialRows: 30,
+    terminalOutputBufferBytes: 1024 * 1024,
+    terminalMaxFrameBytes: 64 * 1024,
+    terminalMaxSocketBufferedBytes: 4 * 1024 * 1024,
+    terminalStopGraceMs: 2_000,
+    terminalCacheSize: 3,
     nativeDialog: "disabled",
     logLevel: "silent",
     mode: "test",
@@ -61,7 +70,13 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
     dialogs,
     workspaces,
     worktrees: createUnavailableWorktreeService(),
-    capabilities: { git: true, nativeDirectoryDialog: false },
+    terminals: createUnavailableTerminalManager(),
+    capabilities: {
+      git: true,
+      pi: false,
+      nativeDirectoryDialog: false,
+      pty: false,
+    },
   });
   resources.push({ root, app, database });
   return { app, auth };
@@ -96,9 +111,13 @@ describe("Fastify foundation API", () => {
       schemaVersion: 3,
       capabilities: {
         git: "available",
-        pi: "unknown",
+        pi: "unavailable",
         nativeDirectoryDialog: "unavailable",
-        pty: "unknown",
+        pty: "unavailable",
+      },
+      settings: {
+        terminalCacheSize: 3,
+        terminalMaxFrameBytes: 64 * 1024,
       },
     });
     expect(response.body).not.toContain("/tmp");

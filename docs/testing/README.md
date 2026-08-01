@@ -2,8 +2,8 @@
 
 ## Test layers
 
-- `npm test` runs Vitest contract, configuration/path, authentication, database/backup, safe-process, native-dialog, Git inspection, workspace service/API, daemon lifecycle, and frontend store/reducer tests.
-- `npm run test:e2e` builds all workspaces, launches production daemons with temporary XDG-style roots, and runs the Chromium bootstrap and workspace registration flows.
+- `npm test` runs Vitest contract, configuration/path, authentication, database/backup, safe-process, native-dialog, Git inspection, workspace service/API, terminal protocol/ring/environment/process integration, daemon lifecycle, and frontend store/reducer tests.
+- `npm run test:e2e` builds all workspaces, launches production daemons with temporary XDG-style roots, and runs the Chromium bootstrap, workspace/worktree, and fake-Pi terminal flows.
 - `npm run check` runs TypeScript and Svelte diagnostics.
 - `npm run lint` and `npm run format:check` enforce source style.
 

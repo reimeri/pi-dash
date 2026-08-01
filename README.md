@@ -7,6 +7,8 @@ Pi Dash is a Linux-first, local-only Svelte dashboard backed by a loopback Fasti
 - Node.js 24 or newer
 - npm 11 or newer
 - Git
+- Pi 0.83.0 or newer (configurable)
+- Native build prerequisites for `node-pty` (C/C++ toolchain and Python)
 - `zenity` (preferred) or `kdialog` in a Linux graphical session for native workspace selection
 - Chrome/Chromium for browser tests
 
@@ -26,4 +28,4 @@ npm run test:e2e
 
 The daemon prints a short-lived, one-use launch URL. Open that URL to establish the browser session; do not share or persist it.
 
-See [configuration](docs/operations/configuration.md), [native directory dialog](docs/operations/native-directory-dialog.md), [local security](docs/operations/local-security.md), and [testing](docs/testing/README.md).
+See [configuration](docs/operations/configuration.md), [terminal runtime](docs/operations/terminal-runtime.md), [terminal protocol](docs/architecture/terminal-protocol.md), [native directory dialog](docs/operations/native-directory-dialog.md), [local security](docs/operations/local-security.md), and [testing](docs/testing/README.md).

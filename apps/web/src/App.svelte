@@ -13,6 +13,7 @@
   import WorkspaceSidebar from "./lib/workspaces/WorkspaceSidebar.svelte";
   import { workspaceStore } from "./lib/workspaces/store.js";
   import { displayPath } from "./lib/workspaces/display.js";
+  import LazyTerminalWorkspace from "./lib/terminal/LazyTerminalWorkspace.svelte";
   import CreateWorktreeDialog from "./lib/worktrees/CreateWorktreeDialog.svelte";
   import DeleteBranchDialog from "./lib/worktrees/DeleteBranchDialog.svelte";
   import RemoveWorktreeDialog from "./lib/worktrees/RemoveWorktreeDialog.svelte";
@@ -20,6 +21,8 @@
 
   let startup: StartupState = initialStartupState;
   let nativeDialogAvailable = false;
+  let terminalCacheSize = 3;
+  let terminalMaxFrameBytes = 64 * 1024;
   let showAdd = false;
   let renameTarget: WorkspaceDto | undefined;
   let removeTarget: WorkspaceDto | undefined;
@@ -37,6 +40,13 @@
   $: selectedWorktrees = selectedWorkspace
     ? ($worktreeStore.byWorkspace[selectedWorkspace.id] ?? [])
     : [];
+  $: selectedWorktree = selectedWorktreeId
+    ? selectedWorktrees.find((worktree) => worktree.id === selectedWorktreeId)
+    : undefined;
+  $: liveTerminalWorktreeIds = Object.values($worktreeStore.byWorkspace)
+    .flat()
+    .filter((worktree) => worktree.lifecycle === "ready")
+    .map((worktree) => worktree.id);
 
   async function connect() {
     startup = reduceStartupState(startup, { type: "CONNECT" });
@@ -44,6 +54,8 @@
       const health = await api.health();
       nativeDialogAvailable =
         health.capabilities.nativeDirectoryDialog === "available";
+      terminalCacheSize = health.settings.terminalCacheSize;
+      terminalMaxFrameBytes = health.settings.terminalMaxFrameBytes;
       if (health.status === "migration-failed") {
         startup = reduceStartupState(startup, { type: "MIGRATION_FAILED" });
         return;
@@ -120,7 +132,8 @@
 
   function upsertWorktree(worktree: WorktreeDto) {
     worktreeStore.upsert(worktree);
-    selectedWorktreeId = worktree.id;
+    selectedWorktreeId =
+      worktree.lifecycle === "removed" ? undefined : worktree.id;
     workspaceActionError = "";
     void workspaceStore.load();
   }
@@ -220,6 +233,13 @@
     </aside>
 
     <main id="main-content" tabindex="-1">
+      <LazyTerminalWorkspace
+        selected={selectedWorktree}
+        workspaceName={selectedWorkspace?.name ?? ""}
+        cacheSize={terminalCacheSize}
+        maxFrameBytes={terminalMaxFrameBytes}
+        {liveTerminalWorktreeIds}
+      />
       {#if workspaceActionError}
         <div class="content-alert" role="alert">
           <span>{workspaceActionError}</span>
@@ -435,6 +455,12 @@
                     {/if}
                     <div class="detail-actions worktree-actions">
                       {#if worktree.lifecycle === "ready"}
+                        <button
+                          class="button primary"
+                          type="button"
+                          on:click={() => selectWorktree(worktree)}
+                          >Open Pi terminal</button
+                        >
                         <button
                           class="button danger"
                           type="button"

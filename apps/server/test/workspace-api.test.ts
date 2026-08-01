@@ -15,6 +15,7 @@ import type { NativeDirectoryDialogService } from "../src/platform/native-direct
 import { createOriginPolicy } from "../src/security.js";
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
 import { createWorkspaceService } from "../src/workspaces/workspace-service.js";
+import { createUnavailableTerminalManager } from "./terminal-manager-stub.js";
 import { createUnavailableWorktreeService } from "./worktree-service-stub.js";
 
 const migrationsDirectory = fileURLToPath(
@@ -36,6 +37,14 @@ async function fixture() {
     host: "127.0.0.1",
     port: 4317,
     piExecutable: "pi",
+    piMinimumVersion: "0.83.0",
+    terminalInitialCols: 100,
+    terminalInitialRows: 30,
+    terminalOutputBufferBytes: 1024 * 1024,
+    terminalMaxFrameBytes: 64 * 1024,
+    terminalMaxSocketBufferedBytes: 4 * 1024 * 1024,
+    terminalStopGraceMs: 2_000,
+    terminalCacheSize: 3,
     nativeDialog: "auto",
     logLevel: "silent",
     mode: "test",
@@ -70,7 +79,13 @@ async function fixture() {
     dialogs,
     workspaces,
     worktrees: createUnavailableWorktreeService(),
-    capabilities: { git: true, nativeDirectoryDialog: true },
+    terminals: createUnavailableTerminalManager(),
+    capabilities: {
+      git: true,
+      pi: false,
+      nativeDirectoryDialog: true,
+      pty: false,
+    },
   });
   resources.push({ root, app, database });
 

@@ -22,6 +22,14 @@ export interface AppConfig {
   configDir?: string;
   runtimeDir?: string;
   piExecutable: string;
+  piMinimumVersion: string;
+  terminalInitialCols: number;
+  terminalInitialRows: number;
+  terminalOutputBufferBytes: number;
+  terminalMaxFrameBytes: number;
+  terminalMaxSocketBufferedBytes: number;
+  terminalStopGraceMs: number;
+  terminalCacheSize: number;
   nativeDialog: NativeDialogMode;
   logLevel: LogLevel;
   uiOrigin?: string;
@@ -36,6 +44,14 @@ interface ConfigFile {
   dataDir?: string;
   runtimeDir?: string;
   piExecutable?: string;
+  piMinimumVersion?: string;
+  terminalInitialCols?: number;
+  terminalInitialRows?: number;
+  terminalOutputBufferBytes?: number;
+  terminalMaxFrameBytes?: number;
+  terminalMaxSocketBufferedBytes?: number;
+  terminalStopGraceMs?: number;
+  terminalCacheSize?: number;
   nativeDialog?: NativeDialogMode;
   logLevel?: LogLevel;
   uiOrigin?: string;
@@ -50,6 +66,14 @@ const configFileKeys = new Set([
   "dataDir",
   "runtimeDir",
   "piExecutable",
+  "piMinimumVersion",
+  "terminalInitialCols",
+  "terminalInitialRows",
+  "terminalOutputBufferBytes",
+  "terminalMaxFrameBytes",
+  "terminalMaxSocketBufferedBytes",
+  "terminalStopGraceMs",
+  "terminalCacheSize",
   "nativeDialog",
   "logLevel",
   "uiOrigin",
@@ -64,6 +88,14 @@ const cliNames = new Set([
   "config-dir",
   "runtime-dir",
   "pi-executable",
+  "pi-minimum-version",
+  "terminal-initial-cols",
+  "terminal-initial-rows",
+  "terminal-output-buffer-bytes",
+  "terminal-max-frame-bytes",
+  "terminal-max-socket-buffered-bytes",
+  "terminal-stop-grace-ms",
+  "terminal-cache-size",
   "native-dialog",
   "log-level",
   "ui-origin",
@@ -110,9 +142,20 @@ function readConfigFile(configDir: string): ConfigFile {
     for (const [key, value] of Object.entries(parsed)) {
       if (!configFileKeys.has(key))
         throw new Error(`unknown config key: ${key}`);
-      if (key === "port") {
+      if (
+        [
+          "port",
+          "terminalInitialCols",
+          "terminalInitialRows",
+          "terminalOutputBufferBytes",
+          "terminalMaxFrameBytes",
+          "terminalMaxSocketBufferedBytes",
+          "terminalStopGraceMs",
+          "terminalCacheSize",
+        ].includes(key)
+      ) {
         if (typeof value !== "number")
-          throw new Error("config port must be a number");
+          throw new Error(`config ${key} must be a number`);
       } else if (key === "logLevel") {
         if (
           typeof value !== "string" ||
@@ -145,11 +188,22 @@ function pick(
   return values.find((value) => value !== undefined);
 }
 
+function parseInteger(
+  name: string,
+  value: string | number | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const parsed = typeof value === "number" ? value : Number(value ?? fallback);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be an integer from ${minimum} to ${maximum}`);
+  }
+  return parsed;
+}
+
 function parsePort(value: string | number | undefined): number {
-  const port = typeof value === "number" ? value : Number(value ?? 4317);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535)
-    throw new Error("Port must be an integer from 1 to 65535");
-  return port;
+  return parseInteger("Port", value, 4317, 1, 65_535);
 }
 
 export function isLoopbackHost(host: string): boolean {
@@ -248,6 +302,91 @@ export function loadConfig(
         file.piExecutable,
         "pi",
       ),
+    ),
+    piMinimumVersion: String(
+      pick(
+        cli["pi-minimum-version"],
+        env.PI_DASH_PI_MINIMUM_VERSION,
+        file.piMinimumVersion,
+        "0.83.0",
+      ),
+    ),
+    terminalInitialCols: parseInteger(
+      "Terminal initial columns",
+      pick(
+        cli["terminal-initial-cols"],
+        env.PI_DASH_TERMINAL_INITIAL_COLS,
+        file.terminalInitialCols,
+      ),
+      100,
+      2,
+      500,
+    ),
+    terminalInitialRows: parseInteger(
+      "Terminal initial rows",
+      pick(
+        cli["terminal-initial-rows"],
+        env.PI_DASH_TERMINAL_INITIAL_ROWS,
+        file.terminalInitialRows,
+      ),
+      30,
+      1,
+      300,
+    ),
+    terminalOutputBufferBytes: parseInteger(
+      "Terminal output buffer bytes",
+      pick(
+        cli["terminal-output-buffer-bytes"],
+        env.PI_DASH_TERMINAL_OUTPUT_BUFFER_BYTES,
+        file.terminalOutputBufferBytes,
+      ),
+      1024 * 1024,
+      64 * 1024,
+      16 * 1024 * 1024,
+    ),
+    terminalMaxFrameBytes: parseInteger(
+      "Terminal maximum frame bytes",
+      pick(
+        cli["terminal-max-frame-bytes"],
+        env.PI_DASH_TERMINAL_MAX_FRAME_BYTES,
+        file.terminalMaxFrameBytes,
+      ),
+      64 * 1024,
+      1024,
+      1024 * 1024,
+    ),
+    terminalMaxSocketBufferedBytes: parseInteger(
+      "Terminal maximum socket buffered bytes",
+      pick(
+        cli["terminal-max-socket-buffered-bytes"],
+        env.PI_DASH_TERMINAL_MAX_SOCKET_BUFFERED_BYTES,
+        file.terminalMaxSocketBufferedBytes,
+      ),
+      4 * 1024 * 1024,
+      64 * 1024,
+      16 * 1024 * 1024,
+    ),
+    terminalStopGraceMs: parseInteger(
+      "Terminal stop grace milliseconds",
+      pick(
+        cli["terminal-stop-grace-ms"],
+        env.PI_DASH_TERMINAL_STOP_GRACE_MS,
+        file.terminalStopGraceMs,
+      ),
+      2_000,
+      100,
+      30_000,
+    ),
+    terminalCacheSize: parseInteger(
+      "Terminal cache size",
+      pick(
+        cli["terminal-cache-size"],
+        env.PI_DASH_TERMINAL_CACHE_SIZE,
+        file.terminalCacheSize,
+      ),
+      3,
+      1,
+      12,
     ),
     nativeDialog: nativeDialog as NativeDialogMode,
     logLevel: rawLogLevel as LogLevel,

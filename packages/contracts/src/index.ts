@@ -1,5 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 
+export * from "./terminal.js";
 export * from "./workspaces.js";
 export * from "./worktrees.js";
 
@@ -29,6 +30,16 @@ export const HealthResponseSchema = Type.Object(
       nativeDirectoryDialog: CapabilityStateSchema,
       pty: CapabilityStateSchema,
     }),
+    settings: Type.Object(
+      {
+        terminalCacheSize: Type.Integer({ minimum: 1, maximum: 12 }),
+        terminalMaxFrameBytes: Type.Integer({
+          minimum: 1024,
+          maximum: 1024 * 1024,
+        }),
+      },
+      { additionalProperties: false },
+    ),
   },
   { additionalProperties: false },
 );
@@ -83,6 +94,17 @@ export const ApiErrorCodes = {
   IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
   IDEMPOTENCY_KEY_REUSED: "IDEMPOTENCY_KEY_REUSED",
   OPERATION_IN_PROGRESS: "OPERATION_IN_PROGRESS",
+  WORKTREE_NOT_READY: "WORKTREE_NOT_READY",
+  WORKTREE_UNHEALTHY: "WORKTREE_UNHEALTHY",
+  PI_UNAVAILABLE: "PI_UNAVAILABLE",
+  PI_VERSION_UNSUPPORTED: "PI_VERSION_UNSUPPORTED",
+  PTY_START_FAILED: "PTY_START_FAILED",
+  RUNTIME_STARTING: "RUNTIME_STARTING",
+  RUNTIME_STOPPING: "RUNTIME_STOPPING",
+  TERMINAL_PROTOCOL_MISMATCH: "TERMINAL_PROTOCOL_MISMATCH",
+  INVALID_RESIZE: "INVALID_RESIZE",
+  OUTPUT_REPLAY_EXPIRED: "OUTPUT_REPLAY_EXPIRED",
+  NOT_INPUT_OWNER: "NOT_INPUT_OWNER",
 } as const;
 export type ApiErrorCode = (typeof ApiErrorCodes)[keyof typeof ApiErrorCodes];
 

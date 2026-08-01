@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
+import websocket from "@fastify/websocket";
 import {
   ApiErrorCodes,
   ApiErrorEnvelopeSchema,
@@ -20,6 +21,8 @@ import type { DatabaseService } from "./database.js";
 import { ApiHttpError } from "./errors.js";
 import type { OriginPolicy } from "./security.js";
 import type { NativeDirectoryDialogService } from "./platform/native-directory-dialog.js";
+import type { TerminalManager } from "./terminal/terminal-manager.js";
+import { registerTerminalRoutes } from "./terminal/terminal-routes.js";
 import type { WorkspaceService } from "./workspaces/workspace-service.js";
 import { registerWorkspaceRoutes } from "./workspaces/workspace-routes.js";
 import type { WorktreeService } from "./worktrees/worktree-service.js";
@@ -52,15 +55,24 @@ export interface HttpServerOptions {
   dialogs: NativeDirectoryDialogService;
   workspaces: WorkspaceService;
   worktrees: WorktreeService;
+  terminals: TerminalManager;
   capabilities: {
     git: boolean;
+    pi: boolean;
     nativeDirectoryDialog: boolean;
+    pty: boolean;
   };
 }
 
 export async function buildHttpServer(options: HttpServerOptions) {
   const app = Fastify({ loggerInstance: options.logger, trustProxy: false });
   await app.register(cookie);
+  await app.register(websocket, {
+    options: {
+      maxPayload: options.config.terminalMaxFrameBytes,
+      perMessageDeflate: false,
+    },
+  });
 
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     if (requestPath(request) === BOOTSTRAP_PATH) {
@@ -182,11 +194,15 @@ export async function buildHttpServer(options: HttpServerOptions) {
       schemaVersion: options.database.schemaVersion,
       capabilities: {
         git: options.capabilities.git ? "available" : "unavailable",
-        pi: "unknown",
+        pi: options.capabilities.pi ? "available" : "unavailable",
         nativeDirectoryDialog: options.capabilities.nativeDirectoryDialog
           ? "available"
           : "unavailable",
-        pty: "unknown",
+        pty: options.capabilities.pty ? "available" : "unavailable",
+      },
+      settings: {
+        terminalCacheSize: options.config.terminalCacheSize,
+        terminalMaxFrameBytes: options.config.terminalMaxFrameBytes,
       },
     }),
   );
@@ -213,6 +229,12 @@ export async function buildHttpServer(options: HttpServerOptions) {
     dialogs: options.dialogs,
   });
   await registerWorktreeRoutes(app, { worktrees: options.worktrees });
+  await registerTerminalRoutes(app, {
+    terminals: options.terminals,
+    worktrees: options.worktrees,
+    auth: options.auth,
+    maxFrameBytes: options.config.terminalMaxFrameBytes,
+  });
 
   app.get<{ Querystring: BootstrapQuery }>(
     BOOTSTRAP_PATH,

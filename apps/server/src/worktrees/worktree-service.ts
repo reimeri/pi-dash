@@ -154,6 +154,7 @@ export interface WorktreeService {
   ): Promise<WorkspaceRefsResponse>;
   list(workspaceId: string): WorktreeDto[];
   get(id: string): WorktreeDto;
+  verifyTerminalStart(id: string): Promise<WorktreeDto>;
   create(
     workspaceId: string,
     input: CreateWorktreeRequest,
@@ -485,6 +486,28 @@ export function createWorktreeService(options: {
     },
     get(id) {
       return toDto(requireRecord(id));
+    },
+    async verifyTerminalStart(id) {
+      const record = requireRecord(id);
+      if (record.lifecycle !== "ready" || record.health !== "healthy") {
+        throw new WorktreeServiceError(
+          409,
+          record.lifecycle === "ready"
+            ? "WORKTREE_UNHEALTHY"
+            : "WORKTREE_NOT_READY",
+          "The managed worktree is no longer ready and healthy",
+        );
+      }
+      const workspace = requireWorkspace(record.workspaceId);
+      const entry = await inspectExactManagedWorktree(record, workspace);
+      if (!entry || entry.locked) {
+        throw new WorktreeServiceError(
+          409,
+          "WORKTREE_UNHEALTHY",
+          "The managed worktree no longer has its exact Git identity",
+        );
+      }
+      return toDto(record);
     },
     async create(workspaceId, input, idempotencyKey, signal) {
       const workspace = requireWorkspace(workspaceId);
