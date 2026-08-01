@@ -612,7 +612,7 @@ main {
   gap: 8px;
   align-items: center;
   padding: 9px 8px 9px 0;
-  text-align: left;
+  border-radius: 6px;
 }
 
 .chevron {
@@ -630,6 +630,7 @@ main {
 .workspace-copy strong {
   overflow: hidden;
   font-size: 12px;
+  align-items: center;
   font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1076,7 +1077,7 @@ code {
   gap: 7px;
   align-items: center;
   padding: 6px;
-  border: 1px solid transparent;
+  border: 0px solid transparent;
   border-radius: 5px;
   color: var(--muted);
   background: transparent;
@@ -1084,11 +1085,15 @@ code {
   cursor: pointer;
 }
 
-.worktree-sidebar-list button:hover:not(:disabled),
+.worktree-sidebar-list button:hover:not(:disabled) {
+  border-color: var(--border);
+  background: rgb(255 255 255 / 0.025);
+}
+
 .worktree-sidebar-list button.active {
   border-color: var(--border);
   color: var(--text);
-  background: var(--surface);
+  background: rgb(255 255 255 / 0.025);
 }
 
 .worktree-sidebar-list button:disabled {

@@ -179,10 +179,6 @@
         </div>
       {/if}
       {#if error}<p class="field-error" role="alert">{error}</p>{/if}
-      <p class="field-help">
-        The selected ref may move after this form opens; creation still uses the
-        exact commit shown above.
-      </p>
       <div class="modal-actions">
         <button
           class="button secondary"
