@@ -16,5 +16,6 @@
   "scripts": {
     "build": "tsc -b",
     "check": "tsc -b --pretty false"
-  }
+  },
+  "license": "UNLICENSED"
 }

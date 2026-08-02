@@ -1,0 +1,25 @@
+appId: io.github.reimeri.pi-dash
+productName: Pi Dash
+electronVersion: 43.2.0
+asar: true
+npmRebuild: false
+compression: maximum
+directories:
+  output: ../../dist
+files:
+  - dist/**/*.js
+  - package.json
+extraResources:
+  - from: ../pi-dash
+    to: pi-dash
+    filter:
+      - "**/*"
+linux:
+  executableName: pi-dash
+  category: Development
+  icon: ../../packaging/linux/icons
+  target:
+    - target: tar.gz
+      arch:
+        - x64
+artifactName: pi-dash-${version}-linux-${arch}.${ext}

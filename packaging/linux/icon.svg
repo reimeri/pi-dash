@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title>Pi Dash</title>
+  <rect x="16" y="16" width="480" height="480" rx="104" fill="#09090b"/>
+  <rect x="24" y="24" width="464" height="464" rx="96" fill="none" stroke="#3f3f46" stroke-width="16"/>
+  <text x="256" y="354" fill="#fafafa" font-family="DejaVu Sans, sans-serif" font-size="300" font-weight="600" text-anchor="middle">π</text>
+</svg>

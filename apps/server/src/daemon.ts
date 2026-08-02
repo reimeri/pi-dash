@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
 import { buildHttpServer, type HttpServer } from "./app.js";
 import { createAuthService, type AuthService } from "./auth.js";
@@ -15,6 +14,7 @@ import {
   type AppPaths,
 } from "./paths.js";
 import { createPiResolver } from "./pi/pi-resolver.js";
+import { resolveAppResources } from "./resources.js";
 import { createOriginPolicy } from "./security.js";
 import {
   createApplicationEvents,
@@ -54,13 +54,6 @@ import {
   type WorktreeService,
 } from "./worktrees/worktree-service.js";
 
-const migrationsDirectory = fileURLToPath(
-  new URL("../../../migrations", import.meta.url),
-);
-const defaultStaticDirectory = fileURLToPath(
-  new URL("../../web/dist", import.meta.url),
-);
-
 export interface Daemon {
   app: HttpServer;
   auth: AuthService;
@@ -84,6 +77,7 @@ export async function createDaemon(
   const env = options.env ?? process.env;
   const desktopHost = env.PI_DASH_DESKTOP === "true";
   const config = loadConfig(options.args ?? process.argv.slice(2), env);
+  const resources = resolveAppResources(env);
   const logger = options.logger ?? createLogger(config.logLevel);
   const paths = resolveAppPaths(config, env);
   let lock: DaemonLock | undefined;
@@ -142,7 +136,7 @@ export async function createDaemon(
     lock = acquireDaemonLock(paths.lock);
     database = await openDatabase({
       path: paths.database,
-      migrationsDirectory,
+      migrationsDirectory: resources.migrations,
     });
     const policy = createOriginPolicy(config);
     auth = createAuthService({ policy });
@@ -153,6 +147,7 @@ export async function createDaemon(
       executable: config.piExecutable,
       minimumVersion: config.piMinimumVersion,
       env,
+      extensionPath: resources.piExtension,
     });
     dialogs = await createNativeDirectoryDialog({
       mode: config.nativeDialog,
@@ -263,7 +258,7 @@ export async function createDaemon(
       auth,
       policy,
       logger,
-      staticDirectory: config.staticDir ?? defaultStaticDirectory,
+      staticDirectory: config.staticDir ?? resources.staticAssets,
       dialogs,
       workspaces,
       worktrees,

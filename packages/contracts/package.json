@@ -16,5 +16,6 @@
   },
   "dependencies": {
     "@sinclair/typebox": "0.34.52"
-  }
+  },
+  "license": "UNLICENSED"
 }

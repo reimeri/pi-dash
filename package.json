@@ -10,6 +10,12 @@
   "engines": {
     "node": ">=24"
   },
+  "allowScripts": {
+    "better-sqlite3": true,
+    "electron": true,
+    "fs-ext": true,
+    "node-pty": true
+  },
   "scripts": {
     "build": "npm run build -w @pi-dash/contracts && npm run build -w @pi-dash/pi-extension && npm run build -w @pi-dash/web && npm run build -w @pi-dash/server && npm run build -w @pi-dash/desktop",
     "check": "npm run check --workspaces --if-present",
@@ -18,10 +24,13 @@
     "dev": "concurrently --kill-others-on-fail --names server,web \"npm run dev -w @pi-dash/server\" \"npm run dev -w @pi-dash/web\"",
     "format": "prettier --write --ignore-path .gitignore --ignore-path .prettierignore .",
     "format:check": "prettier --check --ignore-path .gitignore --ignore-path .prettierignore .",
-    "lint": "eslint apps packages tests *.ts",
+    "lint": "eslint apps packages scripts tests *.ts",
+    "package:linux": "node scripts/package-linux-container.mjs",
+    "package:linux:host": "npm run build && node scripts/package-linux.mjs",
     "prod": "npm run build && npm start",
     "start": "npm start -w @pi-dash/server --",
     "test": "vitest run",
+    "verify:linux-artifact": "node scripts/verify-linux-artifact.mjs",
     "test:e2e": "npm run build && playwright test"
   },
   "devDependencies": {
@@ -29,6 +38,7 @@
     "@playwright/test": "1.58.2",
     "@types/node": "24.10.13",
     "concurrently": "10.0.4",
+    "electron-builder": "26.15.3",
     "eslint": "9.39.2",
     "eslint-plugin-svelte": "3.14.0",
     "globals": "17.3.0",
@@ -36,9 +46,11 @@
     "prettier-plugin-svelte": "3.4.1",
     "svelte": "5.55.7",
     "svelte-eslint-parser": "1.4.1",
+    "tar": "7.5.22",
     "tsx": "4.21.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.54.0",
     "vitest": "4.1.10"
-  }
+  },
+  "license": "UNLICENSED"
 }

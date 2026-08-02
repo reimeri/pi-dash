@@ -27,7 +27,9 @@ Configuration precedence is **CLI → environment → JSON file → defaults**. 
 
 Only numeric loopback addresses are accepted. `0.0.0.0`, LAN addresses, and hostnames are rejected. `uiOrigin` is intended for the loopback Vite development server and must also be an HTTP loopback origin.
 
-The Electron desktop host accepts the ordinary daemon CLI options, but owns `--bootstrap-output`, `--static-dir`, and `--ui-origin`; passing those options to `npm run desktop -- ...` is rejected. It uses `node` from `PATH` for the daemon so native modules use the system Node ABI. `PI_DASH_NODE_EXECUTABLE` can select another Node.js 24+ executable, which must be ABI-compatible with the runtime used to install the native modules.
+The Electron desktop host accepts the ordinary daemon CLI options, but owns `--bootstrap-output`, `--static-dir`, and `--ui-origin`; passing those options to `npm run desktop -- ...` is rejected. Source-tree launches use `node` from `PATH` for the daemon so native modules use the installation's Node ABI. `PI_DASH_NODE_EXECUTABLE` can select another ABI-compatible Node.js 24+ executable during source development.
+
+The packaged Linux application ignores `PI_DASH_NODE_EXECUTABLE` and launches its verified Node.js 24.18.0 sidecar from the immutable application resources. It also supplies the immutable resource root used for migrations, static assets, and the Pi status extension; these paths never depend on the launcher's current working directory.
 
 Desktop daemon output is retained in `$XDG_STATE_HOME/pi-dash/daemon.log` (falling back to `~/.local/state/pi-dash/daemon.log`). Pi Dash keeps five mode-`0600` files of at most 2 MiB each, redacts launch and authorization credentials, records memory/runtime diagnostics once per minute, and includes the active log path plus final sanitized error output in unexpected-exit dialogs. Each desktop launch archives the previous log; a long-running launch also rotates at the same size bound.
 

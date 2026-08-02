@@ -2,7 +2,6 @@ import { execFile } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -61,20 +60,15 @@ async function resolveExecutable(
   );
 }
 
-export function resolveDashboardExtensionPath(): string {
-  return fileURLToPath(import.meta.resolve("@pi-dash/pi-extension/runtime"));
-}
-
 export function createPiResolver(options: {
   executable: string;
   minimumVersion: string;
   env?: NodeJS.ProcessEnv;
-  extensionPath?: string;
+  extensionPath: string;
   timeoutMs?: number;
 }) {
   const env = options.env ?? process.env;
-  const extensionPath =
-    options.extensionPath ?? resolveDashboardExtensionPath();
+  const extensionPath = options.extensionPath;
   const minimumMatch = options.minimumVersion.match(/^\d+\.\d+\.\d+$/);
   if (!minimumMatch)
     throw new Error("Pi minimum version must use major.minor.patch");

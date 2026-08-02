@@ -17,7 +17,7 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   ...svelte.configs["flat/recommended"],
   {
-    files: ["**/*.{js,ts,svelte}"],
+    files: ["**/*.{js,mjs,ts,svelte}"],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
     },

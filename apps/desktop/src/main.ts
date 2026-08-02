@@ -2,7 +2,6 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   app,
   BrowserWindow,
@@ -16,10 +15,10 @@ import {
   type DaemonLogSink,
   sanitizeDaemonOutput,
 } from "./daemon-log.js";
-
-const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
-const serverEntry = join(repositoryRoot, "apps/server/dist/cli.js");
-const staticDirectory = join(repositoryRoot, "apps/web/dist");
+import {
+  assertDesktopRuntimePaths,
+  resolveDesktopRuntimePaths,
+} from "./runtime-paths.js";
 const STARTUP_TIMEOUT_MS = 30_000;
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -88,29 +87,48 @@ async function startDaemon(): Promise<DaemonProcess> {
   chmodSync(bootstrapDirectory, 0o700);
   const bootstrapOutput = join(bootstrapDirectory, "bootstrap-url");
   const daemonLog = createDaemonLog();
-  const nodeExecutable = process.env.PI_DASH_NODE_EXECUTABLE?.trim() || "node";
+  const runtime = resolveDesktopRuntimePaths({
+    packaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    moduleUrl: import.meta.url,
+    env: process.env,
+  });
+  try {
+    assertDesktopRuntimePaths(runtime);
+  } catch (error) {
+    daemonLog.write(
+      "desktop",
+      `Packaged runtime validation failed: ${(error as Error).message}\n`,
+    );
+    daemonLog.close();
+    rmSync(bootstrapDirectory, { recursive: true, force: true });
+    throw new Error(
+      `The Pi Dash application resources are incomplete: ${(error as Error).message}`,
+    );
+  }
   daemonLog.write(
     "desktop",
-    `Starting daemon with executable ${nodeExecutable}\n`,
+    `Starting daemon with executable ${runtime.nodeExecutable}\n`,
   );
   let child: ChildProcessWithoutNullStreams;
   try {
     child = spawn(
-      nodeExecutable,
+      runtime.nodeExecutable,
       [
-        serverEntry,
+        runtime.serverEntry,
         ...forwardedArguments,
         "--no-open",
         "--static-dir",
-        staticDirectory,
+        runtime.staticDirectory,
         "--bootstrap-output",
         bootstrapOutput,
       ],
       {
-        cwd: repositoryRoot,
+        cwd: runtime.resourceRoot,
         env: {
           ...process.env,
           NODE_ENV: "production",
+          PI_DASH_RESOURCE_ROOT: runtime.resourceRoot,
           PI_DASH_DESKTOP: "true",
           PI_DASH_NO_OPEN: "true",
           PI_DASH_UI_ORIGIN: "",

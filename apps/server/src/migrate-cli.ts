@@ -1,21 +1,18 @@
-import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { openDatabase } from "./database.js";
 import { acquireDaemonLock } from "./lock.js";
 import { resolveAppPaths } from "./paths.js";
-
-const migrationsDirectory = fileURLToPath(
-  new URL("../../../migrations", import.meta.url),
-);
+import { resolveAppResources } from "./resources.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const paths = resolveAppPaths(config);
+  const resources = resolveAppResources();
   const lock = acquireDaemonLock(paths.lock);
   try {
     const database = await openDatabase({
       path: paths.database,
-      migrationsDirectory,
+      migrationsDirectory: resources.migrations,
     });
     try {
       process.stdout.write(`Schema is at version ${database.schemaVersion}.\n`);

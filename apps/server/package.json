@@ -30,5 +30,6 @@
     "@types/better-sqlite3": "9.6.0",
     "@types/fs-ext": "2.0.3",
     "@types/ws": "8.18.1"
-  }
+  },
+  "license": "UNLICENSED"
 }

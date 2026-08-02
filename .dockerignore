@@ -1,0 +1,13 @@
+.git
+.release
+**/dist
+**/node_modules
+spikes
+playwright-report
+test-results
+coverage
+.pi-dash-data
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
