@@ -6,7 +6,7 @@
   } from "@pi-dash/contracts";
   import { GitBranchIcon } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import * as Alert from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
@@ -31,6 +31,7 @@
   let error = "";
   let operationId = crypto.randomUUID();
   let dialogOpen = true;
+  let nameInput: HTMLInputElement | null = null;
   let returnFocus: HTMLElement | null = null;
   $: selected = refs.find(
     (ref) => `${ref.fullName}:${ref.commit}` === selectedKey,
@@ -136,7 +137,11 @@
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    void loadRefs();
+    void (async () => {
+      await loadRefs();
+      await tick();
+      nameInput?.focus();
+    })();
   });
 </script>
 
@@ -173,13 +178,13 @@
           <Field.Field data-disabled={saving ? "" : undefined}
             ><Field.Label for="worktree-name">Name</Field.Label><Input
               id="worktree-name"
+              bind:ref={nameInput}
               bind:value={name}
               maxlength={100}
               disabled={saving}
               oninput={updateName}
               autocomplete="off"
               placeholder="OAuth refresh"
-              autofocus
             /></Field.Field
           >
           <Field.Field data-disabled={saving ? "" : undefined}
