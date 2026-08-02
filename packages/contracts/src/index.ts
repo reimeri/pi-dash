@@ -1,5 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 
+export * from "./diffs.js";
 export * from "./status.js";
 export * from "./terminal.js";
 export * from "./workspaces.js";
@@ -97,6 +98,9 @@ export const ApiErrorCodes = {
   OPERATION_IN_PROGRESS: "OPERATION_IN_PROGRESS",
   WORKTREE_NOT_READY: "WORKTREE_NOT_READY",
   WORKTREE_UNHEALTHY: "WORKTREE_UNHEALTHY",
+  DIFF_FAILED: "DIFF_FAILED",
+  DIFF_TOO_LARGE: "DIFF_TOO_LARGE",
+  DIFF_CHANGED: "DIFF_CHANGED",
   PI_UNAVAILABLE: "PI_UNAVAILABLE",
   PI_VERSION_UNSUPPORTED: "PI_VERSION_UNSUPPORTED",
   PTY_START_FAILED: "PTY_START_FAILED",

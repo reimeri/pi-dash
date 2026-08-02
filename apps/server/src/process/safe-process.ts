@@ -27,6 +27,7 @@ export interface ProcessOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   maxOutputBytes?: number;
+  stdin?: string | Buffer;
 }
 
 export type ProcessRunner = (
@@ -53,7 +54,7 @@ export const runProcess: ProcessRunner = async (
       cwd: options.cwd,
       env: options.env,
       shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       windowsHide: true,
     });
     const stdout: Buffer[] = [];
@@ -87,8 +88,14 @@ export const runProcess: ProcessRunner = async (
       target.push(buffer);
     };
 
-    child.stdout.on("data", capture(stdout));
-    child.stderr.on("data", capture(stderr));
+    child.stdout!.on("data", capture(stdout));
+    child.stderr!.on("data", capture(stderr));
+    if (options.stdin !== undefined && child.stdin) {
+      child.stdin.on("error", () => {
+        // The process result remains authoritative when it closes stdin early.
+      });
+      child.stdin.end(options.stdin);
+    }
 
     const timeout = setTimeout(
       () =>

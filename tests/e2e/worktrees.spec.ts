@@ -202,8 +202,37 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
   ).toBeVisible();
 
   const dirt = join(managedPath, "untracked-e2e.txt");
-  writeFileSync(dirt, "protect me\n");
-  await card.getByRole("button", { name: "Remove clean worktree" }).click();
+  writeFileSync(dirt, "protect me\nstill dirty\n");
+  const workspaceNavigation = page.getByRole("navigation", {
+    name: "Workspaces",
+  });
+  const featureWorkButton = workspaceNavigation.getByRole("button", {
+    name: "Feature work",
+    exact: true,
+  });
+  if (!(await featureWorkButton.isVisible())) {
+    await workspaceNavigation
+      .getByRole("button", { name: "Expand Worktree E2E" })
+      .click();
+  }
+  await featureWorkButton.click();
+  const diffButton = page.getByRole("button", { name: /View changes/ });
+  await expect(diffButton).toHaveAccessibleName(
+    /2 added lines, 0 deleted lines/,
+  );
+  await diffButton.click();
+  await expect(page.getByRole("heading", { name: "Changes" })).toBeVisible();
+  await expect(
+    page.getByText("untracked-e2e.txt", { exact: false }),
+  ).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.getByRole("button", { name: "Close changes" }).click();
+  await page
+    .getByRole("navigation", { name: "Workspaces" })
+    .getByRole("button", { name: "Worktree E2E", exact: true })
+    .click();
+  await card.getByRole("button", { name: "Remove", exact: true }).click();
   let removeDialog = page.getByRole("alertdialog", {
     name: "Remove managed worktree",
   });
@@ -214,7 +243,7 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
   unlinkSync(dirt);
   await removeDialog.getByRole("button", { name: "Cancel" }).click();
 
-  await card.getByRole("button", { name: "Remove clean worktree" }).click();
+  await card.getByRole("button", { name: "Remove", exact: true }).click();
   removeDialog = page.getByRole("alertdialog", {
     name: "Remove managed worktree",
   });
@@ -232,7 +261,6 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
     .click();
   await expect(card).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Expand Worktree E2E" }).click();
   await expect(
     page
       .getByRole("navigation", { name: "Workspaces" })

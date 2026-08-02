@@ -9,6 +9,8 @@ export function createUnavailableWorktreeService(): WorktreeService {
     refs: async () => unavailable(),
     list: () => unavailable(),
     get: () => unavailable(),
+    diffSummary: async () => unavailable(),
+    diff: async () => unavailable(),
     verifyTerminalStart: async () => unavailable(),
     create: async () => unavailable(),
     remove: async () => unavailable(),

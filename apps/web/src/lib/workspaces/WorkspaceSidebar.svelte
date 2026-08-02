@@ -7,7 +7,6 @@
   } from "@pi-dash/contracts";
   import {
     Add01Icon,
-    ArrowDown01Icon,
     ArrowRight01Icon,
     FolderGitIcon,
   } from "@hugeicons/core-free-icons";
@@ -21,7 +20,7 @@
   import * as Sidebar from "$lib/components/ui/sidebar";
   import { Spinner } from "$lib/components/ui/spinner";
   import WorkflowStatusIndicator from "../status/WorkflowStatusIndicator.svelte";
-    import { cn } from "tailwind-variants";
+  import { cn } from "tailwind-variants";
 
   export let workspaces: WorkspaceDto[];
   export let status: "idle" | "loading" | "ready" | "error";
@@ -182,10 +181,10 @@
                   >
                     <HugeiconsIcon
                       icon={ArrowRight01Icon}
-                        class={cn(
-                          "transition-transform",
-                          expanded.has(workspace.id) && "rotate-90",
-                        )}
+                      class={cn(
+                        "transition-transform",
+                        expanded.has(workspace.id) && "rotate-90",
+                      )}
                       strokeWidth={2}
                     />
                   </Button>

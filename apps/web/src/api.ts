@@ -9,6 +9,8 @@ import {
   StatusAcknowledgeResponseSchema,
   WorkspaceListResponseSchema,
   WorkspaceRefsResponseSchema,
+  WorktreeDiffSchema,
+  WorktreeDiffSummarySchema,
   WorktreeListResponseSchema,
   WorktreeResponseSchema,
   DeleteWorktreeBranchResponseSchema,
@@ -174,6 +176,18 @@ export const api = {
       `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/worktrees`,
       WorktreeResponseSchema,
       { method: "POST", body, idempotencyKey, signal },
+    ),
+  worktreeDiffSummary: (id: string, signal?: AbortSignal) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(id)}/diff-summary`,
+      WorktreeDiffSummarySchema,
+      { signal },
+    ),
+  worktreeDiff: (id: string, signal?: AbortSignal) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(id)}/diff`,
+      WorktreeDiffSchema,
+      { signal },
     ),
   removeWorktree: (id: string, idempotencyKey: string) =>
     requestJson(

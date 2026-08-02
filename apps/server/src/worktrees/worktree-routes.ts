@@ -9,6 +9,8 @@ import {
   WorkspaceIdParamsSchema,
   WorkspaceRefsQuerySchema,
   WorkspaceRefsResponseSchema,
+  WorktreeDiffSchema,
+  WorktreeDiffSummarySchema,
   WorktreeIdParamsSchema,
   WorktreeListResponseSchema,
   WorktreeResponseSchema,
@@ -134,6 +136,52 @@ export async function registerWorktreeRoutes(
     async (request) => {
       try {
         return { worktrees: options.worktrees.list(request.params.id) };
+      } catch (error) {
+        serviceError(error);
+      }
+    },
+  );
+
+  app.get<{ Params: WorktreeIdParams }>(
+    "/api/v1/worktrees/:id/diff-summary",
+    {
+      schema: {
+        params: WorktreeIdParamsSchema,
+        response: {
+          200: WorktreeDiffSummarySchema,
+          ...WORKTREE_ERROR_RESPONSES,
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        void reply.header("Cache-Control", "no-store");
+        return await withRequestAbort(request, (signal) =>
+          options.worktrees.diffSummary(request.params.id, signal),
+        );
+      } catch (error) {
+        serviceError(error);
+      }
+    },
+  );
+
+  app.get<{ Params: WorktreeIdParams }>(
+    "/api/v1/worktrees/:id/diff",
+    {
+      schema: {
+        params: WorktreeIdParamsSchema,
+        response: {
+          200: WorktreeDiffSchema,
+          ...WORKTREE_ERROR_RESPONSES,
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        void reply.header("Cache-Control", "no-store");
+        return await withRequestAbort(request, (signal) =>
+          options.worktrees.diff(request.params.id, signal),
+        );
       } catch (error) {
         serviceError(error);
       }
