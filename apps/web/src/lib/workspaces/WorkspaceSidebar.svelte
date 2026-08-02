@@ -21,6 +21,7 @@
   import * as Sidebar from "$lib/components/ui/sidebar";
   import { Spinner } from "$lib/components/ui/spinner";
   import WorkflowStatusIndicator from "../status/WorkflowStatusIndicator.svelte";
+  import WorkspaceSyncIndicator from "./WorkspaceSyncIndicator.svelte";
   import { orderWorktreesByActivity } from "../worktrees/order.js";
   import { cn } from "tailwind-variants";
 
@@ -93,6 +94,16 @@
     const summary = diffSummaries[worktree.id];
     if (!summary?.hasChanges) return worktree.name;
     return `${worktree.name}, ${summary.additions} added lines, ${summary.deletions} deleted lines`;
+  }
+
+  function workspaceLabel(workspace: WorkspaceDto): string {
+    if (workspace.repository.syncStatus === "syncable") {
+      return `${workspace.name}, upstream updates available`;
+    }
+    if (workspace.repository.syncStatus === "diverged") {
+      return `${workspace.name}, branch diverged from upstream`;
+    }
+    return workspace.name;
   }
 
   function healthLabel(workspace: WorkspaceDto): string {
@@ -219,7 +230,7 @@
                 aria-current={selectedId === workspace.id && !selectedWorktreeId
                   ? "page"
                   : undefined}
-                aria-label={workspace.name}
+                aria-label={workspaceLabel(workspace)}
                 onclick={() => selectWorkspace(workspace.id)}
               >
                 <HugeiconsIcon
@@ -227,7 +238,10 @@
                   strokeWidth={2}
                   aria-hidden="true"
                 />
-                <span>{workspace.name}</span>
+                <span class="min-w-0 flex-1 truncate">{workspace.name}</span>
+                <WorkspaceSyncIndicator
+                  status={workspace.repository.syncStatus}
+                />
                 {#if !expanded.has(workspace.id) && statusChannel === "connected" && activity && activity.state !== "idle" && activity.integration === "connected"}
                   <WorkflowStatusIndicator
                     stateOverride={activity.state}

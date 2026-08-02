@@ -4,6 +4,7 @@ import type {
   RepositoryHealth,
   WorkspaceDto,
   WorkspacePreviewResponse,
+  WorkspaceSyncStatus,
 } from "@pi-dash/contracts";
 import {
   defaultWorkspaceName,
@@ -116,7 +117,8 @@ export function createWorkspaceService(options: {
   const refreshIntervalMs = options.refreshIntervalMs ?? 5 * 60_000;
   const refreshController = new AbortController();
   const refreshQueues = new Map<string, Promise<void>>();
-  const pendingSyncs = new Map<string, number>();
+  const pendingGitOperations = new Map<string, number>();
+  const syncStatuses = new Map<string, WorkspaceSyncStatus>();
   let interval: NodeJS.Timeout | undefined;
   let refreshActive = false;
 
@@ -127,6 +129,10 @@ export function createWorkspaceService(options: {
     repositoryPath: record.repositoryPath,
     repository: {
       health: record.repositoryHealth,
+      syncStatus:
+        record.repositoryHealth === "healthy"
+          ? (syncStatuses.get(record.id) ?? "unknown")
+          : "unknown",
       currentBranch: record.currentBranch,
       headCommit: record.headCommit,
       checkedAt: record.checkedAt,
@@ -163,6 +169,33 @@ export function createWorkspaceService(options: {
       if (error instanceof GitInspectionError) throw inspectionError(error);
       throw error;
     }
+  };
+
+  const inspectSyncStatus = async (
+    record: WorkspaceRecord,
+    signal?: AbortSignal,
+  ): Promise<WorkspaceSyncStatus> => {
+    try {
+      return await options.lock.runExclusive(record.gitCommonDir, () =>
+        options.syncer.status(record.repositoryPath, signal),
+      );
+    } catch (error) {
+      if (
+        error instanceof GitWorkspaceSyncError ||
+        error instanceof GitMutationBusyError
+      ) {
+        return "unknown";
+      }
+      throw error;
+    }
+  };
+
+  const syncStatusAfterError = (error: unknown): WorkspaceSyncStatus => {
+    if (!(error instanceof GitWorkspaceSyncError)) return "unknown";
+    if (error.code === "WORKSPACE_SYNC_DIRTY") return "dirty";
+    if (error.code === "WORKSPACE_SYNC_AHEAD") return "ahead";
+    if (error.code === "WORKSPACE_SYNC_DIVERGED") return "diverged";
+    return "unknown";
   };
 
   const service: WorkspaceService = {
@@ -232,7 +265,7 @@ export function createWorkspaceService(options: {
     },
     remove(id) {
       requireRecord(id);
-      if ((pendingSyncs.get(id) ?? 0) > 0) {
+      if ((pendingGitOperations.get(id) ?? 0) > 0) {
         throw new WorkspaceServiceError(
           409,
           "GIT_OPERATION_BUSY",
@@ -249,8 +282,10 @@ export function createWorkspaceService(options: {
         );
       }
       options.repository.delete(id);
+      syncStatuses.delete(id);
     },
     refresh(id, signal) {
+      pendingGitOperations.set(id, (pendingGitOperations.get(id) ?? 0) + 1);
       const previous = refreshQueues.get(id) ?? Promise.resolve();
       const operation = previous
         .catch(() => undefined)
@@ -273,6 +308,11 @@ export function createWorkspaceService(options: {
               throw inspectionError(error);
             throw error;
           }
+          const syncStatus =
+            health.health === "healthy"
+              ? await inspectSyncStatus(record, signal)
+              : "unknown";
+          syncStatuses.set(id, syncStatus);
           const updated = options.repository.updateHealth(
             id,
             health.health,
@@ -283,6 +323,17 @@ export function createWorkspaceService(options: {
           const workspace = updated ? toDto(updated) : service.get(id);
           publishRepositoryChange(workspace);
           return workspace;
+        })
+        .catch((error) => {
+          syncStatuses.set(id, "unknown");
+          const current = options.repository.get(id);
+          if (current) publishRepositoryChange(toDto(current));
+          throw error;
+        })
+        .finally(() => {
+          const remaining = (pendingGitOperations.get(id) ?? 1) - 1;
+          if (remaining === 0) pendingGitOperations.delete(id);
+          else pendingGitOperations.set(id, remaining);
         });
       const queueTail = operation.then(
         () => undefined,
@@ -295,7 +346,7 @@ export function createWorkspaceService(options: {
       return operation;
     },
     sync(id, signal) {
-      pendingSyncs.set(id, (pendingSyncs.get(id) ?? 0) + 1);
+      pendingGitOperations.set(id, (pendingGitOperations.get(id) ?? 0) + 1);
       const previous = refreshQueues.get(id) ?? Promise.resolve();
       const operation = previous
         .catch(() => undefined)
@@ -311,6 +362,7 @@ export function createWorkspaceService(options: {
                   signal,
                 );
                 if (before.health !== "healthy") {
+                  syncStatuses.set(id, "unknown");
                   const degraded = options.repository.updateHealth(
                     id,
                     before.health,
@@ -333,6 +385,7 @@ export function createWorkspaceService(options: {
                     signal,
                   );
                 } catch (error) {
+                  syncStatuses.set(id, syncStatusAfterError(error));
                   try {
                     const finalInspection = await options.git.inspectHealth(
                       record.repositoryPath,
@@ -354,6 +407,13 @@ export function createWorkspaceService(options: {
                 const after = await options.git.inspectHealth(
                   record.repositoryPath,
                   record.gitCommonDir,
+                );
+                syncStatuses.set(
+                  id,
+                  after.health === "healthy" &&
+                    after.headCommit === result.headCommit
+                    ? "synchronized"
+                    : "unknown",
                 );
                 const updated = options.repository.updateHealth(
                   id,
@@ -418,9 +478,9 @@ export function createWorkspaceService(options: {
           }
         })
         .finally(() => {
-          const remaining = (pendingSyncs.get(id) ?? 1) - 1;
-          if (remaining === 0) pendingSyncs.delete(id);
-          else pendingSyncs.set(id, remaining);
+          const remaining = (pendingGitOperations.get(id) ?? 1) - 1;
+          if (remaining === 0) pendingGitOperations.delete(id);
+          else pendingGitOperations.set(id, remaining);
         });
       const queueTail = operation.then(
         () => undefined,
@@ -436,15 +496,32 @@ export function createWorkspaceService(options: {
       if (refreshActive || refreshController.signal.aborted) return;
       refreshActive = true;
       try {
-        const records = options.repository.list();
-        for (const record of records) {
-          if (refreshController.signal.aborted) break;
-          try {
-            await service.refresh(record.id, refreshController.signal);
-          } catch {
-            // A background probe must not make cached workspace data unavailable.
-          }
+        const groups = new Map<string, WorkspaceRecord[]>();
+        for (const record of options.repository.list()) {
+          const group = groups.get(record.gitCommonDir) ?? [];
+          group.push(record);
+          groups.set(record.gitCommonDir, group);
         }
+        const queue = [...groups.values()];
+        let nextGroup = 0;
+        const worker = async () => {
+          while (!refreshController.signal.aborted) {
+            const group = queue[nextGroup];
+            nextGroup += 1;
+            if (!group) return;
+            for (const record of group) {
+              if (refreshController.signal.aborted) return;
+              try {
+                await service.refresh(record.id, refreshController.signal);
+              } catch {
+                // A background probe must not make cached workspace data unavailable.
+              }
+            }
+          }
+        };
+        await Promise.all(
+          Array.from({ length: Math.min(3, queue.length) }, () => worker()),
+        );
       } finally {
         refreshActive = false;
       }

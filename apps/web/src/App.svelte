@@ -52,6 +52,7 @@
   import RenameWorkspaceDialog from "./lib/workspaces/RenameWorkspaceDialog.svelte";
   import WorkspaceSidebar from "./lib/workspaces/WorkspaceSidebar.svelte";
   import WorkspaceSidebarAddButton from "./lib/workspaces/WorkspaceSidebarAddButton.svelte";
+  import WorkspaceSyncIndicator from "./lib/workspaces/WorkspaceSyncIndicator.svelte";
   import { workspaceStore } from "./lib/workspaces/store.js";
   import { displayPath } from "./lib/workspaces/display.js";
   import type { TerminalControls } from "./lib/terminal/controls.js";
@@ -746,9 +747,14 @@
                     <Badge variant="outline">Workspace</Badge>
                     <h2
                       id="workspace-title"
-                      class="mt-3 text-2xl font-semibold tracking-tight"
+                      class="mt-3 flex items-center gap-2 text-2xl font-semibold tracking-tight"
                     >
-                      {selectedWorkspace.name}
+                      <span class="min-w-0 truncate"
+                        >{selectedWorkspace.name}</span
+                      >
+                      <WorkspaceSyncIndicator
+                        status={selectedWorkspace.repository.syncStatus}
+                      />
                     </h2>
                     <p
                       class="mt-1 break-all font-mono text-sm text-muted-foreground"

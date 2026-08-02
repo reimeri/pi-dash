@@ -4,7 +4,8 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { WorkspaceDto } from "@pi-dash/contracts";
 import { createGitRepository } from "../../../tests/fixtures/git-repository.js";
 import { createGitInspector } from "../src/git/git-inspector.js";
 import {
@@ -28,6 +29,7 @@ const resources: Array<{ root: string; database: DatabaseService }> = [];
 async function fixture(
   options: {
     syncer?: GitWorkspaceSynchronizer;
+    onRepositoryChange?: (workspace: WorkspaceDto) => void;
   } = {},
 ): Promise<{
   root: string;
@@ -46,6 +48,7 @@ async function fixture(
     }),
     syncer: options.syncer ?? (await createGitWorkspaceSynchronizer()),
     lock: createGitMutationLock({ root: join(root, "locks") }),
+    onRepositoryChange: options.onRepositoryChange,
     now: () => new Date("2026-02-03T04:05:06.000Z"),
   });
   resources.push({ root, database });
@@ -109,6 +112,45 @@ describe("WorkspaceService", () => {
     expect(workspaceSlugBase("你好")).toBe("workspace");
   });
 
+  it("refreshes the upstream sync status for healthy repositories", async () => {
+    let statusChecks = 0;
+    let statusFails = false;
+    const publishedStatuses: string[] = [];
+    const { root, service } = await fixture({
+      onRepositoryChange: (workspace) =>
+        publishedStatuses.push(workspace.repository.syncStatus),
+      syncer: {
+        async status() {
+          statusChecks += 1;
+          if (statusFails) throw new Error("status failed");
+          return "syncable";
+        },
+        async sync(path) {
+          return {
+            headCommit: execFileSync("git", ["rev-parse", "HEAD"], {
+              cwd: path,
+              encoding: "utf8",
+            }).trim(),
+          };
+        },
+      },
+    });
+    const repository = createGitRepository(root, "project");
+    const created = await service.create({ path: repository, name: "Project" });
+
+    expect(created.repository.syncStatus).toBe("unknown");
+    await expect(service.refresh(created.id)).resolves.toMatchObject({
+      repository: { health: "healthy", syncStatus: "syncable" },
+    });
+    expect(statusChecks).toBe(1);
+    expect(service.get(created.id).repository.syncStatus).toBe("syncable");
+
+    statusFails = true;
+    await expect(service.refresh(created.id)).rejects.toThrow("status failed");
+    expect(service.get(created.id).repository.syncStatus).toBe("unknown");
+    expect(publishedStatuses.at(-1)).toBe("unknown");
+  });
+
   it("persists degraded missing health and removes metadata without repository files", async () => {
     const { root, service } = await fixture();
     const repository = createGitRepository(root, "movable");
@@ -134,6 +176,9 @@ describe("WorkspaceService", () => {
     const continueSync = new Promise<void>((resolve) => (release = resolve));
     const { root, service } = await fixture({
       syncer: {
+        async status() {
+          return "synchronized";
+        },
         async sync(path) {
           started();
           await continueSync;
@@ -159,6 +204,81 @@ describe("WorkspaceService", () => {
     );
     release();
     await expect(syncing).resolves.toMatchObject({ id: workspace.id });
+  });
+
+  it("blocks removal while an upstream status refresh is active", async () => {
+    let started!: () => void;
+    let release!: () => void;
+    const refreshStarted = new Promise<void>((resolve) => (started = resolve));
+    const continueRefresh = new Promise<void>((resolve) => (release = resolve));
+    const { root, service } = await fixture({
+      syncer: {
+        async status() {
+          started();
+          await continueRefresh;
+          return "synchronized";
+        },
+        async sync(path) {
+          return {
+            headCommit: execFileSync("git", ["rev-parse", "HEAD"], {
+              cwd: path,
+              encoding: "utf8",
+            }).trim(),
+          };
+        },
+      },
+    });
+    const repository = createGitRepository(root, "project");
+    const workspace = await service.create({
+      path: repository,
+      name: "Project",
+    });
+
+    const refreshing = service.refresh(workspace.id);
+    await refreshStarted;
+    expect(() => service.remove(workspace.id)).toThrow(
+      expect.objectContaining({ code: "GIT_OPERATION_BUSY" }),
+    );
+    release();
+    await expect(refreshing).resolves.toMatchObject({ id: workspace.id });
+  });
+
+  it("refreshes independent repositories with bounded concurrency", async () => {
+    let active = 0;
+    let maximumActive = 0;
+    let release!: () => void;
+    const continueRefresh = new Promise<void>((resolve) => (release = resolve));
+    const { root, service } = await fixture({
+      syncer: {
+        async status() {
+          active += 1;
+          maximumActive = Math.max(maximumActive, active);
+          await continueRefresh;
+          active -= 1;
+          return "synchronized";
+        },
+        async sync(path) {
+          return {
+            headCommit: execFileSync("git", ["rev-parse", "HEAD"], {
+              cwd: path,
+              encoding: "utf8",
+            }).trim(),
+          };
+        },
+      },
+    });
+    for (let index = 1; index <= 4; index += 1) {
+      await service.create({
+        path: createGitRepository(root, `project-${index}`),
+        name: `Project ${index}`,
+      });
+    }
+
+    const refreshing = service.refreshAll();
+    await vi.waitFor(() => expect(maximumActive).toBe(3));
+    release();
+    await refreshing;
+    expect(maximumActive).toBe(3);
   });
 
   it("blocks removal when future managed worktree rows exist", async () => {
