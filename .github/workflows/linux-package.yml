@@ -1,0 +1,46 @@
+name: Linux package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  package-linux-x64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.18.0"
+          cache: npm
+
+      - name: Install build tooling
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build Linux artifact
+        run: npm run package:linux
+        env:
+          PI_DASH_CONTAINER_ENGINE: docker
+
+      - name: Verify artifact on runner
+        run: npm run verify:linux-artifact
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-dash-linux-x64
+          path: |
+            dist/pi-dash-*-linux-x64.tar.gz
+            dist/SHA256SUMS
+          compression-level: 0
+          if-no-files-found: error
