@@ -23,6 +23,7 @@ const workspace: WorkspaceDto = {
   repositoryPath: "/tmp/example",
   repository: {
     health: "healthy",
+    syncStatus: "synchronized",
     currentBranch: "main",
     headCommit: "a".repeat(40),
     checkedAt: "2026-01-01T00:00:00.000Z",

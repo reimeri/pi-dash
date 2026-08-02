@@ -105,6 +105,42 @@ describe("GitWorkspaceSynchronizer", () => {
     );
   });
 
+  it("reports synchronized and syncable upstream states after fetching", async () => {
+    const { workspace, producer } = remoteFixture();
+    const synchronizer = await createGitWorkspaceSynchronizer();
+
+    await expect(synchronizer.status(workspace)).resolves.toBe("synchronized");
+    commitFile(producer, "remote.txt", "remote\n");
+    git(producer, "push", "origin", "main");
+    await expect(synchronizer.status(workspace)).resolves.toBe("syncable");
+  });
+
+  it("reports dirty, ahead, and diverged states without changing the branch", async () => {
+    const dirty = remoteFixture();
+    writeFileSync(join(dirty.workspace, "untracked.txt"), "local\n");
+    const remoteCommit = commitFile(dirty.producer, "remote.txt", "remote\n");
+    git(dirty.producer, "push", "origin", "main");
+    const synchronizer = await createGitWorkspaceSynchronizer();
+    await expect(synchronizer.status(dirty.workspace)).resolves.toBe("dirty");
+    expect(git(dirty.workspace, "rev-parse", "refs/remotes/origin/main")).toBe(
+      remoteCommit,
+    );
+
+    const ahead = remoteFixture();
+    const aheadCommit = commitFile(ahead.workspace, "ahead.txt", "ahead\n");
+    await expect(synchronizer.status(ahead.workspace)).resolves.toBe("ahead");
+    expect(git(ahead.workspace, "rev-parse", "HEAD")).toBe(aheadCommit);
+
+    const diverged = remoteFixture();
+    const localCommit = commitFile(diverged.workspace, "local.txt", "local\n");
+    commitFile(diverged.producer, "remote.txt", "remote\n");
+    git(diverged.producer, "push", "origin", "main");
+    await expect(synchronizer.status(diverged.workspace)).resolves.toBe(
+      "diverged",
+    );
+    expect(git(diverged.workspace, "rev-parse", "HEAD")).toBe(localCommit);
+  });
+
   it("succeeds without moving an already current branch", async () => {
     const { workspace } = remoteFixture();
     const headCommit = git(workspace, "rev-parse", "HEAD");
@@ -144,6 +180,40 @@ describe("GitWorkspaceSynchronizer", () => {
     const synchronizer = await createGitWorkspaceSynchronizer();
 
     await expect(synchronizer.sync(workspace)).rejects.toMatchObject({
+      code: "WORKSPACE_SYNC_FAILED",
+      message: expect.stringContaining("repository-local executable"),
+    });
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("refuses repository-local askpass programs during status checks", async () => {
+    const { root, workspace } = remoteFixture();
+    const marker = join(root, "askpass-ran");
+    const command = join(root, "askpass.sh");
+    writeFileSync(command, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`);
+    chmodSync(command, 0o700);
+    git(workspace, "config", "core.askPass", command);
+    const synchronizer = await createGitWorkspaceSynchronizer();
+
+    await expect(synchronizer.status(workspace)).rejects.toMatchObject({
+      code: "WORKSPACE_SYNC_FAILED",
+      message: expect.stringContaining("repository-local executable"),
+    });
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("refuses repository-local includes during status checks", async () => {
+    const { root, workspace } = remoteFixture();
+    const marker = join(root, "included-helper-ran");
+    const included = join(root, "included.config");
+    writeFileSync(
+      included,
+      `[credential]\n\thelper = !touch ${JSON.stringify(marker)}\n`,
+    );
+    git(workspace, "config", "--local", "include.path", included);
+    const synchronizer = await createGitWorkspaceSynchronizer();
+
+    await expect(synchronizer.status(workspace)).rejects.toMatchObject({
       code: "WORKSPACE_SYNC_FAILED",
       message: expect.stringContaining("repository-local executable"),
     });

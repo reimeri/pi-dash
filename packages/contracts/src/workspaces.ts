@@ -9,9 +9,20 @@ export const RepositoryHealthSchema = Type.Union([
 ]);
 export type RepositoryHealth = Static<typeof RepositoryHealthSchema>;
 
+export const WorkspaceSyncStatusSchema = Type.Union([
+  Type.Literal("unknown"),
+  Type.Literal("synchronized"),
+  Type.Literal("syncable"),
+  Type.Literal("ahead"),
+  Type.Literal("diverged"),
+  Type.Literal("dirty"),
+]);
+export type WorkspaceSyncStatus = Static<typeof WorkspaceSyncStatusSchema>;
+
 export const WorkspaceRepositorySchema = Type.Object(
   {
     health: RepositoryHealthSchema,
+    syncStatus: WorkspaceSyncStatusSchema,
     currentBranch: Type.Union([Type.String(), Type.Null()]),
     headCommit: Type.Union([Type.String(), Type.Null()]),
     checkedAt: Type.Union([

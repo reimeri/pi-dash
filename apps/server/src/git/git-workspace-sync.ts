@@ -26,11 +26,15 @@ export class GitWorkspaceSyncError extends Error {
   }
 }
 
+export type GitWorkspaceSyncStatus =
+  "synchronized" | "syncable" | "ahead" | "diverged" | "dirty";
+
 export interface GitWorkspaceSyncResult {
   headCommit: string;
 }
 
 export interface GitWorkspaceSynchronizer {
+  status(path: string, signal?: AbortSignal): Promise<GitWorkspaceSyncStatus>;
   sync(path: string, signal?: AbortSignal): Promise<GitWorkspaceSyncResult>;
 }
 
@@ -43,6 +47,10 @@ function gitEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     LANG: "C",
     LC_ALL: "C",
     GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "/bin/false",
+    GIT_SSH_COMMAND: "ssh -oBatchMode=yes",
+    SSH_ASKPASS: "/bin/false",
+    SSH_ASKPASS_REQUIRE: "never",
   };
 }
 
@@ -152,7 +160,10 @@ class CommandGitWorkspaceSynchronizer implements GitWorkspaceSynchronizer {
         .map((key) => key.toLocaleLowerCase("en-US"))
         .find(
           (key) =>
+            key === "include.path" ||
+            (key.startsWith("includeif.") && key.endsWith(".path")) ||
             key === "core.sshcommand" ||
+            key === "core.askpass" ||
             key === "core.gitproxy" ||
             key === "credential.helper" ||
             (key.startsWith("credential.") && key.endsWith(".helper")) ||
@@ -298,14 +309,18 @@ class CommandGitWorkspaceSynchronizer implements GitWorkspaceSynchronizer {
     }
   }
 
-  async sync(
+  private async fetchUpstream(
     path: string,
     signal?: AbortSignal,
-  ): Promise<GitWorkspaceSyncResult> {
+    requireCleanBeforeFetch = true,
+  ): Promise<{
+    branch: string;
+    upstream: { ref: string; remote: string; remoteRef: string };
+  }> {
     await this.requireSafeConfiguration(path, signal);
     const initialBranch = await this.branch(path, signal);
     const initialUpstream = await this.upstream(path, initialBranch, signal);
-    await this.requireClean(path, signal);
+    if (requireCleanBeforeFetch) await this.requireClean(path, signal);
     const fetch = await this.git(
       [
         "fetch",
@@ -339,21 +354,72 @@ class CommandGitWorkspaceSynchronizer implements GitWorkspaceSynchronizer {
         "The workspace branch configuration changed while syncing",
       );
     }
-
     await this.requireClean(path, signal);
+    return { branch, upstream };
+  }
+
+  private async relationship(
+    path: string,
+    upstreamRef: string,
+    signal?: AbortSignal,
+  ): Promise<{
+    status: Exclude<GitWorkspaceSyncStatus, "dirty">;
+    headCommit: string;
+    upstreamCommit: string;
+  }> {
     const [headCommit, upstreamCommit] = await Promise.all([
       this.commit(path, "HEAD", signal),
-      this.commit(path, upstream.ref, signal),
+      this.commit(path, upstreamRef, signal),
     ]);
-    if (headCommit === upstreamCommit) return { headCommit };
+    if (headCommit === upstreamCommit) {
+      return { status: "synchronized", headCommit, upstreamCommit };
+    }
+    if (await this.isAncestor(path, headCommit, upstreamCommit, signal)) {
+      return { status: "syncable", headCommit, upstreamCommit };
+    }
+    return {
+      status: (await this.isAncestor(path, upstreamCommit, headCommit, signal))
+        ? "ahead"
+        : "diverged",
+      headCommit,
+      upstreamCommit,
+    };
+  }
 
-    if (!(await this.isAncestor(path, headCommit, upstreamCommit, signal))) {
-      if (await this.isAncestor(path, upstreamCommit, headCommit, signal)) {
-        throw new GitWorkspaceSyncError(
-          "WORKSPACE_SYNC_AHEAD",
-          "The workspace branch is ahead of its upstream and was not changed",
-        );
+  async status(
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<GitWorkspaceSyncStatus> {
+    try {
+      const { upstream } = await this.fetchUpstream(path, signal, false);
+      return (await this.relationship(path, upstream.ref, signal)).status;
+    } catch (error) {
+      if (
+        error instanceof GitWorkspaceSyncError &&
+        error.code === "WORKSPACE_SYNC_DIRTY"
+      ) {
+        return "dirty";
       }
+      throw error;
+    }
+  }
+
+  async sync(
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<GitWorkspaceSyncResult> {
+    const { branch, upstream } = await this.fetchUpstream(path, signal);
+    const relationship = await this.relationship(path, upstream.ref, signal);
+    if (relationship.status === "synchronized") {
+      return { headCommit: relationship.headCommit };
+    }
+    if (relationship.status === "ahead") {
+      throw new GitWorkspaceSyncError(
+        "WORKSPACE_SYNC_AHEAD",
+        "The workspace branch is ahead of its upstream and was not changed",
+      );
+    }
+    if (relationship.status === "diverged") {
       throw new GitWorkspaceSyncError(
         "WORKSPACE_SYNC_DIVERGED",
         "The workspace branch has diverged from its upstream; reconcile it manually",
@@ -361,7 +427,7 @@ class CommandGitWorkspaceSynchronizer implements GitWorkspaceSynchronizer {
     }
 
     const merge = await this.git(
-      ["merge", "--ff-only", "--no-edit", upstreamCommit],
+      ["merge", "--ff-only", "--no-edit", relationship.upstreamCommit],
       path,
       signal,
       30_000,
@@ -377,7 +443,7 @@ class CommandGitWorkspaceSynchronizer implements GitWorkspaceSynchronizer {
       this.commit(path, "HEAD"),
     ]);
     await this.requireClean(path);
-    if (finalBranch !== branch || finalCommit !== upstreamCommit) {
+    if (finalBranch !== branch || finalCommit !== relationship.upstreamCommit) {
       throw new GitWorkspaceSyncError(
         "WORKSPACE_SYNC_FAILED",
         "The workspace changed unexpectedly while syncing",
