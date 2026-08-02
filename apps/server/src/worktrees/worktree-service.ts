@@ -8,9 +8,17 @@ import type {
   DeleteWorktreeBranchResponse,
   RemoveWorktreeResponse,
   WorkspaceRefsResponse,
+  WorktreeDiff,
+  WorktreeDiffSummary,
   WorktreeDto,
   WorktreeResponse,
 } from "@pi-dash/contracts";
+import {
+  GitDiffError,
+  type GitDiffInspector,
+  type GitDiffSnapshot,
+  type GitDiffSummary,
+} from "../git/git-diff-inspector.js";
 import {
   GitWorktreeError,
   type GitWorktreeListEntry,
@@ -77,6 +85,17 @@ function serviceError(
       error.code,
       error.message,
     );
+  }
+  if (error instanceof GitDiffError) {
+    const status =
+      error.code === "GIT_TIMEOUT"
+        ? 504
+        : error.code === "GIT_UNAVAILABLE"
+          ? 503
+          : error.code === "DIFF_TOO_LARGE" || error.code === "DIFF_CHANGED"
+            ? 409
+            : 500;
+    return new WorktreeServiceError(status, error.code, error.message);
   }
   if (error instanceof GitWorktreeError) {
     const status: Partial<Record<GitWorktreeError["code"], number>> = {
@@ -152,6 +171,8 @@ export interface WorktreeService {
   ): Promise<WorkspaceRefsResponse>;
   list(workspaceId: string): WorktreeDto[];
   get(id: string): WorktreeDto;
+  diffSummary(id: string, signal?: AbortSignal): Promise<WorktreeDiffSummary>;
+  diff(id: string, signal?: AbortSignal): Promise<WorktreeDiff>;
   verifyTerminalStart(id: string): Promise<WorktreeDto>;
   create(
     workspaceId: string,
@@ -177,6 +198,7 @@ export function createWorktreeService(options: {
   repository: WorktreeRepository;
   workspaces: WorkspaceRepository;
   git: GitWorktreeManager;
+  diffs: GitDiffInspector;
   lock: GitMutationLock;
   lifecycle: WorktreeLifecycleCoordinator;
   snapshots: BaseSnapshotSigner;
@@ -194,6 +216,7 @@ export function createWorktreeService(options: {
   const createId = options.id ?? randomUUID;
   const stopRuntime = options.stopRuntime ?? (async () => undefined);
   const activeOperations = new Set<string>();
+  const activeDiffInspections = new Set<string>();
   const publishMembership = (change: {
     type: "upsert" | "removed";
     worktreeId: string;
@@ -272,6 +295,67 @@ export function createWorktreeService(options: {
       return undefined;
     }
     return entry;
+  };
+
+  const inspectDiff = async <T extends GitDiffSummary | GitDiffSnapshot>(
+    id: string,
+    operation: (path: string, signal?: AbortSignal) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> => {
+    if (activeDiffInspections.has(id) || activeDiffInspections.size >= 4) {
+      throw new WorktreeServiceError(
+        409,
+        "GIT_OPERATION_BUSY",
+        "Diff inspection is already in progress",
+      );
+    }
+    activeDiffInspections.add(id);
+    try {
+      const record = requireRecord(id);
+      if (record.lifecycle !== "ready" || record.health !== "healthy") {
+        throw new WorktreeServiceError(
+          409,
+          record.lifecycle === "ready"
+            ? "WORKTREE_UNHEALTHY"
+            : "WORKTREE_NOT_READY",
+          "The managed worktree is no longer ready and healthy",
+        );
+      }
+      const workspace = requireWorkspace(record.workspaceId);
+      const before = await inspectExactManagedWorktree(
+        record,
+        workspace,
+        signal,
+      );
+      if (!before || before.locked) {
+        throw new WorktreeServiceError(
+          409,
+          "WORKTREE_UNHEALTHY",
+          "The managed worktree no longer has its exact Git identity",
+        );
+      }
+      let result: T;
+      try {
+        result = await operation(record.path, signal);
+      } catch (error) {
+        throw serviceError(error, "DIFF_FAILED");
+      }
+      const after = await inspectExactManagedWorktree(
+        record,
+        workspace,
+        signal,
+      );
+      if (!after || after.locked || after.head !== result.headCommit) {
+        throw new WorktreeServiceError(
+          409,
+          "DIFF_CHANGED",
+          "Worktree HEAD changed while its diff was being inspected",
+        );
+      }
+      return result;
+    } finally {
+      activeDiffInspections.delete(id);
+    }
   };
 
   const existingOperationResult = <T>(
@@ -518,6 +602,30 @@ export function createWorktreeService(options: {
     },
     get(id) {
       return toDto(requireRecord(id));
+    },
+    async diffSummary(id, signal) {
+      const result = await inspectDiff(
+        id,
+        (path, currentSignal) => options.diffs.summary(path, currentSignal),
+        signal,
+      );
+      return {
+        worktreeId: id,
+        ...result,
+        checkedAt: now().toISOString(),
+      };
+    },
+    async diff(id, signal) {
+      const result = await inspectDiff(
+        id,
+        (path, currentSignal) => options.diffs.snapshot(path, currentSignal),
+        signal,
+      );
+      return {
+        worktreeId: id,
+        ...result,
+        checkedAt: now().toISOString(),
+      };
     },
     async verifyTerminalStart(id) {
       const record = requireRecord(id);

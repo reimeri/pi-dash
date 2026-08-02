@@ -4,6 +4,8 @@ import {
   ApiErrorEnvelopeSchema,
   HealthResponseSchema,
   WorkspaceSchema,
+  WorktreeDiffSchema,
+  WorktreeDiffSummarySchema,
 } from "../src/index.js";
 
 describe("shared contracts", () => {
@@ -51,6 +53,37 @@ describe("shared contracts", () => {
         updatedAt: "2026-01-01T00:00:00.000Z",
       }),
     ).toBe(true);
+  });
+
+  it("validates bounded worktree diff responses", () => {
+    const summary = {
+      worktreeId: "2cb84366-6fb7-4a60-b15e-6726381b190c",
+      headCommit: "a".repeat(40),
+      snapshotId: "b".repeat(64),
+      hasChanges: true,
+      filesChanged: 2,
+      additions: 20,
+      deletions: 4,
+      binaryFiles: 1,
+      checkedAt: "2026-01-01T00:00:00.000Z",
+    };
+    expect(Value.Check(WorktreeDiffSummarySchema, summary)).toBe(true);
+    expect(
+      Value.Check(WorktreeDiffSchema, {
+        ...summary,
+        patch: "diff --git a/file.ts b/file.ts\n",
+        truncated: true,
+        omittedFiles: [{ path: "large.bin", reason: "patch-too-large" }],
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(WorktreeDiffSchema, {
+        ...summary,
+        patch: "",
+        truncated: false,
+        omittedFiles: [{ path: "file", reason: "unknown" }],
+      }),
+    ).toBe(false);
   });
 
   it("requires stable error envelope fields", () => {

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase } from "../src/database.js";
+import { createGitDiffInspector } from "../src/git/git-diff-inspector.js";
 import { createGitInspector } from "../src/git/git-inspector.js";
 import { createGitWorktreeManager } from "../src/git/git-worktree-manager.js";
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
@@ -64,12 +65,14 @@ async function fixture(
   });
   const worktreeRepository = createWorktreeRepository(database.sqlite);
   const manager = await createGitWorktreeManager();
+  const diffs = await createGitDiffInspector();
   const lockRoot = join(root, "locks");
   mkdirSync(lockRoot, { mode: 0o700 });
   const service = createWorktreeService({
     repository: worktreeRepository,
     workspaces: workspaceRepository,
     git: manager,
+    diffs,
     lock: createGitMutationLock({ root: lockRoot }),
     lifecycle: createWorktreeLifecycleCoordinator({
       repository: worktreeRepository,
@@ -130,6 +133,41 @@ describe("WorktreeService integration", () => {
 
     const replay = await service.create(workspace.id, input, operationKey);
     expect(replay).toEqual(created);
+    database.close();
+  });
+
+  it("serves live diffs only for an exact ready managed worktree", async () => {
+    const { database, workspace, service } = await fixture();
+    const snapshot = (await service.refs(workspace.id)).head!;
+    const created = await service.create(
+      workspace.id,
+      {
+        name: "Diff viewer",
+        slug: "diff-viewer",
+        baseRef: snapshot.fullName,
+        baseCommit: snapshot.commit,
+        baseSnapshotToken: snapshot.baseSnapshotToken,
+      },
+      crypto.randomUUID(),
+    );
+    writeFileSync(
+      join(created.worktree.path, "change.ts"),
+      "export const changed = true;\n",
+    );
+
+    await expect(
+      service.diffSummary(created.worktree.id),
+    ).resolves.toMatchObject({
+      worktreeId: created.worktree.id,
+      headCommit: snapshot.commit,
+      hasChanges: true,
+      filesChanged: 1,
+      additions: 1,
+      deletions: 0,
+    });
+    const diff = await service.diff(created.worktree.id);
+    expect(diff.patch).toContain("diff --git a/change.ts b/change.ts");
+    expect(diff.checkedAt).toMatch(/Z$/);
     database.close();
   });
 

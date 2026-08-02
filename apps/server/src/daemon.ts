@@ -33,6 +33,7 @@ import {
   createTerminalManager,
   type TerminalManager,
 } from "./terminal/terminal-manager.js";
+import { createGitDiffInspector } from "./git/git-diff-inspector.js";
 import { createGitInspector } from "./git/git-inspector.js";
 import { createGitWorktreeManager } from "./git/git-worktree-manager.js";
 import {
@@ -143,6 +144,7 @@ export async function createDaemon(
     auth = createAuthService({ policy });
     const git = await createGitInspector({ env });
     const gitWorktrees = await createGitWorktreeManager({ env });
+    const gitDiffs = await createGitDiffInspector({ env });
     const pi = createPiResolver({
       executable: config.piExecutable,
       minimumVersion: config.piMinimumVersion,
@@ -198,6 +200,7 @@ export async function createDaemon(
       repository: worktreeRepository,
       workspaces: workspaceRepository,
       git: gitWorktrees,
+      diffs: gitDiffs,
       lock: createGitMutationLock(),
       lifecycle,
       snapshots: createBaseSnapshotSigner({
