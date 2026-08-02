@@ -74,7 +74,7 @@
 
 <Badge
   variant={state === "blocked"
-    ? "destructive"
+    ? "secondary"
     : "ghost"}
   class={cn("shrink-0", integration !== "connected" && "opacity-50")}
   title={detail}
