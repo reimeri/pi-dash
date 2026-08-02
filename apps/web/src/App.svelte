@@ -339,6 +339,15 @@
     }
   }
 
+  function getStatusString(status: string): string {
+    if (status === "connecting") return "Connecting";
+    if (status === "unauthorized") return "Unauthorized";
+    if (status === "migration-failed") return "Database setup failed";
+    if (status === "disconnected") return "Disconnected";
+    if (status === "ready") return "Connected";
+    return "";
+  }
+
   onMount(() => {
     void connect();
   });
@@ -368,7 +377,6 @@
         class="flex size-7 items-center justify-center rounded-lg border bg-background"
         aria-hidden="true">π</span
       >
-      <span>Pi Dash</span>
     </div>
     <div class="flex min-w-0 items-center gap-2">
       {#if diffAvailable}
@@ -410,7 +418,7 @@
                   strokeWidth={2}
                   data-icon="inline-start"
                 />
-                Terminal
+                Status
               </Button>
             {/snippet}
           </Popover.Trigger>
@@ -421,10 +429,7 @@
             onCloseAutoFocus={handleTerminalMenuCloseAutoFocus}
           >
             <Popover.Header>
-              <Popover.Title>Terminal controls</Popover.Title>
-              <Popover.Description
-                >Runtime, connection, and workflow status.</Popover.Description
-              >
+              <Popover.Title>Terminal status</Popover.Title>
             </Popover.Header>
             <div class="flex flex-col gap-3" aria-live="polite">
               <div class="grid grid-cols-2 gap-2 text-sm">
@@ -524,19 +529,6 @@
           </Popover.Content>
         </Popover.Root>
       {/if}
-      <Badge
-        variant={startup.status === "ready"
-          ? "secondary"
-          : startup.status === "connecting"
-            ? "outline"
-            : "destructive"}
-        role="status"
-        aria-label="Daemon connection"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        {startup.status === "connecting" ? "Connecting" : startup.message}
-      </Badge>
     </div>
   </header>
 
@@ -582,6 +574,20 @@
         </Sidebar.Group>
       </Sidebar.Content>
       <Sidebar.Rail />
+      <Badge
+        variant={startup.status === "ready"
+          ? "default"
+          : startup.status === "connecting"
+            ? "outline"
+            : "destructive"}
+        role="status"
+        aria-label="Daemon connection"
+        aria-live="polite"
+        aria-atomic="true"
+        class="m-2 size-2 p-0"
+        title={getStatusString(startup.status)}
+      >
+      </Badge>
     </Sidebar.Root>
 
     <Sidebar.Inset class="min-h-0 min-w-0 overflow-hidden">
