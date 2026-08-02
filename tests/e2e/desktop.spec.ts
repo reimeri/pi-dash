@@ -95,6 +95,7 @@ test.beforeAll(async () => {
     ],
     env: {
       ...process.env,
+      XDG_STATE_HOME: join(root, "state"),
       FAKE_PI_STATUS: "1",
       PI_DASH_NODE_EXECUTABLE: process.execPath,
     },

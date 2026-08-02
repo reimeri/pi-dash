@@ -62,6 +62,28 @@ process.stdout.write(
   })}\r\n`,
 );
 
+if (process.env.FAKE_PI_CHILD_CHURN === "1") {
+  const churn = setInterval(() => {
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+    child.on("error", () => undefined);
+  }, 5);
+  churn.unref();
+}
+
+if (process.env.FAKE_PI_ORPHAN === "1") {
+  const orphanCode =
+    'process.on("SIGTERM",()=>{});process.on("SIGHUP",()=>{});setInterval(()=>{},1000)';
+  const intermediateCode = `
+    const { spawn } = require("node:child_process");
+    const orphan = spawn(process.execPath, ["-e", ${JSON.stringify(orphanCode)}], { stdio: "ignore" });
+    process.stdout.write("FAKE_PI_ORPHAN " + orphan.pid + "\\n");
+  `;
+  const intermediate = spawn(process.execPath, ["-e", intermediateCode], {
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  intermediate.stdout.on("data", (data) => process.stdout.write(data));
+}
+
 if (process.env.FAKE_PI_CHILD_TREE === "1") {
   const grandchildCode =
     'process.on("SIGTERM",()=>{});process.on("SIGHUP",()=>{});setInterval(()=>{},1000)';

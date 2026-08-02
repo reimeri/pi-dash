@@ -29,7 +29,14 @@ async function waitFor(check: () => boolean, timeoutMs = 3_000): Promise<void> {
   }
 }
 
-function fixture(options: { childTree?: boolean; statusFails?: boolean } = {}) {
+function fixture(
+  options: {
+    childChurn?: boolean;
+    childTree?: boolean;
+    orphan?: boolean;
+    statusFails?: boolean;
+  } = {},
+) {
   chmodSync(fakePi, 0o755);
   const cwd = mkdtempSync(join(tmpdir(), "pi-dash-terminal-"));
   roots.push(cwd);
@@ -92,7 +99,9 @@ function fixture(options: { childTree?: boolean; statusFails?: boolean } = {}) {
     inheritedEnv: {
       ...process.env,
       PI_DASH_BOOTSTRAP_TOKEN: "must-not-leak",
+      ...(options.childChurn ? { FAKE_PI_CHILD_CHURN: "1" } : {}),
       ...(options.childTree ? { FAKE_PI_CHILD_TREE: "1" } : {}),
+      ...(options.orphan ? { FAKE_PI_ORPHAN: "1" } : {}),
     },
     runtimeDirectory: cwd,
     initialCols: 80,
@@ -217,6 +226,48 @@ describe("terminal manager integration", () => {
       descendants.every((pid) => !existsSync(`/proc/${pid}`)),
     );
     await manager.stop(worktreeId);
+    await manager.shutdown();
+  });
+
+  it("captures and cleans a descendant orphaned between scans", async () => {
+    const { manager } = fixture({ orphan: true });
+    const worktreeId = "11111111-1111-4111-8111-111111111111";
+    await manager.start(worktreeId);
+    const client = transport();
+    manager.attach(worktreeId, "owner", 0, client.socket);
+    const output = () =>
+      client.frames
+        .filter((frame) => frame.type === "output")
+        .map((frame) => frame.data)
+        .join("");
+    await waitFor(() => /FAKE_PI_ORPHAN \d+/.test(output()));
+    const orphanPid = Number(output().match(/FAKE_PI_ORPHAN (\d+)/)![1]);
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      manager.input(worktreeId, "owner", "__EXIT__");
+      await waitFor(() => manager.get(worktreeId).state === "stopped");
+      expect(existsSync(`/proc/${orphanPid}`)).toBe(true);
+      await manager.stop(worktreeId);
+      await waitFor(() => !existsSync(`/proc/${orphanPid}`));
+    } finally {
+      try {
+        process.kill(orphanPid, "SIGKILL");
+      } catch {
+        // The manager already cleaned the orphan.
+      }
+      await manager.shutdown();
+    }
+  });
+
+  it("stays running while short-lived descendants churn", async () => {
+    const { manager } = fixture({ childChurn: true });
+    const worktreeId = "11111111-1111-4111-8111-111111111111";
+    await expect(manager.start(worktreeId)).resolves.toMatchObject({
+      state: "running",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    expect(manager.get(worktreeId).state).toBe("running");
     await manager.shutdown();
   });
 

@@ -82,6 +82,7 @@ export async function createDaemon(
   } = {},
 ): Promise<Daemon> {
   const env = options.env ?? process.env;
+  const desktopHost = env.PI_DASH_DESKTOP === "true";
   const config = loadConfig(options.args ?? process.argv.slice(2), env);
   const logger = options.logger ?? createLogger(config.logLevel);
   const paths = resolveAppPaths(config, env);
@@ -96,12 +97,15 @@ export async function createDaemon(
   let statuses: StatusService | undefined;
   let statusSocket: StatusSocketServer | undefined;
   let applicationEvents: ApplicationEvents | undefined;
+  let diagnosticsTimer: NodeJS.Timeout | undefined;
   let shutdownPromise: Promise<void> | undefined;
   let bootstrapOutputWritten = false;
   let runtimeInfoWritten = false;
 
   const cleanup = async (): Promise<void> => {
     const failures: unknown[] = [];
+    if (diagnosticsTimer) clearInterval(diagnosticsTimer);
+    diagnosticsTimer = undefined;
     const attempt = async (operation: () => void | Promise<void>) => {
       try {
         await operation();
@@ -274,6 +278,55 @@ export async function createDaemon(
       },
     });
     workspaces.startHealthRefresh();
+    const logDiagnostics = () => {
+      try {
+        const memory = process.memoryUsage();
+        const cpu = process.cpuUsage();
+        const resources = process.resourceUsage();
+        const activeResources = process
+          .getActiveResourcesInfo()
+          .reduce<Record<string, number>>((counts, resource) => {
+            counts[resource] = (counts[resource] ?? 0) + 1;
+            return counts;
+          }, {});
+        const diagnostics = {
+          pid: process.pid,
+          nodeVersion: process.version,
+          uptimeSeconds: Math.floor(process.uptime()),
+          cpuMicros: {
+            user: cpu.user,
+            system: cpu.system,
+          },
+          memoryBytes: {
+            rss: memory.rss,
+            heapTotal: memory.heapTotal,
+            heapUsed: memory.heapUsed,
+            external: memory.external,
+            arrayBuffers: memory.arrayBuffers,
+            maxRss: resources.maxRSS * 1024,
+          },
+          ioOperations: {
+            fsRead: resources.fsRead,
+            fsWrite: resources.fsWrite,
+          },
+          contextSwitches: {
+            voluntary: resources.voluntaryContextSwitches,
+            involuntary: resources.involuntaryContextSwitches,
+          },
+          terminals: terminals!.diagnostics(),
+          activeResources,
+        };
+        if (logger.isLevelEnabled("info")) {
+          logger.info(diagnostics, "Daemon diagnostics");
+        } else if (desktopHost) {
+          process.stdout.write(
+            `${JSON.stringify({ level: 30, time: Date.now(), ...diagnostics, msg: "Daemon diagnostics" })}\n`,
+          );
+        }
+      } catch {
+        // Diagnostics are best-effort and must never affect daemon lifecycle.
+      }
+    };
     const bootstrapUrl = `${policy.serverOrigin}/auth/bootstrap?token=${encodeURIComponent(auth.bootstrapToken)}`;
     if (config.bootstrapOutput) {
       secureWriteFile(config.bootstrapOutput, `${bootstrapUrl}\n`);
@@ -295,6 +348,9 @@ export async function createDaemon(
           `${JSON.stringify({ pid: process.pid, host: config.host, port: config.port, version: "0.1.0" })}\n`,
         );
         runtimeInfoWritten = true;
+        logDiagnostics();
+        diagnosticsTimer ??= setInterval(logDiagnostics, 60_000);
+        diagnosticsTimer.unref();
       },
       shutdown() {
         shutdownPromise ??= cleanup();

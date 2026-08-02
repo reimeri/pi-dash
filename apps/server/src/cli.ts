@@ -1,6 +1,11 @@
 import { createDaemon } from "./daemon.js";
 import { listenAndLaunchDashboard } from "./startup.js";
 
+process.on("uncaughtExceptionMonitor", (error, origin) => {
+  const detail = error.stack ?? `${error.name}: ${error.message}`;
+  process.stderr.write(`pi-dash fatal ${origin}: ${detail}\n`);
+});
+
 async function main(): Promise<void> {
   const daemon = await createDaemon();
   let stopping: Promise<void> | undefined;

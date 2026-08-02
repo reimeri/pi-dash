@@ -11,6 +11,11 @@ import {
   session,
   type WebContents,
 } from "electron";
+import {
+  createDaemonLog,
+  type DaemonLogSink,
+  sanitizeDaemonOutput,
+} from "./daemon-log.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const serverEntry = join(repositoryRoot, "apps/server/dist/cli.js");
@@ -21,6 +26,8 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
 interface OwnedDaemonProcess {
   child: ChildProcessWithoutNullStreams;
   bootstrapDirectory: string;
+  closed: Promise<void>;
+  log: DaemonLogSink;
 }
 
 interface DaemonProcess extends OwnedDaemonProcess {
@@ -69,11 +76,8 @@ function validateBootstrapUrl(rawUrl: string): { url: string; origin: string } {
   return { url: url.href, origin: url.origin };
 }
 
-function sanitizedFailure(message: string): string {
-  return message
-    .replace(/([?&]token=)[^\s&]+/gi, "$1[Redacted]")
-    .trim()
-    .slice(-8_192);
+function sanitizedFailure(message: string, maxCharacters = 8_192): string {
+  return sanitizeDaemonOutput(message).trim().slice(-maxCharacters);
 }
 
 async function startDaemon(): Promise<DaemonProcess> {
@@ -83,37 +87,69 @@ async function startDaemon(): Promise<DaemonProcess> {
   const bootstrapDirectory = mkdtempSync(join(tmpdir(), "pi-dash-desktop-"));
   chmodSync(bootstrapDirectory, 0o700);
   const bootstrapOutput = join(bootstrapDirectory, "bootstrap-url");
+  const daemonLog = createDaemonLog();
   const nodeExecutable = process.env.PI_DASH_NODE_EXECUTABLE?.trim() || "node";
-  const child = spawn(
-    nodeExecutable,
-    [
-      serverEntry,
-      ...forwardedArguments,
-      "--no-open",
-      "--static-dir",
-      staticDirectory,
-      "--bootstrap-output",
-      bootstrapOutput,
-    ],
-    {
-      cwd: repositoryRoot,
-      env: {
-        ...process.env,
-        NODE_ENV: "production",
-        PI_DASH_NO_OPEN: "true",
-        PI_DASH_UI_ORIGIN: "",
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-    },
+  daemonLog.write(
+    "desktop",
+    `Starting daemon with executable ${nodeExecutable}\n`,
   );
+  let child: ChildProcessWithoutNullStreams;
+  try {
+    child = spawn(
+      nodeExecutable,
+      [
+        serverEntry,
+        ...forwardedArguments,
+        "--no-open",
+        "--static-dir",
+        staticDirectory,
+        "--bootstrap-output",
+        bootstrapOutput,
+      ],
+      {
+        cwd: repositoryRoot,
+        env: {
+          ...process.env,
+          NODE_ENV: "production",
+          PI_DASH_DESKTOP: "true",
+          PI_DASH_NO_OPEN: "true",
+          PI_DASH_UI_ORIGIN: "",
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+  } catch (error) {
+    daemonLog.write(
+      "desktop",
+      `Unable to spawn daemon: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    );
+    daemonLog.close();
+    rmSync(bootstrapDirectory, { recursive: true, force: true });
+    throw error;
+  }
   child.stdin.end();
-  const ownership = { child, bootstrapDirectory };
+  let resolveClosed!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+  const ownership = { child, bootstrapDirectory, closed, log: daemonLog };
   ownedDaemon = ownership;
 
-  let stderr = "";
-  child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk: string) => {
-    stderr = `${stderr}${chunk}`.slice(-16_384);
+  child.stdout.on("data", (chunk: Buffer) => daemonLog.write("stdout", chunk));
+  child.stderr.on("data", (chunk: Buffer) => daemonLog.write("stderr", chunk));
+  child.on("error", (error) => {
+    daemonLog.write(
+      "desktop",
+      `Daemon process error: ${error.stack ?? error}\n`,
+    );
+  });
+  child.once("close", (code, signal) => {
+    daemonLog.write(
+      "desktop",
+      `Daemon exited (${signal ?? code ?? "unknown"})\n`,
+    );
+    daemonLog.close();
+    resolveClosed();
   });
 
   try {
@@ -127,9 +163,8 @@ async function startDaemon(): Promise<DaemonProcess> {
       const cleanup = () => {
         clearTimeout(timeout);
         child.stdout.off("data", handleStdout);
-        child.stdout.resume();
         child.off("error", handleError);
-        child.off("exit", handleExit);
+        child.off("close", handleClose);
       };
       const succeed = () => {
         if (settled) return;
@@ -160,11 +195,11 @@ async function startDaemon(): Promise<DaemonProcess> {
         if (lines.some((line) => line.startsWith("Open Pi Dash: "))) succeed();
       };
       const handleError = (error: Error) => fail(error);
-      const handleExit = (
+      const handleClose = (
         code: number | null,
         signal: NodeJS.Signals | null,
       ) => {
-        const detail = sanitizedFailure(stderr);
+        const detail = daemonLog.tail();
         fail(
           new Error(
             `Pi Dash daemon exited before startup (${signal ?? code ?? "unknown"})${detail ? `: ${detail}` : ""}`,
@@ -174,12 +209,14 @@ async function startDaemon(): Promise<DaemonProcess> {
 
       child.stdout.on("data", handleStdout);
       child.once("error", handleError);
-      child.once("exit", handleExit);
+      child.once("close", handleClose);
     });
     const launch = validateBootstrapUrl(rawUrl);
     return {
       child,
       bootstrapDirectory,
+      closed,
+      log: daemonLog,
       bootstrapUrl: launch.url,
       origin: launch.origin,
     };
@@ -190,32 +227,30 @@ async function startDaemon(): Promise<DaemonProcess> {
   }
 }
 
-function waitForExit(
-  child: ChildProcessWithoutNullStreams,
+function waitForClose(
+  closed: Promise<void>,
   timeoutMs: number,
 ): Promise<boolean> {
-  if (child.exitCode !== null || child.signalCode !== null)
-    return Promise.resolve(true);
   return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      child.off("exit", handleExit);
-      resolve(false);
-    }, timeoutMs);
-    const handleExit = () => {
+    const timeout = setTimeout(() => resolve(false), timeoutMs);
+    void closed.then(() => {
       clearTimeout(timeout);
       resolve(true);
-    };
-    child.once("exit", handleExit);
+    });
   });
 }
 
 async function terminateDaemon(current: OwnedDaemonProcess): Promise<void> {
-  current.child.kill("SIGTERM");
-  if (!(await waitForExit(current.child, SHUTDOWN_TIMEOUT_MS))) {
-    current.child.kill("SIGKILL");
-    await waitForExit(current.child, 2_000);
+  try {
+    current.child.kill("SIGTERM");
+    if (!(await waitForClose(current.closed, SHUTDOWN_TIMEOUT_MS))) {
+      current.child.kill("SIGKILL");
+      await waitForClose(current.closed, 2_000);
+    }
+  } finally {
+    current.log.close();
+    rmSync(current.bootstrapDirectory, { recursive: true, force: true });
   }
-  rmSync(current.bootstrapDirectory, { recursive: true, force: true });
 }
 
 async function stopDaemon(): Promise<void> {
@@ -305,11 +340,22 @@ async function launch(): Promise<void> {
         details.isMainFrame,
       ),
   );
-  runtime.child.once("exit", (code, signal) => {
+  runtime.child.once("close", (code, signal) => {
     if (quitting) return;
+    const detail = runtime.log.tail(4_000);
     dialog.showErrorBox(
       "Pi Dash daemon stopped",
-      `The local daemon exited unexpectedly (${signal ?? code ?? "unknown"}).`,
+      [
+        `The local daemon exited unexpectedly (${signal ?? code ?? "unknown"}).`,
+        detail
+          ? `Final diagnostic output:\n${sanitizedFailure(detail, 2_000)}`
+          : "",
+        runtime.log.failure
+          ? `Diagnostic logging was unavailable: ${runtime.log.failure}`
+          : `Diagnostic log: ${runtime.log.path}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
     );
     app.quit();
   });

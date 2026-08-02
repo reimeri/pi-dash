@@ -8,6 +8,7 @@ import type { ResolvedPi } from "../pi/pi-resolver.js";
 import { createTerminalEnvironment } from "./environment.js";
 import { OutputRing } from "./output-ring.js";
 import {
+  captureOwnedProcessGroupDescendants,
   captureOwnedProcessGroupMembers,
   readProcessIdentity,
   stopOwnedProcessGroup,
@@ -54,9 +55,9 @@ export class TerminalRuntime {
   #tracker?: ReturnType<typeof setInterval>;
   #trackerInFlight = Promise.resolve();
   #trackerBusy = false;
+  #trackerTicks = 0;
   #inputOwner?: string;
   #stopRequested = false;
-  #leaderExited = false;
   #exitHandled = false;
   #dimensions: { cols: number; rows: number };
 
@@ -135,7 +136,6 @@ export class TerminalRuntime {
       }
     });
     this.#exitListener = pty.onExit(({ exitCode, signal }) => {
-      this.#leaderExited = true;
       void this.#handleExit(exitCode, signal ?? null);
     });
 
@@ -174,11 +174,14 @@ export class TerminalRuntime {
   #trackProcesses(): void {
     if (!this.#leader || this.#trackerBusy) return;
     this.#trackerBusy = true;
-    this.#trackerInFlight = captureOwnedProcessGroupMembers(
-      this.#leader,
-      this.trackedProcesses,
-    )
+    this.#trackerTicks += 1;
+    const capture =
+      this.#trackerTicks % 4 === 0
+        ? captureOwnedProcessGroupMembers
+        : captureOwnedProcessGroupDescendants;
+    this.#trackerInFlight = capture(this.#leader, this.trackedProcesses)
       .then(() => undefined)
+      .catch(() => undefined)
       .finally(() => {
         this.#trackerBusy = false;
       });
@@ -339,7 +342,6 @@ export class TerminalRuntime {
       leader: this.#leader,
       tracked: this.trackedProcesses,
       timeoutMs: this.options.stopGraceMs,
-      leaderIsLive: () => !this.#leaderExited,
     });
     if (!cleaned) {
       throw new Error(
