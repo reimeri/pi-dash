@@ -35,7 +35,9 @@
   import { ApiClientError, api } from "./api.js";
   import DiffWorkspace from "./lib/diff/DiffWorkspace.svelte";
   import {
+    createCoordinatedWorktreeDiffClient,
     createWorktreeDiffStore,
+    createWorktreeDiffSummaryStore,
     type WorktreeDiffState,
   } from "./lib/diff/store.js";
   import { IsMobile } from "./lib/hooks/is-mobile.svelte.js";
@@ -74,6 +76,7 @@
   let workspaceActionError = "";
   let refreshingId: string | undefined;
   let selectedWorktreeId: string | undefined;
+  let visibleDiffWorktreeIds: string[] = [];
   let createWorktreeTarget: WorkspaceDto | undefined;
   let removeWorktreeTarget: WorktreeDto | undefined;
   let deleteBranchTarget: WorktreeDto | undefined;
@@ -84,7 +87,9 @@
   let reconciling = false;
   let statusEvents: StatusEventClient | undefined;
   const acknowledgements = new SvelteMap<string, number>();
-  const diffStore = createWorktreeDiffStore(api);
+  const diffClient = createCoordinatedWorktreeDiffClient(api);
+  const diffStore = createWorktreeDiffStore(diffClient);
+  const sidebarDiffSummaryStore = createWorktreeDiffSummaryStore(diffClient);
   const isMobile = new IsMobile();
   $: selectedWorkspace = $workspaceStore.workspaces.find(
     (workspace) => workspace.id === selectedId,
@@ -99,6 +104,16 @@
     .flat()
     .filter(canOpenTerminal)
     .map((worktree) => worktree.id);
+  $: sidebarDiffSummaryStore.track(
+    visibleDiffWorktreeIds.filter((id) => id !== selectedWorktreeId),
+  );
+  $: sidebarDiffSummaries =
+    selectedWorktreeId && $diffStore.summary?.worktreeId === selectedWorktreeId
+      ? {
+          ...$sidebarDiffSummaryStore,
+          [selectedWorktreeId]: $diffStore.summary,
+        }
+      : $sidebarDiffSummaryStore;
   $: selectedWorkflowStatus = selectedWorktreeId
     ? $workflowStatusStore.byWorktree[selectedWorktreeId]
     : undefined;
@@ -205,6 +220,10 @@
 
   function loadWorkspaceWorktrees(id: string) {
     void worktreeStore.load(id);
+  }
+
+  function trackVisibleDiffWorktrees(ids: string[]): void {
+    visibleDiffWorktreeIds = ids;
   }
 
   function openCreateWorktree(workspace: WorkspaceDto) {
@@ -323,6 +342,7 @@
   onDestroy(() => {
     statusEvents?.close();
     diffStore.destroy();
+    sidebarDiffSummaryStore.destroy();
   });
 </script>
 
@@ -545,10 +565,12 @@
               worktreeLoadingByWorkspace={$worktreeStore.loadingByWorkspace}
               worktreeErrorsByWorkspace={$worktreeStore.errorsByWorkspace}
               workflowStatuses={$workflowStatusStore.byWorktree}
+              diffSummaries={sidebarDiffSummaries}
               workspaceAttentionStatuses={$workflowStatusStore.workspaceAttention}
               statusChannel={$workflowStatusStore.channel}
               onSelect={selectWorkspace}
               onExpand={loadWorkspaceWorktrees}
+              onVisibleWorktreesChange={trackVisibleDiffWorktrees}
               onCreateWorktree={openCreateWorktree}
               onSelectWorktree={selectWorktree}
             />

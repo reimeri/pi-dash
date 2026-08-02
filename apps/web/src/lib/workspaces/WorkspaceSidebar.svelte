@@ -1,6 +1,7 @@
 <script lang="ts">
   import type {
     WorkflowStatusDto,
+    WorktreeDiffSummary,
     WorkspaceAttentionDto,
     WorkspaceDto,
     WorktreeDto,
@@ -31,10 +32,12 @@
   export let worktreeLoadingByWorkspace: Record<string, boolean>;
   export let worktreeErrorsByWorkspace: Record<string, string | undefined>;
   export let workflowStatuses: Record<string, WorkflowStatusDto>;
+  export let diffSummaries: Record<string, WorktreeDiffSummary>;
   export let workspaceAttentionStatuses: WorkspaceAttentionDto[];
   export let statusChannel: "connecting" | "connected" | "disconnected";
   export let onSelect: (id: string) => void;
   export let onExpand: (id: string) => void;
+  export let onVisibleWorktreesChange: (ids: string[]) => void;
   export let onCreateWorktree: (workspace: WorkspaceDto) => void;
   export let onSelectWorktree: (worktree: WorktreeDto) => void;
 
@@ -85,6 +88,12 @@
     return worktree.lifecycle === "ready" && worktree.health === "healthy";
   }
 
+  function worktreeLabel(worktree: WorktreeDto): string {
+    const summary = diffSummaries[worktree.id];
+    if (!summary?.hasChanges) return worktree.name;
+    return `${worktree.name}, ${summary.additions} added lines, ${summary.deletions} deleted lines`;
+  }
+
   function healthLabel(workspace: WorkspaceDto): string {
     switch (workspace.repository.health) {
       case "healthy":
@@ -123,6 +132,16 @@
       }
     }
   }
+
+  $: onVisibleWorktreesChange(
+    workspaces.flatMap((workspace) =>
+      expanded.has(workspace.id)
+        ? (worktreesByWorkspace[workspace.id] ?? [])
+            .filter(canOpenTerminal)
+            .map((worktree) => worktree.id)
+        : [],
+    ),
+  );
 </script>
 
 <nav aria-label="Workspaces" class="min-h-0 flex-1 overflow-y-auto px-2">
@@ -252,15 +271,16 @@
                   </li>
                 {:else if (worktreesByWorkspace[workspace.id] ?? []).length > 0}
                   {#each worktreesByWorkspace[workspace.id] ?? [] as worktree (worktree.id)}
+                    {@const diffSummary = diffSummaries[worktree.id]}
                     <Sidebar.MenuSubItem>
                       <Button
-                        class="w-full justify-start"
+                        class="w-full min-w-0 justify-start"
                         variant={selectedWorktreeId === worktree.id
                           ? "secondary"
                           : "ghost"}
                         size="sm"
                         disabled={!canOpenTerminal(worktree)}
-                        aria-label={worktree.name}
+                        aria-label={worktreeLabel(worktree)}
                         title={canOpenTerminal(worktree)
                           ? `Open ${worktree.name} terminal`
                           : "Terminal unavailable until this worktree is ready and healthy"}
@@ -271,7 +291,22 @@
                           labelPrefix={`${worktree.name} workflow`}
                           channel={statusChannel}
                         />
-                        <span class="truncate">{worktree.name}</span>
+                        <span class="min-w-0 flex-1 truncate text-left"
+                          >{worktree.name}</span
+                        >
+                        {#if diffSummary?.hasChanges}
+                          <span
+                            class="ml-auto flex shrink-0 items-center gap-1 text-[0.625rem] leading-none tabular-nums"
+                            aria-hidden="true"
+                          >
+                            <span class="text-diff-addition"
+                              >+{diffSummary.additions}</span
+                            >
+                            <span class="text-diff-deletion"
+                              >−{diffSummary.deletions}</span
+                            >
+                          </span>
+                        {/if}
                       </Button>
                     </Sidebar.MenuSubItem>
                   {/each}
