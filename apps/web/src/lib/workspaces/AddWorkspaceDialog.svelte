@@ -1,8 +1,15 @@
 <script lang="ts">
   import type { WorkspaceDto } from "@pi-dash/contracts";
+  import { FolderOpenIcon } from "@hugeicons/core-free-icons";
+  import { HugeiconsIcon } from "@hugeicons/svelte";
   import { onMount, tick } from "svelte";
+  import * as Alert from "$lib/components/ui/alert";
+  import { Button } from "$lib/components/ui/button";
+  import * as Dialog from "$lib/components/ui/dialog";
+  import * as Field from "$lib/components/ui/field";
+  import { Input } from "$lib/components/ui/input";
+  import { Spinner } from "$lib/components/ui/spinner";
   import { ApiClientError, api } from "../../api.js";
-  import Modal from "./Modal.svelte";
   import { displayPath } from "./display.js";
 
   export let nativeAvailable: boolean;
@@ -23,14 +30,28 @@
   let repositoryPath = "";
   let name = "";
   let error = "";
-  let pathInput: HTMLInputElement;
-  let nameInput: HTMLInputElement;
+  let pathInput: HTMLInputElement | null = null;
+  let nameInput: HTMLInputElement | null = null;
   let request: AbortController | undefined;
+  let returnFocus: HTMLElement | null = null;
+  let dialogOpen = true;
+
+  function restoreFocus(): void {
+    requestAnimationFrame(
+      () => returnFocus?.isConnected && returnFocus.focus(),
+    );
+  }
 
   function close() {
     if (step === "saving") return;
     request?.abort();
     onClose();
+    restoreFocus();
+  }
+
+  function finishClose(): void {
+    onClose();
+    restoreFocus();
   }
 
   function messageFor(caught: unknown): string {
@@ -130,7 +151,7 @@
         request.signal,
       );
       onCreated(response.workspace);
-      onClose();
+      finishClose();
     } catch (caught) {
       if (request.signal.aborted) return;
       if (
@@ -147,9 +168,7 @@
           onExisting(details.workspaceId);
         }
         error = "This repository is already registered.";
-      } else {
-        error = messageFor(caught);
-      }
+      } else error = messageFor(caught);
       step = "confirm";
       await tick();
       nameInput?.focus();
@@ -157,6 +176,10 @@
   }
 
   onMount(() => {
+    returnFocus =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     if (nativeAvailable) {
       void chooseNative();
       return;
@@ -166,106 +189,141 @@
   });
 </script>
 
-<Modal
-  title="Add workspace"
-  description={step === "choosing"
-    ? "A system directory dialog is active. It may appear behind this window."
-    : "Register an existing local Git worktree. Repository files will not be changed."}
-  onClose={close}
-  closeOnEscape={step !== "saving"}
-  dismissable={step !== "saving"}
->
-  {#if step === "choosing"}
-    <div class="dialog-progress" role="status">
-      <span class="spinner" aria-hidden="true"></span>
-      <p>Waiting for the system directory picker…</p>
-    </div>
-    <div class="modal-actions">
-      <button class="button secondary" type="button" on:click={close}
-        >Cancel</button
-      >
-    </div>
-  {:else if step === "path" || step === "inspecting"}
-    <form on:submit|preventDefault={submitPath}>
-      <label for="workspace-path">Repository directory</label>
-      <input
-        id="workspace-path"
-        bind:this={pathInput}
-        bind:value={path}
-        aria-describedby={error ? "add-workspace-error" : "workspace-path-help"}
-        aria-invalid={error ? "true" : undefined}
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="/home/user/src/project"
-        disabled={step === "inspecting"}
-      />
-      <p id="workspace-path-help" class="field-help">
-        The path is canonicalized and validated by Git before it is saved.
-      </p>
-      {#if error}<p id="add-workspace-error" class="field-error" role="alert">
-          {error}
-        </p>{/if}
-      <div class="modal-actions">
-        <button class="button secondary" type="button" on:click={close}
-          >Cancel</button
-        >
-        <button
-          class="button primary"
-          type="submit"
-          disabled={step === "inspecting"}
-        >
-          {step === "inspecting" ? "Inspecting…" : "Continue"}
-        </button>
+<Dialog.Root bind:open={dialogOpen}>
+  <Dialog.Content
+    showCloseButton={false}
+    onEscapeKeydown={(event) => {
+      event.preventDefault();
+      if (step !== "saving") close();
+    }}
+    onInteractOutside={(event) => {
+      event.preventDefault();
+      if (step !== "saving") close();
+    }}
+  >
+    <Dialog.Header>
+      <Dialog.Title>Add workspace</Dialog.Title>
+      <Dialog.Description>
+        {step === "choosing"
+          ? "A system directory dialog is active. It may appear behind this window."
+          : "Register an existing local Git worktree. Repository files will not be changed."}
+      </Dialog.Description>
+    </Dialog.Header>
+
+    {#if step === "choosing"}
+      <div class="flex flex-col items-center gap-3 py-4" role="status">
+        <Spinner />
+        <p class="text-sm text-muted-foreground">
+          Waiting for the system directory picker…
+        </p>
       </div>
-    </form>
-  {:else if step === "selection-error"}
-    <div class="inline-alert" role="alert">
-      <strong>Unable to use that selection</strong>
-      <p>{error}</p>
-      {#if path}<code>{displayPath(path)}</code>{/if}
-    </div>
-    <div class="modal-actions">
-      <button class="button secondary" type="button" on:click={close}
-        >Cancel</button
+      <Dialog.Footer
+        ><Button variant="outline" onclick={close}>Cancel</Button
+        ></Dialog.Footer
       >
-      <button class="button primary" type="button" on:click={chooseNative}
-        >Choose another</button
+    {:else if step === "path" || step === "inspecting"}
+      <form class="flex flex-col gap-6" on:submit|preventDefault={submitPath}>
+        <Field.Group>
+          <Field.Field
+            data-invalid={error ? "" : undefined}
+            data-disabled={step === "inspecting" ? "" : undefined}
+          >
+            <Field.Label for="workspace-path">Repository directory</Field.Label>
+            <Input
+              id="workspace-path"
+              bind:ref={pathInput}
+              bind:value={path}
+              aria-describedby={error
+                ? "add-workspace-error"
+                : "workspace-path-help"}
+              aria-invalid={error ? "true" : undefined}
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="/home/user/src/project"
+              disabled={step === "inspecting"}
+            />
+            <Field.Description id="workspace-path-help"
+              >The path is canonicalized and validated by Git before it is
+              saved.</Field.Description
+            >
+            {#if error}<Field.Error id="add-workspace-error"
+                >{error}</Field.Error
+              >{/if}
+          </Field.Field>
+        </Field.Group>
+        <Dialog.Footer>
+          <Button
+            variant="outline"
+            disabled={step === "inspecting"}
+            onclick={close}>Cancel</Button
+          >
+          <Button type="submit" disabled={step === "inspecting"}
+            >{#if step === "inspecting"}<Spinner
+                data-icon="inline-start"
+              />{/if}{step === "inspecting"
+              ? "Inspecting…"
+              : "Continue"}</Button
+          >
+        </Dialog.Footer>
+      </form>
+    {:else if step === "selection-error"}
+      <Alert.Root variant="destructive" role="alert"
+        ><Alert.Title>Unable to use that selection</Alert.Title
+        ><Alert.Description
+          >{error}{#if path}<code class="mt-2 block break-all"
+              >{displayPath(path)}</code
+            >{/if}</Alert.Description
+        ></Alert.Root
       >
-    </div>
-  {:else}
-    <form on:submit|preventDefault={create}>
-      <div class="resolved-path">
-        <span>Repository</span>
-        <code>{displayPath(repositoryPath)}</code>
-      </div>
-      <label for="workspace-name">Workspace name</label>
-      <input
-        id="workspace-name"
-        bind:this={nameInput}
-        bind:value={name}
-        maxlength="100"
-        aria-describedby={error ? "add-workspace-error" : undefined}
-        aria-invalid={error ? "true" : undefined}
-        disabled={step === "saving"}
-      />
-      {#if error}<p id="add-workspace-error" class="field-error" role="alert">
-          {error}
-        </p>{/if}
-      <div class="modal-actions">
-        <button
-          class="button secondary"
-          type="button"
-          disabled={step === "saving"}
-          on:click={close}>Cancel</button
+      <Dialog.Footer
+        ><Button variant="outline" onclick={close}>Cancel</Button><Button
+          onclick={chooseNative}
+          ><HugeiconsIcon
+            icon={FolderOpenIcon}
+            strokeWidth={2}
+            data-icon="inline-start"
+          />Choose another</Button
+        ></Dialog.Footer
+      >
+    {:else}
+      <form class="flex flex-col gap-6" on:submit|preventDefault={create}>
+        <Alert.Root role="note"
+          ><Alert.Title>Repository</Alert.Title><Alert.Description
+            ><code class="break-all">{displayPath(repositoryPath)}</code
+            ></Alert.Description
+          ></Alert.Root
         >
-        <button
-          class="button primary"
-          type="submit"
-          disabled={step === "saving"}
-        >
-          {step === "saving" ? "Adding…" : "Add workspace"}
-        </button>
-      </div>
-    </form>
-  {/if}
-</Modal>
+        <Field.Group>
+          <Field.Field
+            data-invalid={error ? "" : undefined}
+            data-disabled={step === "saving" ? "" : undefined}
+          >
+            <Field.Label for="workspace-name">Workspace name</Field.Label>
+            <Input
+              id="workspace-name"
+              bind:ref={nameInput}
+              bind:value={name}
+              maxlength={100}
+              aria-describedby={error ? "add-workspace-error" : undefined}
+              aria-invalid={error ? "true" : undefined}
+              disabled={step === "saving"}
+            />
+            {#if error}<Field.Error id="add-workspace-error"
+                >{error}</Field.Error
+              >{/if}
+          </Field.Field>
+        </Field.Group>
+        <Dialog.Footer>
+          <Button variant="outline" disabled={step === "saving"} onclick={close}
+            >Cancel</Button
+          >
+          <Button type="submit" disabled={step === "saving"}
+            >{#if step === "saving"}<Spinner
+                data-icon="inline-start"
+              />{/if}{step === "saving" ? "Adding…" : "Add workspace"}</Button
+          >
+        </Dialog.Footer>
+      </form>
+    {/if}
+  </Dialog.Content>
+</Dialog.Root>

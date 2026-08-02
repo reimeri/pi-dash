@@ -166,19 +166,19 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
       `Create dialog remained visible. Page errors: ${pageErrors.join("\n")}`,
     );
   }
-  const card = page.locator(".worktree-card", { hasText: "Terminal work" });
+  const card = page.getByRole("article", { name: "Terminal work" });
   await expect(card).toBeVisible();
   await page.getByRole("button", { name: "Expand Terminal E2E" }).click();
   await expect(
     page.getByRole("heading", { name: "Terminal E2E" }),
   ).toBeVisible();
-  const workspaceSelect = page.locator(".workspace-select", {
-    hasText: "Terminal E2E",
-  });
+  const workspaceSelect = page
+    .getByRole("navigation", { name: "Workspaces" })
+    .getByRole("button", { name: "Terminal E2E", exact: true });
   const workspaceActivity = workspaceSelect.getByRole("img");
   const sidebarWorktree = page
-    .locator(".worktree-sidebar-list")
-    .getByRole("button", { name: /Terminal work/ });
+    .getByRole("navigation", { name: "Workspaces" })
+    .getByRole("button", { name: "Terminal work", exact: true });
   await sidebarWorktree.click();
 
   const terminal = page.getByRole("application", {
@@ -254,8 +254,7 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
   await expect(page.getByRole("heading", { name: "Terminal E2E" })).toHaveCount(
     0,
   );
-  await expect(page.locator(".terminal-header")).toHaveCount(0);
-  const terminalPane = page.locator(".terminal-pane:not(.hidden)");
+  const terminalPane = terminal.locator("..");
   const main = page.getByRole("main");
   const [terminalBox, mainBox] = await Promise.all([
     terminalPane.boundingBox(),
@@ -269,7 +268,9 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
   );
 
   const terminalDimensions = await terminal.evaluate((region) => {
-    const emulator = region.querySelector<HTMLElement>(".terminal-emulator");
+    const emulator = region.querySelector<HTMLElement>(
+      '[data-testid="terminal-emulator"]',
+    );
     const xterm = region.querySelector<HTMLElement>(".xterm");
     const screen = region.querySelector<HTMLElement>(".xterm-screen");
     if (!emulator || !xterm || !screen) return undefined;

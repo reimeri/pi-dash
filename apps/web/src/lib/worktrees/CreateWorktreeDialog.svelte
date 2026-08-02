@@ -4,10 +4,18 @@
     WorkspaceDto,
     WorktreeDto,
   } from "@pi-dash/contracts";
+  import { GitBranchIcon } from "@hugeicons/core-free-icons";
+  import { HugeiconsIcon } from "@hugeicons/svelte";
   import { onMount } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
+  import * as Alert from "$lib/components/ui/alert";
+  import { Button } from "$lib/components/ui/button";
+  import * as Dialog from "$lib/components/ui/dialog";
+  import * as Field from "$lib/components/ui/field";
+  import { Input } from "$lib/components/ui/input";
+  import * as NativeSelect from "$lib/components/ui/native-select";
+  import { Spinner } from "$lib/components/ui/spinner";
   import { ApiClientError, api } from "../../api.js";
-  import Modal from "../workspaces/Modal.svelte";
 
   export let workspace: WorkspaceDto;
   export let onClose: () => void;
@@ -22,12 +30,29 @@
   let saving = false;
   let error = "";
   let operationId = crypto.randomUUID();
-
+  let dialogOpen = true;
+  let returnFocus: HTMLElement | null = null;
   $: selected = refs.find(
     (ref) => `${ref.fullName}:${ref.commit}` === selectedKey,
   );
   $: branch = slug ? `pi-dash/${slug}` : "pi-dash/…";
 
+  function restoreFocus(): void {
+    requestAnimationFrame(
+      () => returnFocus?.isConnected && returnFocus.focus(),
+    );
+  }
+
+  function close() {
+    if (saving) return;
+    onClose();
+    restoreFocus();
+  }
+
+  function finishClose(): void {
+    onClose();
+    restoreFocus();
+  }
   function slugFor(value: string): string {
     return (
       value
@@ -40,11 +65,9 @@
         .replace(/-+$/g, "") || "worktree"
     );
   }
-
   function updateName() {
     if (!slugEdited) slug = slugFor(name);
   }
-
   async function loadRefs() {
     loading = true;
     error = "";
@@ -71,7 +94,6 @@
       loading = false;
     }
   }
-
   async function create() {
     if (!selected || !name.trim() || !slug) return;
     saving = true;
@@ -89,7 +111,7 @@
         operationId,
       );
       onCreated(response.worktree);
-      onClose();
+      finishClose();
     } catch (caught) {
       if (
         caught instanceof ApiClientError &&
@@ -109,90 +131,131 @@
       saving = false;
     }
   }
-
-  onMount(() => void loadRefs());
+  onMount(() => {
+    returnFocus =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    void loadRefs();
+  });
 </script>
 
-<Modal
-  title="Create managed worktree"
-  description="Create a new branch and linked worktree from an exact commit snapshot."
-  {onClose}
-  closeOnEscape={!saving}
-  dismissable={!saving}
->
-  {#if loading}
-    <div class="dialog-progress" role="status">
-      <span class="spinner" aria-hidden="true"></span>
-      <p>Resolving local branches and tags…</p>
-    </div>
-  {:else}
-    <form on:submit|preventDefault={create}>
-      <p class="sr-only" role="status" aria-live="polite">
-        {saving ? "Creating managed worktree" : ""}
-      </p>
-      <label for="worktree-name">Name</label>
-      <input
-        id="worktree-name"
-        bind:value={name}
-        maxlength="100"
-        disabled={saving}
-        on:input={updateName}
-        autocomplete="off"
-        placeholder="OAuth refresh"
-      />
-      <label for="worktree-slug">Slug</label>
-      <input
-        id="worktree-slug"
-        bind:value={slug}
-        maxlength="72"
-        pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-        disabled={saving}
-        on:input={() => (slugEdited = true)}
-        autocomplete="off"
-        spellcheck="false"
-      />
-      <label for="worktree-base">Base</label>
-      <select
-        id="worktree-base"
-        bind:value={selectedKey}
-        disabled={saving || refs.length === 0}
+<Dialog.Root bind:open={dialogOpen}>
+  <Dialog.Content
+    showCloseButton={false}
+    onEscapeKeydown={(event) => {
+      event.preventDefault();
+      if (!saving) close();
+    }}
+    onInteractOutside={(event) => {
+      event.preventDefault();
+      if (!saving) close();
+    }}
+  >
+    <Dialog.Header
+      ><Dialog.Title>Create managed worktree</Dialog.Title><Dialog.Description
+        >Create a new branch and linked worktree from an exact commit snapshot.</Dialog.Description
+      ></Dialog.Header
+    >
+    {#if loading}
+      <div
+        class="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"
+        role="status"
       >
-        {#each refs as ref (`${ref.fullName}:${ref.commit}`)}
-          <option value={`${ref.fullName}:${ref.commit}`}>
-            {ref.kind === "tag" ? "tag: " : ""}{ref.name} — {ref.commit.slice(
-              0,
-              12,
-            )}
-          </option>
-        {/each}
-      </select>
-      {#if selected}
-        <div class="resolved-path worktree-preview">
-          <span>Exact base commit</span>
-          <code>{selected.commit}</code>
-          <span>New branch</span>
-          <code>{branch}</code>
-          <span>Managed path</span>
-          <code>…/worktrees/{workspace.id}/&lt;id&gt;-{slug || "slug"}</code>
-          <span>Snapshot expires</span>
-          <code>{new Date(selected.expiresAt).toLocaleTimeString()}</code>
-        </div>
-      {/if}
-      {#if error}<p class="field-error" role="alert">{error}</p>{/if}
-      <div class="modal-actions">
-        <button
-          class="button secondary"
-          type="button"
-          disabled={saving}
-          on:click={onClose}>Cancel</button
-        >
-        <button
-          class="button primary"
-          type="submit"
-          disabled={saving || !selected || !name.trim() || !slug}
-          >{saving ? "Creating…" : "Create worktree"}</button
-        >
+        <Spinner aria-hidden="true" />Resolving local branches and tags…
       </div>
-    </form>
-  {/if}
-</Modal>
+    {:else}
+      <form class="flex flex-col gap-6" on:submit|preventDefault={create}>
+        <p class="sr-only" role="status" aria-live="polite">
+          {saving ? "Creating managed worktree" : ""}
+        </p>
+        <Field.Group>
+          <Field.Field data-disabled={saving ? "" : undefined}
+            ><Field.Label for="worktree-name">Name</Field.Label><Input
+              id="worktree-name"
+              bind:value={name}
+              maxlength={100}
+              disabled={saving}
+              oninput={updateName}
+              autocomplete="off"
+              placeholder="OAuth refresh"
+              autofocus
+            /></Field.Field
+          >
+          <Field.Field data-disabled={saving ? "" : undefined}
+            ><Field.Label for="worktree-slug">Slug</Field.Label><Input
+              id="worktree-slug"
+              bind:value={slug}
+              maxlength={72}
+              pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+              disabled={saving}
+              oninput={() => (slugEdited = true)}
+              autocomplete="off"
+              spellcheck="false"
+            /></Field.Field
+          >
+          <Field.Field
+            data-disabled={saving || refs.length === 0 ? "" : undefined}
+            ><Field.Label for="worktree-base">Base</Field.Label
+            ><NativeSelect.Root
+              id="worktree-base"
+              bind:value={selectedKey}
+              disabled={saving || refs.length === 0}
+              >{#each refs as ref (`${ref.fullName}:${ref.commit}`)}<NativeSelect.Option
+                  value={`${ref.fullName}:${ref.commit}`}
+                  >{ref.kind === "tag" ? "tag: " : ""}{ref.name} — {ref.commit.slice(
+                    0,
+                    12,
+                  )}</NativeSelect.Option
+                >{/each}</NativeSelect.Root
+            ></Field.Field
+          >
+        </Field.Group>
+        {#if selected}
+          <Alert.Root role="note"
+            ><HugeiconsIcon icon={GitBranchIcon} strokeWidth={2} /><Alert.Title
+              >Exact worktree snapshot</Alert.Title
+            ><Alert.Description
+              ><dl class="mt-2 grid gap-2 text-xs">
+                <div>
+                  <dt class="text-muted-foreground">Exact base commit</dt>
+                  <dd><code class="break-all">{selected.commit}</code></dd>
+                </div>
+                <div>
+                  <dt class="text-muted-foreground">New branch</dt>
+                  <dd><code>{branch}</code></dd>
+                </div>
+                <div>
+                  <dt class="text-muted-foreground">Managed path</dt>
+                  <dd>
+                    <code class="break-all"
+                      >…/worktrees/{workspace.id}/&lt;id&gt;-{slug ||
+                        "slug"}</code
+                    >
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-muted-foreground">Snapshot expires</dt>
+                  <dd>{new Date(selected.expiresAt).toLocaleTimeString()}</dd>
+                </div>
+              </dl></Alert.Description
+            ></Alert.Root
+          >
+        {/if}
+        {#if error}<Field.Error>{error}</Field.Error>{/if}
+        <Dialog.Footer
+          ><Button variant="outline" disabled={saving} onclick={close}
+            >Cancel</Button
+          ><Button
+            class="ml-auto"
+            type="submit"
+            disabled={saving || !selected || !name.trim() || !slug}
+            >{#if saving}<Spinner data-icon="inline-start" />{/if}{saving
+              ? "Creating…"
+              : "Create worktree"}</Button
+          ></Dialog.Footer
+        >
+      </form>
+    {/if}
+  </Dialog.Content>
+</Dialog.Root>

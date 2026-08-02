@@ -57,7 +57,7 @@
 {#if entries.length > 0}
   <section
     class:hidden={!selected}
-    class="terminal-workspace"
+    class="terminal-workspace size-full min-h-0"
     aria-label="Pi terminals"
   >
     {#each entries as entry (entry.worktree.id)}
@@ -72,15 +72,3 @@
     {/each}
   </section>
 {/if}
-
-<style>
-  .terminal-workspace {
-    width: 100%;
-    height: 100%;
-    min-height: 0;
-  }
-
-  .terminal-workspace.hidden {
-    display: none;
-  }
-</style>

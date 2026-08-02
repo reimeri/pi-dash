@@ -100,7 +100,7 @@ test("bootstrap lands on a clean authenticated dashboard and survives reload", a
   await expect(
     page.getByRole("status", { name: "Daemon connection" }),
   ).toContainText("Connected");
-  const dashboardBox = await page.locator(".dashboard").boundingBox();
+  const dashboardBox = await page.getByTestId("dashboard-shell").boundingBox();
   expect(dashboardBox).not.toBeNull();
   expect(
     Math.abs(

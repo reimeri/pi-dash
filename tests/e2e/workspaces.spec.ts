@@ -122,7 +122,10 @@ test("typed recovery registers, persists, renames, and removes workspace metadat
   await expect(
     page.getByRole("heading", { name: "Select a workspace" }),
   ).toBeVisible();
-  await page.locator(".workspace-select", { hasText: "E2E Workspace" }).click();
+  await page
+    .getByRole("navigation", { name: "Workspaces" })
+    .getByRole("button", { name: "E2E Workspace", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { name: "E2E Workspace" }),
   ).toBeVisible();
@@ -136,7 +139,9 @@ test("typed recovery registers, persists, renames, and removes workspace metadat
   ).toBeVisible();
 
   await page.getByRole("main").getByRole("button", { name: "Remove" }).click();
-  const removeDialog = page.getByRole("dialog", { name: "Remove workspace" });
+  const removeDialog = page.getByRole("alertdialog", {
+    name: "Remove workspace",
+  });
   await removeDialog.getByRole("button", { name: "Remove workspace" }).click();
   await expect(
     page.getByRole("heading", { name: "Add a workspace to get started" }),

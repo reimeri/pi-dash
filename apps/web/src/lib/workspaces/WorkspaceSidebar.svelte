@@ -5,9 +5,23 @@
     WorkspaceDto,
     WorktreeDto,
   } from "@pi-dash/contracts";
+  import {
+    Add01Icon,
+    ArrowDown01Icon,
+    ArrowRight01Icon,
+    FolderGitIcon,
+  } from "@hugeicons/core-free-icons";
+  import { HugeiconsIcon } from "@hugeicons/svelte";
   import { onMount } from "svelte";
-  import WorkflowStatusIndicator from "../status/WorkflowStatusIndicator.svelte";
   import { SvelteSet } from "svelte/reactivity";
+  import * as Alert from "$lib/components/ui/alert";
+  import { Button } from "$lib/components/ui/button";
+  import * as Collapsible from "$lib/components/ui/collapsible";
+  import * as Empty from "$lib/components/ui/empty";
+  import * as Sidebar from "$lib/components/ui/sidebar";
+  import { Spinner } from "$lib/components/ui/spinner";
+  import WorkflowStatusIndicator from "../status/WorkflowStatusIndicator.svelte";
+    import { cn } from "tailwind-variants";
 
   export let workspaces: WorkspaceDto[];
   export let status: "idle" | "loading" | "ready" | "error";
@@ -25,6 +39,7 @@
   export let onCreateWorktree: (workspace: WorkspaceDto) => void;
   export let onSelectWorktree: (worktree: WorktreeDto) => void;
 
+  const sidebar = Sidebar.useSidebar();
   const storageKey = "pi-dash.expanded-workspaces.v1";
   let expanded = new SvelteSet<string>();
   const requestedExpanded = new SvelteSet<string>();
@@ -37,16 +52,34 @@
     }
   }
 
-  function toggle(id: string) {
+  function setExpanded(id: string, open: boolean) {
     const next = new SvelteSet(expanded);
-    if (next.has(id)) {
+    if (open) next.add(id);
+    else {
       next.delete(id);
       requestedExpanded.delete(id);
-    } else {
-      next.add(id);
     }
     expanded = next;
     save();
+  }
+
+  function closeMobileSidebar(): void {
+    if (sidebar.isMobile) sidebar.setOpenMobile(false);
+  }
+
+  function selectWorkspace(id: string): void {
+    closeMobileSidebar();
+    onSelect(id);
+  }
+
+  function createWorktree(workspace: WorkspaceDto): void {
+    closeMobileSidebar();
+    onCreateWorktree(workspace);
+  }
+
+  function selectWorktree(worktree: WorktreeDto): void {
+    closeMobileSidebar();
+    onSelectWorktree(worktree);
   }
 
   function canOpenTerminal(worktree: WorktreeDto): boolean {
@@ -93,130 +126,166 @@
   }
 </script>
 
-<nav aria-label="Workspaces" class="workspace-nav">
+<nav aria-label="Workspaces" class="min-h-0 flex-1 overflow-y-auto px-2">
   {#if status === "loading" && workspaces.length === 0}
-    <div class="sidebar-loading" role="status">
-      <span class="mini-spinner" aria-hidden="true"></span>Loading workspaces…
+    <div
+      class="flex items-center gap-2 p-3 text-sm text-muted-foreground"
+      role="status"
+    >
+      <Spinner aria-hidden="true" />
+      Loading workspaces…
     </div>
   {:else if status === "error" && workspaces.length === 0}
-    <div class="sidebar-message" role="alert">
-      <strong>Workspaces unavailable</strong>
-      <span>{message}</span>
-    </div>
+    <Alert.Root variant="destructive">
+      <Alert.Title>Workspaces unavailable</Alert.Title>
+      <Alert.Description>{message}</Alert.Description>
+    </Alert.Root>
   {:else if workspaces.length === 0}
-    <div class="sidebar-empty">
-      <span class="empty-icon" aria-hidden="true">⌂</span>
-      <p>No workspaces yet</p>
-      <span>Add an existing local Git repository.</span>
-    </div>
+    <Empty.Root class="border-none p-4">
+      <Empty.Header>
+        <Empty.Media variant="icon">
+          <HugeiconsIcon icon={FolderGitIcon} strokeWidth={2} />
+        </Empty.Media>
+        <Empty.Title role="heading" aria-level={2}
+          >No workspaces yet</Empty.Title
+        >
+        <Empty.Description
+          >Add an existing local Git repository.</Empty.Description
+        >
+      </Empty.Header>
+    </Empty.Root>
   {:else}
     {#if status === "error"}
-      <p class="sidebar-inline-error" role="alert">{message}</p>
+      <Alert.Root variant="destructive" class="mb-2">
+        <Alert.Description>{message}</Alert.Description>
+      </Alert.Root>
     {/if}
-    <ul class="workspace-list">
+    <Sidebar.Menu>
       {#each workspaces as workspace (workspace.id)}
         {@const activity = workspaceAttentionStatuses.find(
           (attention) => attention.workspaceId === workspace.id,
         )}
-        <li
-          class:selected={selectedId === workspace.id && !selectedWorktreeId}
-          class:degraded={workspace.repository.health !== "healthy"}
+        <Collapsible.Root
+          open={expanded.has(workspace.id)}
+          onOpenChange={(open) => setExpanded(workspace.id, open)}
         >
-          <div class="workspace-row">
-            <button
-              class="workspace-chevron"
-              type="button"
-              aria-label={`${expanded.has(workspace.id) ? "Collapse" : "Expand"} ${workspace.name}`}
-              aria-expanded={expanded.has(workspace.id)}
-              aria-controls={`workspace-panel-${workspace.id}`}
-              on:click={() => toggle(workspace.id)}
-            >
-              <span class="chevron" aria-hidden="true"
-                >{expanded.has(workspace.id) ? "⌄" : "›"}</span
+          <Sidebar.MenuItem>
+            <div class="flex items-center gap-1">
+              <Collapsible.Trigger>
+                {#snippet child({ props })}
+                  <Button
+                    {...props}
+                    variant="ghost_no_expand"
+                    size="icon-sm"
+                    aria-label={`${expanded.has(workspace.id) ? "Collapse" : "Expand"} ${workspace.name}`}
+                    aria-controls={`workspace-panel-${workspace.id}`}
+                  >
+                    <HugeiconsIcon
+                      icon={ArrowRight01Icon}
+                        class={cn(
+                          "transition-transform",
+                          expanded.has(workspace.id) && "rotate-90",
+                        )}
+                      strokeWidth={2}
+                    />
+                  </Button>
+                {/snippet}
+              </Collapsible.Trigger>
+              <Sidebar.MenuButton
+                isActive={selectedId === workspace.id && !selectedWorktreeId}
+                aria-current={selectedId === workspace.id && !selectedWorktreeId
+                  ? "page"
+                  : undefined}
+                aria-label={workspace.name}
+                onclick={() => selectWorkspace(workspace.id)}
               >
-            </button>
-            <button
-              class="workspace-select"
-              type="button"
-              aria-current={selectedId === workspace.id && !selectedWorktreeId
-                ? "page"
-                : undefined}
-              on:click={() => onSelect(workspace.id)}
-            >
-              <span class="workspace-copy">
-                <strong>{workspace.name}</strong>
-              </span>
-              {#if !expanded.has(workspace.id) && statusChannel === "connected" && activity && activity.state !== "idle" && activity.integration === "connected"}
-                <WorkflowStatusIndicator
-                  stateOverride={activity.state}
-                  integrationOverride={activity.integration}
-                  aggregateCount={activity.count}
-                  labelPrefix={`${workspace.name} workflow`}
-                  channel={statusChannel}
+                <HugeiconsIcon
+                  icon={FolderGitIcon}
+                  strokeWidth={2}
+                  aria-hidden="true"
                 />
-              {/if}
-            </button>
-            <button
-              class="workspace-create"
-              type="button"
-              disabled={workspace.repository.health !== "healthy"}
-              aria-label={`New worktree in ${workspace.name}`}
-              title={workspace.repository.health === "healthy"
-                ? `Create a worktree in ${workspace.name}`
-                : "Worktree creation requires a healthy repository"}
-              on:click={() => onCreateWorktree(workspace)}
-            >
-              <span aria-hidden="true">+</span>
-            </button>
-          </div>
-          <div
-            class="workspace-panel"
-            id={`workspace-panel-${workspace.id}`}
-            hidden={!expanded.has(workspace.id)}
-          >
-            {#if workspace.repository.health !== "healthy"}
-              <p class="workspace-health" role="status">
-                {healthLabel(workspace)}
-              </p>
-            {/if}
-            {#if worktreeLoadingByWorkspace[workspace.id] && (worktreesByWorkspace[workspace.id] ?? []).length === 0}
-              <p class="workspace-health" role="status">Loading worktrees…</p>
-            {:else if worktreeErrorsByWorkspace[workspace.id]}
-              <p class="workspace-worktree-error" role="alert">
-                {worktreeErrorsByWorkspace[workspace.id]}
-              </p>
-            {:else if (worktreesByWorkspace[workspace.id] ?? []).length > 0}
-              <ul
-                class="worktree-sidebar-list"
-                aria-label={`${workspace.name} managed worktrees`}
+                <span>{workspace.name}</span>
+                {#if !expanded.has(workspace.id) && statusChannel === "connected" && activity && activity.state !== "idle" && activity.integration === "connected"}
+                  <WorkflowStatusIndicator
+                    stateOverride={activity.state}
+                    integrationOverride={activity.integration}
+                    aggregateCount={activity.count}
+                    labelPrefix={`${workspace.name} workflow`}
+                    channel={statusChannel}
+                  />
+                {/if}
+              </Sidebar.MenuButton>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={workspace.repository.health !== "healthy"}
+                aria-label={`New worktree in ${workspace.name}`}
+                aria-describedby={workspace.repository.health !== "healthy"
+                  ? `workspace-health-${workspace.id}`
+                  : undefined}
+                onclick={() => createWorktree(workspace)}
               >
-                {#each worktreesByWorkspace[workspace.id] ?? [] as worktree (worktree.id)}
-                  <li>
-                    <button
-                      type="button"
-                      class:active={selectedWorktreeId === worktree.id}
-                      disabled={!canOpenTerminal(worktree)}
-                      title={canOpenTerminal(worktree)
-                        ? `Open ${worktree.name} terminal`
-                        : "Terminal unavailable until this worktree is ready and healthy"}
-                      on:click={() => onSelectWorktree(worktree)}
-                    >
-                      <WorkflowStatusIndicator
-                        status={workflowStatuses[worktree.id]}
-                        labelPrefix={`${worktree.name} workflow`}
-                        channel={statusChannel}
-                      />
-                      <span><strong>{worktree.name}</strong></span>
-                    </button>
+                <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+              </Button>
+            </div>
+            <Collapsible.Content id={`workspace-panel-${workspace.id}`}>
+              <Sidebar.MenuSub>
+                {#if workspace.repository.health !== "healthy"}
+                  <li
+                    id={`workspace-health-${workspace.id}`}
+                    class="px-3 py-1 text-xs text-destructive"
+                    role="status"
+                  >
+                    {healthLabel(workspace)}
                   </li>
-                {/each}
-              </ul>
-            {:else}
-              <p class="workspace-health">No managed worktrees</p>
-            {/if}
-          </div>
-        </li>
+                {/if}
+                {#if worktreeLoadingByWorkspace[workspace.id] && (worktreesByWorkspace[workspace.id] ?? []).length === 0}
+                  <li
+                    class="flex items-center gap-2 px-3 py-1 text-xs text-muted-foreground"
+                    role="status"
+                  >
+                    <Spinner aria-hidden="true" />
+                    Loading worktrees…
+                  </li>
+                {:else if worktreeErrorsByWorkspace[workspace.id]}
+                  <li class="px-3 py-1 text-xs text-destructive" role="alert">
+                    {worktreeErrorsByWorkspace[workspace.id]}
+                  </li>
+                {:else if (worktreesByWorkspace[workspace.id] ?? []).length > 0}
+                  {#each worktreesByWorkspace[workspace.id] ?? [] as worktree (worktree.id)}
+                    <Sidebar.MenuSubItem>
+                      <Button
+                        class="w-full justify-start"
+                        variant={selectedWorktreeId === worktree.id
+                          ? "secondary"
+                          : "ghost"}
+                        size="sm"
+                        disabled={!canOpenTerminal(worktree)}
+                        aria-label={worktree.name}
+                        title={canOpenTerminal(worktree)
+                          ? `Open ${worktree.name} terminal`
+                          : "Terminal unavailable until this worktree is ready and healthy"}
+                        onclick={() => selectWorktree(worktree)}
+                      >
+                        <WorkflowStatusIndicator
+                          status={workflowStatuses[worktree.id]}
+                          labelPrefix={`${worktree.name} workflow`}
+                          channel={statusChannel}
+                        />
+                        <span class="truncate">{worktree.name}</span>
+                      </Button>
+                    </Sidebar.MenuSubItem>
+                  {/each}
+                {:else}
+                  <li class="px-3 py-1 text-xs text-muted-foreground">
+                    No managed worktrees
+                  </li>
+                {/if}
+              </Sidebar.MenuSub>
+            </Collapsible.Content>
+          </Sidebar.MenuItem>
+        </Collapsible.Root>
       {/each}
-    </ul>
+    </Sidebar.Menu>
   {/if}
 </nav>

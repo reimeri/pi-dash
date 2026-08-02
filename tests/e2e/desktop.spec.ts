@@ -59,8 +59,8 @@ async function openTerminal(): Promise<{
 
   await window.getByRole("button", { name: "Expand Desktop E2E" }).click();
   await window
-    .locator(".worktree-sidebar-list")
-    .getByRole("button", { name: /Keybindings/ })
+    .getByRole("navigation", { name: "Workspaces" })
+    .getByRole("button", { name: "Keybindings", exact: true })
     .click();
   const terminal = window.getByRole("application", {
     name: "Desktop E2E Keybindings interactive Pi terminal",

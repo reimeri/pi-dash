@@ -28,4 +28,10 @@ export default tseslint.config(
       parserOptions: { parser: tseslint.parser },
     },
   },
+  {
+    files: ["**/*.svelte.{js,ts}"],
+    languageOptions: {
+      parser: tseslint.parser,
+    },
+  },
 );

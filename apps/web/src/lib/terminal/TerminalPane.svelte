@@ -11,7 +11,11 @@
   } from "@pi-dash/contracts";
   import type { Terminal } from "@xterm/xterm";
   import "@xterm/xterm/css/xterm.css";
+  import { Cancel01Icon } from "@hugeicons/core-free-icons";
+  import { HugeiconsIcon } from "@hugeicons/svelte";
   import { onDestroy, onMount } from "svelte";
+  import * as Alert from "$lib/components/ui/alert";
+  import { Button } from "$lib/components/ui/button";
   import { api } from "../../api.js";
   import type { TerminalControlsChange } from "./controls.js";
   import {
@@ -470,20 +474,33 @@
   });
 </script>
 
-<section class:hidden={!visible} class="terminal-pane">
+<section
+  class:hidden={!visible}
+  data-testid="terminal-pane"
+  class="terminal-pane flex size-full min-h-0 flex-col overflow-hidden bg-background"
+>
   {#if errorMessage}
-    <div class="terminal-alert" role="alert">
-      <span>{errorMessage}</span>
-      <button
-        type="button"
-        aria-label="Dismiss terminal error"
-        on:click={() => (errorMessage = "")}>×</button
-      >
-    </div>
+    <Alert.Root
+      variant="destructive"
+      class="rounded-none border-x-0 border-t-0"
+      role="alert"
+    >
+      <Alert.Description>{errorMessage}</Alert.Description>
+      <Alert.Action>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Dismiss terminal error"
+          onclick={() => (errorMessage = "")}
+        >
+          <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+        </Button>
+      </Alert.Action>
+    </Alert.Root>
   {/if}
 
   <div
-    class="terminal-region"
+    class="terminal-region min-h-0 flex-1 overflow-hidden bg-background p-2 focus-within:ring-2 focus-within:ring-ring focus-within:ring-inset"
     bind:this={host}
     role="application"
     aria-label={`${workspaceName} ${worktree.name} interactive Pi terminal`}
@@ -492,6 +509,7 @@
   >
     <Xterm
       class="terminal-emulator"
+      data-testid="terminal-emulator"
       bind:terminal
       options={xtermOptions}
       onLoad={handleLoad}
@@ -504,53 +522,9 @@
 </section>
 
 <style>
-  .terminal-pane {
-    display: flex;
-    width: 100%;
-    height: 100%;
-    min-height: 0;
-    flex-direction: column;
-    background: #09090b;
-    overflow: hidden;
-  }
-
-  .terminal-pane.hidden {
-    display: none;
-  }
-
-  .terminal-alert {
-    padding: 8px 12px;
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    color: #fecaca;
-    background: #2a1215;
-    border-bottom: 1px solid #7f1d1d;
-    font-size: 13px;
-  }
-
-  .terminal-alert button {
-    border: 0;
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
-  }
-
-  .terminal-region {
-    min-height: 0;
-    flex: 1;
-    padding: 8px;
-    overflow: hidden;
-    background: #09090b;
-  }
-
   .terminal-region > :global(.terminal-emulator),
-  .terminal-region :global(.xterm) {
-    height: 100%;
-  }
-
-  .terminal-region:focus-within {
-    outline: 2px solid #3b82f6;
-    outline-offset: -2px;
+  .terminal-region :global(.xterm),
+  :global(.xterm-scrollable-element) {
+    height: 100% !important;
   }
 </style>

@@ -4,6 +4,11 @@
     "allowJs": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "$lib": ["./src/lib"],
+      "$lib/*": ["./src/lib/*"]
+    },
     "noEmit": true,
     "types": ["svelte", "vite/client"]
   },
