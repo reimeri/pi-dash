@@ -9,6 +9,29 @@ export interface WorktreeDiffClient {
   worktreeDiff(worktreeId: string, signal?: AbortSignal): Promise<WorktreeDiff>;
 }
 
+interface SidebarDiffSummaryCache {
+  track(ids: string[], retainIds?: string[]): void;
+  setSummary(summary: WorktreeDiffSummary): void;
+}
+
+export function syncSidebarDiffSummaries(
+  cache: SidebarDiffSummaryCache,
+  visibleWorktreeIds: string[],
+  selectedWorktreeId: string | undefined,
+  selectedSummary: WorktreeDiffSummary | undefined,
+): void {
+  cache.track(
+    visibleWorktreeIds.filter((id) => id !== selectedWorktreeId),
+    visibleWorktreeIds,
+  );
+  if (
+    selectedSummary &&
+    visibleWorktreeIds.includes(selectedSummary.worktreeId)
+  ) {
+    cache.setSummary(selectedSummary);
+  }
+}
+
 interface VisibilitySource {
   readonly hidden: boolean;
   addEventListener(type: "visibilitychange", listener: () => void): void;
@@ -316,6 +339,7 @@ export function createWorktreeDiffSummaryStore(
     Record<string, WorktreeDiffSummary>
   >({});
   let worktreeIds: string[] = [];
+  let retainedWorktreeIds: string[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
   let generation = 0;
@@ -405,17 +429,20 @@ export function createWorktreeDiffSummaryStore(
     if (!destroyed && requestGeneration === generation) schedule();
   }
 
-  function track(ids: string[]): void {
+  function track(ids: string[], retainIds: string[] = ids): void {
     const nextIds = [...new Set(ids)].sort();
-    if (
+    const nextRetainedIds = [...new Set(retainIds)].sort();
+    const trackingUnchanged =
       nextIds.length === worktreeIds.length &&
-      nextIds.every((id, index) => id === worktreeIds[index])
-    ) {
-      return;
-    }
+      nextIds.every((id, index) => id === worktreeIds[index]);
+    const retentionUnchanged =
+      nextRetainedIds.length === retainedWorktreeIds.length &&
+      nextRetainedIds.every((id, index) => id === retainedWorktreeIds[index]);
+    if (trackingUnchanged && retentionUnchanged) return;
 
     generation += 1;
     worktreeIds = nextIds;
+    retainedWorktreeIds = nextRetainedIds;
     clearTimer();
     const activeController = controller;
     controller = undefined;
@@ -429,11 +456,20 @@ export function createWorktreeDiffSummaryStore(
     update((summaries) =>
       Object.fromEntries(
         Object.entries(summaries).filter(([worktreeId]) =>
-          worktreeIds.includes(worktreeId),
+          retainedWorktreeIds.includes(worktreeId),
         ),
       ),
     );
     if (worktreeIds.length > 0 && !visibility?.hidden) void inspect();
+  }
+
+  function setSummary(summary: WorktreeDiffSummary): void {
+    if (!retainedWorktreeIds.includes(summary.worktreeId)) return;
+    update((summaries) =>
+      summaries[summary.worktreeId]?.snapshotId === summary.snapshotId
+        ? summaries
+        : { ...summaries, [summary.worktreeId]: summary },
+    );
   }
 
   const handleVisibility = (): void => {
@@ -449,6 +485,7 @@ export function createWorktreeDiffSummaryStore(
   return {
     subscribe,
     track,
+    setSummary,
     destroy() {
       destroyed = true;
       generation += 1;

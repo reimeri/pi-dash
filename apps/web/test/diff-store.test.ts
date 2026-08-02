@@ -5,6 +5,7 @@ import {
   createCoordinatedWorktreeDiffClient,
   createWorktreeDiffStore,
   createWorktreeDiffSummaryStore,
+  syncSidebarDiffSummaries,
 } from "../src/lib/diff/store.js";
 
 const WORKTREE_A = "2cb84366-6fb7-4a60-b15e-6726381b190c";
@@ -101,6 +102,61 @@ describe("coordinated worktree diff client", () => {
 });
 
 describe("worktree diff summary store", () => {
+  it("preserves counts while polling ownership moves to and from the selected worktree", async () => {
+    const refreshedSummary = deferred<WorktreeDiffSummary>();
+    let worktreeACalls = 0;
+    const client = {
+      worktreeDiffSummary: vi.fn((id: string) => {
+        if (id !== WORKTREE_A) return Promise.resolve(summary(id, 3));
+        worktreeACalls += 1;
+        return worktreeACalls === 1
+          ? Promise.resolve(summary(id, 2))
+          : refreshedSummary.promise;
+      }),
+    };
+    const store = createWorktreeDiffSummaryStore(client, { pollMs: 60_000 });
+
+    syncSidebarDiffSummaries(
+      store,
+      [WORKTREE_A, WORKTREE_B],
+      undefined,
+      undefined,
+    );
+    await vi.waitFor(() => expect(get(store)[WORKTREE_A]?.additions).toBe(2));
+
+    syncSidebarDiffSummaries(
+      store,
+      [WORKTREE_A, WORKTREE_B],
+      WORKTREE_A,
+      undefined,
+    );
+    expect(get(store)[WORKTREE_A]?.additions).toBe(2);
+    syncSidebarDiffSummaries(
+      store,
+      [WORKTREE_A, WORKTREE_B],
+      WORKTREE_A,
+      summary(WORKTREE_A, 5),
+    );
+    expect(get(store)[WORKTREE_A]?.additions).toBe(5);
+
+    syncSidebarDiffSummaries(
+      store,
+      [WORKTREE_A, WORKTREE_B],
+      WORKTREE_B,
+      summary(WORKTREE_A, 5),
+    );
+    syncSidebarDiffSummaries(
+      store,
+      [WORKTREE_A, WORKTREE_B],
+      WORKTREE_B,
+      undefined,
+    );
+    expect(get(store)[WORKTREE_A]?.additions).toBe(5);
+    refreshedSummary.resolve(summary(WORKTREE_A, 6));
+    await vi.waitFor(() => expect(get(store)[WORKTREE_A]?.additions).toBe(6));
+    store.destroy();
+  });
+
   it("loads newly tracked worktrees before stale inspections settle", async () => {
     const staleSummary = deferred<WorktreeDiffSummary>();
     const client = {
@@ -233,6 +289,8 @@ describe("worktree diff summary store", () => {
     first.resolve(summary(WORKTREE_A, 9));
     await vi.waitFor(() => expect(get(store)[WORKTREE_B]?.additions).toBe(4));
 
+    expect(get(store)[WORKTREE_A]).toBeUndefined();
+    store.setSummary(summary(WORKTREE_A, 10));
     expect(get(store)[WORKTREE_A]).toBeUndefined();
     store.destroy();
   });

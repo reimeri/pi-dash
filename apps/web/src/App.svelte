@@ -38,6 +38,7 @@
     createCoordinatedWorktreeDiffClient,
     createWorktreeDiffStore,
     createWorktreeDiffSummaryStore,
+    syncSidebarDiffSummaries,
     type WorktreeDiffState,
   } from "./lib/diff/store.js";
   import { IsMobile } from "./lib/hooks/is-mobile.svelte.js";
@@ -104,8 +105,11 @@
     .flat()
     .filter(canOpenTerminal)
     .map((worktree) => worktree.id);
-  $: sidebarDiffSummaryStore.track(
-    visibleDiffWorktreeIds.filter((id) => id !== selectedWorktreeId),
+  $: syncSidebarDiffSummaries(
+    sidebarDiffSummaryStore,
+    visibleDiffWorktreeIds,
+    selectedWorktreeId,
+    $diffStore.summary,
   );
   $: sidebarDiffSummaries =
     selectedWorktreeId && $diffStore.summary?.worktreeId === selectedWorktreeId
