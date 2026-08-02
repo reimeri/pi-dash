@@ -36,6 +36,7 @@ import {
 import { createGitDiffInspector } from "./git/git-diff-inspector.js";
 import { createGitInspector } from "./git/git-inspector.js";
 import { createGitWorktreeManager } from "./git/git-worktree-manager.js";
+import { createGitWorkspaceSynchronizer } from "./git/git-workspace-sync.js";
 import {
   createNativeDirectoryDialog,
   type NativeDirectoryDialogService,
@@ -142,6 +143,7 @@ export async function createDaemon(
     auth = createAuthService({ policy });
     const git = await createGitInspector({ env });
     const gitWorktrees = await createGitWorktreeManager({ env });
+    const gitWorkspaceSync = await createGitWorkspaceSynchronizer({ env });
     const gitDiffs = await createGitDiffInspector({ env });
     const pi = createPiResolver({
       executable: config.piExecutable,
@@ -188,9 +190,14 @@ export async function createDaemon(
       await statusSocket.close().catch(() => undefined);
       statusSocket = undefined;
     }
+    const gitMutationLock = createGitMutationLock();
     workspaces = createWorkspaceService({
       repository: workspaceRepository,
       git,
+      syncer: gitWorkspaceSync,
+      lock: gitMutationLock,
+      onRepositoryChange: (workspace) =>
+        applicationEvents?.publishWorkspaceUpdated(workspace),
     });
     const lifecycle = createWorktreeLifecycleCoordinator({
       repository: worktreeRepository,
@@ -200,7 +207,7 @@ export async function createDaemon(
       workspaces: workspaceRepository,
       git: gitWorktrees,
       diffs: gitDiffs,
-      lock: createGitMutationLock(),
+      lock: gitMutationLock,
       lifecycle,
       snapshots: createBaseSnapshotSigner({
         key: loadOrCreateSnapshotKey(paths.snapshotKey),

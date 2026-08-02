@@ -41,6 +41,7 @@ export function createWorkspaceStore(
         if (generation !== loadGeneration) return;
         if (revision !== startingRevision) {
           update((state) => ({ ...state, status: "ready" }));
+          void this.load();
           return;
         }
         set({

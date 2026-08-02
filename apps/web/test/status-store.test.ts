@@ -21,7 +21,7 @@ const status: WorkflowStatusDto = {
 
 function snapshot(): ApplicationEventsServerFrame {
   return {
-    v: 3,
+    v: 4,
     type: "snapshot",
     cursor: 4,
     statuses: [status],
@@ -62,7 +62,7 @@ describe("workflow status store", () => {
       snapshot(),
     ).state;
     const working = reduceWorkflowStatusState(initialized, {
-      v: 3,
+      v: 4,
       type: "status",
       cursor: 5,
       status: { ...status, state: "working", reason: "agent", revision: 1 },
@@ -71,7 +71,7 @@ describe("workflow status store", () => {
     expect(working.state.byWorktree[status.worktreeId]?.state).toBe("working");
     expect(
       reduceWorkflowStatusState(working.state, {
-        v: 3,
+        v: 4,
         type: "status",
         cursor: 7,
         status: { ...status, state: "done", reason: "settled", revision: 2 },
@@ -86,7 +86,7 @@ describe("workflow status store", () => {
       snapshot(),
     ).state;
     const removed = reduceWorkflowStatusState(initialized, {
-      v: 3,
+      v: 4,
       type: "worktreeRemoved",
       cursor: 5,
       worktreeId: status.worktreeId,
@@ -112,7 +112,7 @@ describe("workflow status store", () => {
     ).state;
     const workspaceId = "22222222-2222-4222-8222-222222222222";
     const next = reduceWorkflowStatusState(initialized, {
-      v: 3,
+      v: 4,
       type: "status",
       cursor: 5,
       status: {

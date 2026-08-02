@@ -4,6 +4,7 @@ import {
   type RuntimeDto,
   type WorkflowStatusDto,
   type WorkspaceAttentionDto,
+  type WorkspaceDto,
 } from "@pi-dash/contracts";
 
 export interface ApplicationEventTransport {
@@ -21,6 +22,7 @@ export interface ApplicationEvents {
   readonly cursor: number;
   publishStatus(status: WorkflowStatusDto): void;
   publishRuntime(runtime: RuntimeDto): void;
+  publishWorkspaceUpdated(workspace: WorkspaceDto): void;
   publishWorktreeRemoved(worktreeId: string, workspaceId: string): void;
   subscribe(transport: ApplicationEventTransport): () => void;
   close(): void;
@@ -85,6 +87,15 @@ export function createApplicationEvents(options: {
         type: "runtime",
         cursor,
         runtime,
+      });
+    },
+    publishWorkspaceUpdated(workspace) {
+      cursor += 1;
+      append({
+        v: APPLICATION_EVENTS_PROTOCOL_VERSION,
+        type: "workspaceUpdated",
+        cursor,
+        workspace,
       });
     },
     publishWorktreeRemoved(worktreeId, workspaceId) {

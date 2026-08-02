@@ -15,9 +15,11 @@ import type { AppConfig } from "../src/config.js";
 import { openDatabase, type DatabaseService } from "../src/database.js";
 import { createOriginPolicy } from "../src/security.js";
 import { createGitInspector } from "../src/git/git-inspector.js";
+import { createGitWorkspaceSynchronizer } from "../src/git/git-workspace-sync.js";
 import { createNativeDirectoryDialog } from "../src/platform/native-directory-dialog.js";
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
 import { createWorkspaceService } from "../src/workspaces/workspace-service.js";
+import { createGitMutationLock } from "../src/worktrees/git-mutation-lock.js";
 import { createStatusTestServices } from "./status-stub.js";
 import { createUnavailableTerminalManager } from "./terminal-manager-stub.js";
 import { createUnavailableWorktreeService } from "./worktree-service-stub.js";
@@ -61,6 +63,8 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
   const workspaces = createWorkspaceService({
     repository: createWorkspaceRepository(database.sqlite),
     git,
+    syncer: await createGitWorkspaceSynchronizer(),
+    lock: createGitMutationLock({ root: join(root, "locks") }),
   });
   const status = createStatusTestServices(database.sqlite);
   const app = await buildHttpServer({

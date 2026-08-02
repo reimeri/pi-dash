@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { WorkspaceDto, WorktreeDto } from "@pi-dash/contracts";
   import { onDestroy, onMount } from "svelte";
-  import { SvelteMap } from "svelte/reactivity";
+  import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import {
     Add01Icon,
     AlertCircleIcon,
@@ -88,6 +88,7 @@
   let reconciling = false;
   let statusEvents: StatusEventClient | undefined;
   const acknowledgements = new SvelteMap<string, number>();
+  const syncingIds = new SvelteSet<string>();
   const diffClient = createCoordinatedWorktreeDiffClient(api);
   const diffStore = createWorktreeDiffStore(diffClient);
   const sidebarDiffSummaryStore = createWorktreeDiffSummaryStore(diffClient);
@@ -149,7 +150,9 @@
       await api.session();
       statusEvents ??= createStatusEventClient({
         onWorktreeRemoved: removeWorktree,
+        onWorkspaceUpdated: (workspace) => workspaceStore.upsert(workspace),
         onSnapshot: () => {
+          void workspaceStore.load();
           for (const workspaceId of Object.keys($worktreeStore.byWorkspace)) {
             void worktreeStore.load(workspaceId);
           }
@@ -208,6 +211,22 @@
           : "Unable to refresh repository health.";
     } finally {
       refreshingId = undefined;
+    }
+  }
+
+  async function syncWorkspace(workspace: WorkspaceDto) {
+    syncingIds.add(workspace.id);
+    workspaceActionError = "";
+    try {
+      const response = await api.syncWorkspace(workspace.id);
+      workspaceStore.upsert(response.workspace);
+    } catch (error) {
+      if (selectedId === workspace.id) {
+        workspaceActionError =
+          error instanceof Error ? error.message : "Unable to sync workspace.";
+      }
+    } finally {
+      syncingIds.delete(workspace.id);
     }
   }
 
@@ -586,8 +605,7 @@
         aria-atomic="true"
         class="m-2 size-2 p-0"
         title={getStatusString(startup.status)}
-      >
-      </Badge>
+      ></Badge>
     </Sidebar.Root>
 
     <Sidebar.Inset class="min-h-0 min-w-0 overflow-hidden">
@@ -823,10 +841,30 @@
                       </div>
                     </dl>
                   </Card.Content>
-                  {#if selectedWorkspace.repository.health !== "healthy"}
-                    <Card.Footer
-                      class="flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between"
-                    >
+                  <Card.Footer
+                    class="flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    {#if selectedWorkspace.repository.health === "healthy"}
+                      <p class="text-sm text-muted-foreground">
+                        Fetch and fast-forward the current branch from its
+                        configured upstream.
+                      </p>
+                      <Button
+                        disabled={syncingIds.has(selectedWorkspace.id)}
+                        onclick={() => syncWorkspace(selectedWorkspace)}
+                      >
+                        {#if syncingIds.has(selectedWorkspace.id)}<Spinner
+                            data-icon="inline-start"
+                          />{:else}<HugeiconsIcon
+                            icon={RefreshIcon}
+                            strokeWidth={2}
+                            data-icon="inline-start"
+                          />{/if}
+                        {syncingIds.has(selectedWorkspace.id)
+                          ? "Syncing…"
+                          : "Sync workspace"}
+                      </Button>
+                    {:else}
                       <p class="text-sm text-muted-foreground">
                         The record remains registered. Retry after restoring
                         access, or remove only its Pi Dash metadata.
@@ -846,8 +884,8 @@
                           ? "Checking…"
                           : "Retry health check"}
                       </Button>
-                    </Card.Footer>
-                  {/if}
+                    {/if}
+                  </Card.Footer>
                 </Card.Root>
 
                 <Separator />

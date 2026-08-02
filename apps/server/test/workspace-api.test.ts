@@ -1,4 +1,5 @@
-import { mkdtempSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,10 +12,12 @@ import { createAuthService, SESSION_COOKIE } from "../src/auth.js";
 import type { AppConfig } from "../src/config.js";
 import { openDatabase, type DatabaseService } from "../src/database.js";
 import { createGitInspector } from "../src/git/git-inspector.js";
+import { createGitWorkspaceSynchronizer } from "../src/git/git-workspace-sync.js";
 import type { NativeDirectoryDialogService } from "../src/platform/native-directory-dialog.js";
 import { createOriginPolicy } from "../src/security.js";
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
 import { createWorkspaceService } from "../src/workspaces/workspace-service.js";
+import { createGitMutationLock } from "../src/worktrees/git-mutation-lock.js";
 import { createStatusTestServices } from "./status-stub.js";
 import { createUnavailableTerminalManager } from "./terminal-manager-stub.js";
 import { createUnavailableWorktreeService } from "./worktree-service-stub.js";
@@ -30,6 +33,10 @@ const resources: Array<{
 
 function baseHeaders(extra: Record<string, string> = {}) {
   return { host: "127.0.0.1:4317", ...extra };
+}
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
 async function fixture() {
@@ -70,6 +77,8 @@ async function fixture() {
   const workspaces = createWorkspaceService({
     repository: createWorkspaceRepository(database.sqlite),
     git: await createGitInspector(),
+    syncer: await createGitWorkspaceSynchronizer(),
+    lock: createGitMutationLock({ root: join(root, "locks") }),
   });
   const status = createStatusTestServices(database.sqlite);
   const app = await buildHttpServer({
@@ -229,6 +238,72 @@ describe("workspace API", () => {
     });
     expect(removed.statusCode).toBe(204);
     expect(repository).toBeTruthy();
+  });
+
+  it("syncs a workspace to its remote tracking branch", async () => {
+    const { root, app, authHeaders } = await fixture();
+    const remote = join(root, "remote.git");
+    execFileSync("git", ["init", "--bare", remote], { stdio: "ignore" });
+    const repository = createGitRepository(root, "sync-project");
+    git(repository, "remote", "add", "origin", remote);
+    git(repository, "push", "--set-upstream", "origin", "main");
+    git(remote, "symbolic-ref", "HEAD", "refs/heads/main");
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/workspaces",
+      headers: authHeaders,
+      payload: { path: repository, name: "Sync Project" },
+    });
+    const workspace = created.json().workspace;
+
+    const producer = join(root, "producer");
+    execFileSync("git", ["clone", remote, producer], { stdio: "ignore" });
+    git(producer, "config", "user.name", "Pi Dash Tests");
+    git(producer, "config", "user.email", "pi-dash@example.invalid");
+    writeFileSync(join(producer, "remote.txt"), "remote\n");
+    git(producer, "add", "--", "remote.txt");
+    git(producer, "commit", "-m", "Remote update");
+    const remoteCommit = git(producer, "rev-parse", "HEAD");
+    git(producer, "push", "origin", "main");
+
+    const synced = await app.inject({
+      method: "POST",
+      url: `/api/v1/workspaces/${workspace.id}/sync`,
+      headers: authHeaders,
+      payload: {},
+    });
+    expect(synced.statusCode).toBe(200);
+    expect(synced.json().workspace.repository).toMatchObject({
+      health: "healthy",
+      currentBranch: "main",
+      headCommit: remoteCommit,
+    });
+    expect(git(repository, "rev-parse", "HEAD")).toBe(remoteCommit);
+
+    writeFileSync(join(repository, "local.txt"), "local\n");
+    const dirty = await app.inject({
+      method: "POST",
+      url: `/api/v1/workspaces/${workspace.id}/sync`,
+      headers: authHeaders,
+      payload: {},
+    });
+    expect(dirty.statusCode).toBe(409);
+    expect(dirty.json().error).toMatchObject({
+      code: "WORKSPACE_SYNC_DIRTY",
+    });
+  });
+
+  it("returns not found when syncing an unknown workspace", async () => {
+    const { app, authHeaders } = await fixture();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/workspaces/00000000-0000-4000-8000-000000000099/sync",
+      headers: authHeaders,
+      payload: {},
+    });
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error).toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("protects workspace routes with authentication", async () => {

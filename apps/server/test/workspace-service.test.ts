@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,8 +7,13 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { createGitRepository } from "../../../tests/fixtures/git-repository.js";
 import { createGitInspector } from "../src/git/git-inspector.js";
+import {
+  createGitWorkspaceSynchronizer,
+  type GitWorkspaceSynchronizer,
+} from "../src/git/git-workspace-sync.js";
 import { openDatabase, type DatabaseService } from "../src/database.js";
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
+import { createGitMutationLock } from "../src/worktrees/git-mutation-lock.js";
 import {
   createWorkspaceService,
   workspaceSlugBase,
@@ -19,7 +25,11 @@ const migrationsDirectory = fileURLToPath(
 );
 const resources: Array<{ root: string; database: DatabaseService }> = [];
 
-async function fixture(): Promise<{
+async function fixture(
+  options: {
+    syncer?: GitWorkspaceSynchronizer;
+  } = {},
+): Promise<{
   root: string;
   database: DatabaseService;
   service: WorkspaceService;
@@ -34,6 +44,8 @@ async function fixture(): Promise<{
     git: await createGitInspector({
       now: () => new Date("2026-02-03T04:05:06.000Z"),
     }),
+    syncer: options.syncer ?? (await createGitWorkspaceSynchronizer()),
+    lock: createGitMutationLock({ root: join(root, "locks") }),
     now: () => new Date("2026-02-03T04:05:06.000Z"),
   });
   resources.push({ root, database });
@@ -113,6 +125,40 @@ describe("WorkspaceService", () => {
     expect(service.get(created.id).repository.health).toBe("missing");
     service.remove(created.id);
     expect(service.list()).toEqual([]);
+  });
+
+  it("blocks removal while a workspace sync is active", async () => {
+    let started!: () => void;
+    let release!: () => void;
+    const syncStarted = new Promise<void>((resolve) => (started = resolve));
+    const continueSync = new Promise<void>((resolve) => (release = resolve));
+    const { root, service } = await fixture({
+      syncer: {
+        async sync(path) {
+          started();
+          await continueSync;
+          return {
+            headCommit: execFileSync("git", ["rev-parse", "HEAD"], {
+              cwd: path,
+              encoding: "utf8",
+            }).trim(),
+          };
+        },
+      },
+    });
+    const repository = createGitRepository(root, "project");
+    const workspace = await service.create({
+      path: repository,
+      name: "Project",
+    });
+
+    const syncing = service.sync(workspace.id);
+    await syncStarted;
+    expect(() => service.remove(workspace.id)).toThrow(
+      expect.objectContaining({ code: "GIT_OPERATION_BUSY" }),
+    );
+    release();
+    await expect(syncing).resolves.toMatchObject({ id: workspace.id });
   });
 
   it("blocks removal when future managed worktree rows exist", async () => {

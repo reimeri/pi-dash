@@ -10,6 +10,15 @@ import {
   GitInspectionError,
   type GitInspector,
 } from "../git/git-inspector.js";
+import {
+  GitWorkspaceSyncError,
+  type GitWorkspaceSynchronizer,
+} from "../git/git-workspace-sync.js";
+import { ProcessExecutionError } from "../process/safe-process.js";
+import {
+  GitMutationBusyError,
+  type GitMutationLock,
+} from "../worktrees/git-mutation-lock.js";
 import type {
   WorkspaceRecord,
   WorkspaceRepository,
@@ -86,6 +95,7 @@ export interface WorkspaceService {
   rename(id: string, name: string): WorkspaceDto;
   remove(id: string): void;
   refresh(id: string, signal?: AbortSignal): Promise<WorkspaceDto>;
+  sync(id: string, signal?: AbortSignal): Promise<WorkspaceDto>;
   refreshAll(): Promise<void>;
   startHealthRefresh(): void;
   close(): void;
@@ -94,6 +104,9 @@ export interface WorkspaceService {
 export function createWorkspaceService(options: {
   repository: WorkspaceRepository;
   git: GitInspector;
+  syncer: GitWorkspaceSynchronizer;
+  lock: GitMutationLock;
+  onRepositoryChange?: (workspace: WorkspaceDto) => void;
   now?: () => Date;
   id?: () => string;
   refreshIntervalMs?: number;
@@ -103,6 +116,7 @@ export function createWorkspaceService(options: {
   const refreshIntervalMs = options.refreshIntervalMs ?? 5 * 60_000;
   const refreshController = new AbortController();
   const refreshQueues = new Map<string, Promise<void>>();
+  const pendingSyncs = new Map<string, number>();
   let interval: NodeJS.Timeout | undefined;
   let refreshActive = false;
 
@@ -121,6 +135,14 @@ export function createWorkspaceService(options: {
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   });
+
+  const publishRepositoryChange = (workspace: WorkspaceDto): void => {
+    try {
+      options.onRepositoryChange?.(workspace);
+    } catch {
+      // Persisted repository state must not be undone by event publication.
+    }
+  };
 
   const requireRecord = (id: string): WorkspaceRecord => {
     const record = options.repository.get(id);
@@ -210,6 +232,13 @@ export function createWorkspaceService(options: {
     },
     remove(id) {
       requireRecord(id);
+      if ((pendingSyncs.get(id) ?? 0) > 0) {
+        throw new WorkspaceServiceError(
+          409,
+          "GIT_OPERATION_BUSY",
+          "A repository operation is already in progress for this workspace",
+        );
+      }
       const count = options.repository.worktreeCount(id);
       if (count > 0) {
         throw new WorkspaceServiceError(
@@ -251,8 +280,147 @@ export function createWorkspaceService(options: {
             health.headCommit,
             health.checkedAt,
           );
-          if (!updated) return service.get(id);
-          return toDto(updated);
+          const workspace = updated ? toDto(updated) : service.get(id);
+          publishRepositoryChange(workspace);
+          return workspace;
+        });
+      const queueTail = operation.then(
+        () => undefined,
+        () => undefined,
+      );
+      refreshQueues.set(id, queueTail);
+      void queueTail.finally(() => {
+        if (refreshQueues.get(id) === queueTail) refreshQueues.delete(id);
+      });
+      return operation;
+    },
+    sync(id, signal) {
+      pendingSyncs.set(id, (pendingSyncs.get(id) ?? 0) + 1);
+      const previous = refreshQueues.get(id) ?? Promise.resolve();
+      const operation = previous
+        .catch(() => undefined)
+        .then(async () => {
+          const record = requireRecord(id);
+          try {
+            return await options.lock.runExclusive(
+              record.gitCommonDir,
+              async () => {
+                const before = await options.git.inspectHealth(
+                  record.repositoryPath,
+                  record.gitCommonDir,
+                  signal,
+                );
+                if (before.health !== "healthy") {
+                  const degraded = options.repository.updateHealth(
+                    id,
+                    before.health,
+                    before.currentBranch,
+                    before.headCommit,
+                    before.checkedAt,
+                  );
+                  if (degraded) publishRepositoryChange(toDto(degraded));
+                  throw new WorkspaceServiceError(
+                    409,
+                    "WORKSPACE_UNHEALTHY",
+                    "Repository health must be restored before syncing",
+                  );
+                }
+
+                let result: { headCommit: string };
+                try {
+                  result = await options.syncer.sync(
+                    record.repositoryPath,
+                    signal,
+                  );
+                } catch (error) {
+                  try {
+                    const finalInspection = await options.git.inspectHealth(
+                      record.repositoryPath,
+                      record.gitCommonDir,
+                    );
+                    const finalized = options.repository.updateHealth(
+                      id,
+                      finalInspection.health,
+                      finalInspection.currentBranch,
+                      finalInspection.headCommit,
+                      finalInspection.checkedAt,
+                    );
+                    if (finalized) publishRepositoryChange(toDto(finalized));
+                  } catch {
+                    // Preserve the original sync failure when final inspection fails.
+                  }
+                  throw error;
+                }
+                const after = await options.git.inspectHealth(
+                  record.repositoryPath,
+                  record.gitCommonDir,
+                );
+                const updated = options.repository.updateHealth(
+                  id,
+                  after.health,
+                  after.currentBranch,
+                  after.headCommit,
+                  after.checkedAt,
+                );
+                const workspace = updated ? toDto(updated) : service.get(id);
+                publishRepositoryChange(workspace);
+                if (
+                  after.health !== "healthy" ||
+                  after.headCommit !== result.headCommit
+                ) {
+                  throw new WorkspaceServiceError(
+                    409,
+                    "WORKSPACE_UNHEALTHY",
+                    "The repository changed unexpectedly while syncing",
+                  );
+                }
+                return workspace;
+              },
+            );
+          } catch (error) {
+            if (error instanceof WorkspaceServiceError) throw error;
+            if (error instanceof GitMutationBusyError) {
+              throw new WorkspaceServiceError(
+                409,
+                "GIT_OPERATION_BUSY",
+                error.message,
+              );
+            }
+            if (error instanceof GitWorkspaceSyncError) {
+              const status =
+                error.code === "GIT_UNAVAILABLE"
+                  ? 503
+                  : error.code === "GIT_TIMEOUT"
+                    ? 504
+                    : error.code === "WORKSPACE_SYNC_FAILED"
+                      ? 502
+                      : 409;
+              throw new WorkspaceServiceError(
+                status,
+                error.code,
+                error.message,
+              );
+            }
+            if (
+              error instanceof ProcessExecutionError &&
+              error.reason === "aborted"
+            ) {
+              throw new WorkspaceServiceError(
+                503,
+                "WORKSPACE_SYNC_FAILED",
+                "Workspace sync was cancelled",
+              );
+            }
+            if (error instanceof GitInspectionError) {
+              throw inspectionError(error);
+            }
+            throw error;
+          }
+        })
+        .finally(() => {
+          const remaining = (pendingSyncs.get(id) ?? 1) - 1;
+          if (remaining === 0) pendingSyncs.delete(id);
+          else pendingSyncs.set(id, remaining);
         });
       const queueTail = operation.then(
         () => undefined,
