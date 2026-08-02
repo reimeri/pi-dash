@@ -85,7 +85,14 @@
         return;
       }
       await api.session();
-      statusEvents ??= createStatusEventClient();
+      statusEvents ??= createStatusEventClient({
+        onWorktreeRemoved: removeWorktree,
+        onSnapshot: () => {
+          for (const workspaceId of Object.keys($worktreeStore.byWorkspace)) {
+            void worktreeStore.load(workspaceId);
+          }
+        },
+      });
       statusEvents.start();
       await workspaceStore.load();
       startup = reduceStartupState(startup, { type: "READY" });
@@ -115,6 +122,10 @@
 
   function removeWorkspace(id: string) {
     workspaceStore.remove(id);
+    worktreeStore.clearWorkspace(id);
+    workflowStatusStore.reset();
+    statusEvents?.close();
+    statusEvents?.start();
     if (selectedId === id) {
       selectedId = undefined;
       selectedWorktreeId = undefined;
@@ -228,6 +239,18 @@
     ) {
       selectedWorktreeId = undefined;
     }
+    workspaceActionError = "";
+    void workspaceStore.load();
+  }
+
+  function removeWorktree(workspaceId: string, worktreeId: string) {
+    worktreeStore.remove(workspaceId, worktreeId);
+    workflowStatusStore.removeWorktrees([worktreeId]);
+    if (selectedWorktreeId === worktreeId) selectedWorktreeId = undefined;
+    if (removeWorktreeTarget?.id === worktreeId) {
+      removeWorktreeTarget = undefined;
+    }
+    if (deleteBranchTarget?.id === worktreeId) deleteBranchTarget = undefined;
     workspaceActionError = "";
     void workspaceStore.load();
   }
@@ -674,15 +697,13 @@
                           on:click={() => (removeWorktreeTarget = worktree)}
                           >Remove clean worktree</button
                         >
-                      {:else if worktree.lifecycle === "removed" && !worktree.branchDeleted}
+                      {:else if worktree.lifecycle === "removed"}
                         <button
                           class="button danger"
                           type="button"
                           on:click={() => (deleteBranchTarget = worktree)}
                           >Delete merged branch</button
                         >
-                      {:else if worktree.lifecycle === "removed" && worktree.branchDeleted}
-                        <span class="muted-label">Branch deleted safely</span>
                       {:else}
                         <button
                           class="button secondary"
@@ -767,6 +788,6 @@
     workspace={selectedWorkspace}
     worktree={deleteBranchTarget}
     onClose={() => (deleteBranchTarget = undefined)}
-    onDeleted={upsertWorktree}
+    onDeleted={removeWorktree}
   />
 {/if}

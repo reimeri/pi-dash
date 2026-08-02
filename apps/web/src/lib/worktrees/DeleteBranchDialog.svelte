@@ -11,7 +11,7 @@
   export let workspace: WorkspaceDto;
   export let worktree: WorktreeDto;
   export let onClose: () => void;
-  export let onDeleted: (worktree: WorktreeDto) => void;
+  export let onDeleted: (workspaceId: string, worktreeId: string) => void;
 
   let safetyTarget: (GitRefDto & { ref: string }) | null = null;
   let loading = true;
@@ -47,7 +47,7 @@
         },
         operationId,
       );
-      onDeleted(response.worktree);
+      onDeleted(response.workspaceId, response.worktreeId);
       onClose();
     } catch (caught) {
       if (

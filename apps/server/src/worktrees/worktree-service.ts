@@ -121,8 +121,6 @@ function toDto(record: WorktreeRecord): WorktreeDto {
     baseCommit: record.baseCommit,
     lifecycle: record.lifecycle,
     finalBranchTip: record.finalBranchTip,
-    safetyTargetCommit: record.safetyTargetCommit,
-    branchDeleted: record.branchDeleted,
     health: record.health,
     dirty: record.dirty,
     ...(record.lastErrorCode && record.lastErrorMessage
@@ -184,7 +182,11 @@ export function createWorktreeService(options: {
   snapshots: BaseSnapshotSigner;
   managedRoot: string;
   stopRuntime?: (worktree: WorktreeDto) => Promise<void>;
-  onMembershipChange?: (worktreeId: string) => void;
+  onMembershipChange?: (change: {
+    type: "upsert" | "removed";
+    worktreeId: string;
+    workspaceId: string;
+  }) => void;
   now?: () => Date;
   id?: () => string;
 }): WorktreeService {
@@ -192,6 +194,17 @@ export function createWorktreeService(options: {
   const createId = options.id ?? randomUUID;
   const stopRuntime = options.stopRuntime ?? (async () => undefined);
   const activeOperations = new Set<string>();
+  const publishMembership = (change: {
+    type: "upsert" | "removed";
+    worktreeId: string;
+    workspaceId: string;
+  }): void => {
+    try {
+      options.onMembershipChange?.(change);
+    } catch {
+      // Durable lifecycle changes must not be undone by event publication.
+    }
+  };
 
   const requireWorkspace = (id: string) => {
     const workspace = options.workspaces.get(id);
@@ -261,6 +274,44 @@ export function createWorktreeService(options: {
     return entry;
   };
 
+  const existingOperationResult = <T>(
+    existing: WorktreeOperationRecord,
+    hash: string,
+  ): T => {
+    if (existing.requestHash !== hash) {
+      throw new WorktreeServiceError(
+        409,
+        "IDEMPOTENCY_KEY_REUSED",
+        "Idempotency key was already used with different input",
+      );
+    }
+    if (existing.status === "in_progress") {
+      throw new WorktreeServiceError(
+        409,
+        "OPERATION_IN_PROGRESS",
+        "The prior operation is still in progress",
+        { operationId: existing.id, worktreeId: existing.worktreeId },
+      );
+    }
+    if (existing.status === "failed") {
+      throw new WorktreeServiceError(
+        existing.httpStatus ?? 409,
+        existing.errorCode ?? "CONFLICT",
+        existing.errorMessage ?? "The prior operation failed",
+        { operationId: existing.id, worktreeId: existing.worktreeId },
+      );
+    }
+    return JSON.parse(existing.resultJson!) as T;
+  };
+
+  const replayOperation = <T>(
+    idempotencyKey: string,
+    hash: string,
+  ): T | undefined => {
+    const existing = options.repository.findOperation(idempotencyKey);
+    return existing ? existingOperationResult<T>(existing, hash) : undefined;
+  };
+
   const beginOperation = <T>(input: {
     type: WorktreeOperationType;
     workspaceId: string;
@@ -273,32 +324,9 @@ export function createWorktreeService(options: {
     return options.repository.transaction(() => {
       const existing = options.repository.findOperation(input.idempotencyKey);
       if (existing) {
-        if (existing.requestHash !== input.hash) {
-          throw new WorktreeServiceError(
-            409,
-            "IDEMPOTENCY_KEY_REUSED",
-            "Idempotency key was already used with different input",
-          );
-        }
-        if (existing.status === "in_progress") {
-          throw new WorktreeServiceError(
-            409,
-            "OPERATION_IN_PROGRESS",
-            "The prior operation is still in progress",
-            { operationId: existing.id, worktreeId: existing.worktreeId },
-          );
-        }
-        if (existing.status === "failed") {
-          throw new WorktreeServiceError(
-            existing.httpStatus ?? 409,
-            existing.errorCode ?? "CONFLICT",
-            existing.errorMessage ?? "The prior operation failed",
-            { operationId: existing.id, worktreeId: existing.worktreeId },
-          );
-        }
         return {
           operation: existing,
-          prior: JSON.parse(existing.resultJson!) as T,
+          prior: existingOperationResult<T>(existing, input.hash),
         };
       }
       const operation: WorktreeOperationRecord = {
@@ -324,17 +352,19 @@ export function createWorktreeService(options: {
   };
 
   const complete = <T>(operationId: string, status: number, result: T): T => {
-    activeOperations.delete(operationId);
-    options.repository.completeOperation(
+    const completed = options.repository.completeOperation(
       operationId,
       status,
       JSON.stringify(result),
       now().toISOString(),
     );
+    if (!completed) {
+      throw new Error("Operation is no longer in progress");
+    }
+    activeOperations.delete(operationId);
     return result;
   };
   const fail = (operationId: string, error: WorktreeServiceError): never => {
-    activeOperations.delete(operationId);
     options.repository.failOperation(
       operationId,
       error.statusCode,
@@ -342,6 +372,7 @@ export function createWorktreeService(options: {
       error.message,
       now().toISOString(),
     );
+    activeOperations.delete(operationId);
     throw error;
   };
 
@@ -571,8 +602,6 @@ export function createWorktreeService(options: {
           baseCommit: input.baseCommit,
           lifecycle: "creating",
           finalBranchTip: null,
-          safetyTargetCommit: null,
-          branchDeleted: false,
           health: "unknown",
           dirty: null,
           lastErrorCode: null,
@@ -608,7 +637,11 @@ export function createWorktreeService(options: {
           );
           return candidate;
         });
-        options.onMembershipChange?.(record.id);
+        publishMembership({
+          type: "upsert",
+          worktreeId: record.id,
+          workspaceId: record.workspaceId,
+        });
 
         await options.lock.runExclusive(workspace.gitCommonDir, async () => {
           if (
@@ -687,8 +720,13 @@ export function createWorktreeService(options: {
       }
     },
     async remove(id, idempotencyKey, signal) {
-      const initial = requireRecord(id);
       const hash = requestHash("remove", { id });
+      const replay = replayOperation<RemoveWorktreeResponse>(
+        idempotencyKey,
+        hash,
+      );
+      if (replay) return replay;
+      const initial = requireRecord(id);
       const started = beginOperation<RemoveWorktreeResponse>({
         type: "remove",
         workspaceId: initial.workspaceId,
@@ -839,7 +877,11 @@ export function createWorktreeService(options: {
             })!;
           },
         );
-        options.onMembershipChange?.(removed.id);
+        publishMembership({
+          type: "upsert",
+          worktreeId: removed.id,
+          workspaceId: removed.workspaceId,
+        });
         const response: RemoveWorktreeResponse = {
           operationId: started.operation.id,
           removed: true,
@@ -879,8 +921,13 @@ export function createWorktreeService(options: {
       }
     },
     async deleteBranch(id, input, idempotencyKey, signal) {
-      const initial = requireRecord(id);
       const hash = requestHash("delete_branch", { id, ...input });
+      const replay = replayOperation<DeleteWorktreeBranchResponse>(
+        idempotencyKey,
+        hash,
+      );
+      if (replay) return replay;
+      const initial = requireRecord(id);
       const started = beginOperation<DeleteWorktreeBranchResponse>({
         type: "delete_branch",
         workspaceId: initial.workspaceId,
@@ -890,12 +937,9 @@ export function createWorktreeService(options: {
         requestJson: JSON.stringify({ id, ...input }),
       });
       if (started.prior) return started.prior;
+      let deletionAttempted = false;
       try {
-        if (
-          initial.lifecycle !== "removed" ||
-          !initial.finalBranchTip ||
-          initial.branchDeleted
-        ) {
+        if (initial.lifecycle !== "removed" || !initial.finalBranchTip) {
           throw new WorktreeServiceError(
             409,
             "CONFLICT",
@@ -910,97 +954,105 @@ export function createWorktreeService(options: {
           );
         }
         const workspace = requireWorkspace(initial.workspaceId);
-        const updated = await options.lock.runExclusive(
-          workspace.gitCommonDir,
-          async () => {
-            const entries = await options.git.list(
-              workspace.repositoryPath,
-              signal,
+        const response: DeleteWorktreeBranchResponse = {
+          operationId: started.operation.id,
+          deleted: true,
+          atomic: true,
+          worktreeId: initial.id,
+          workspaceId: initial.workspaceId,
+        };
+        await options.lock.runExclusive(workspace.gitCommonDir, async () => {
+          const entries = await options.git.list(
+            workspace.repositoryPath,
+            signal,
+          );
+          if (entries.some((entry) => entry.branchRef === initial.branchRef)) {
+            throw new WorktreeServiceError(
+              409,
+              "BRANCH_CHANGED",
+              "Another worktree is using the managed branch",
             );
-            if (
-              entries.some((entry) => entry.branchRef === initial.branchRef)
-            ) {
-              throw new WorktreeServiceError(
-                409,
-                "BRANCH_CHANGED",
-                "Another worktree is using the managed branch",
-              );
-            }
-            const currentTip = await options.git.branchTip(
-              workspace.repositoryPath,
-              initial.branchRef,
-              signal,
+          }
+          const currentTip = await options.git.branchTip(
+            workspace.repositoryPath,
+            initial.branchRef,
+            signal,
+          );
+          if (currentTip !== input.expectedBranchTip) {
+            throw new WorktreeServiceError(
+              409,
+              "BRANCH_CHANGED",
+              "Managed branch changed after worktree removal",
             );
-            if (currentTip !== input.expectedBranchTip) {
-              throw new WorktreeServiceError(
-                409,
-                "BRANCH_CHANGED",
-                "Managed branch changed after worktree removal",
-              );
-            }
-            const currentHead = await options.git.resolveHead(
-              workspace.repositoryPath,
-              signal,
+          }
+          const currentHead = await options.git.resolveHead(
+            workspace.repositoryPath,
+            signal,
+          );
+          if (!currentHead || currentHead.commit !== input.safetyTargetCommit) {
+            throw new WorktreeServiceError(
+              409,
+              "BRANCH_CHANGED",
+              "Workspace HEAD moved after the branch-deletion confirmation was prepared",
             );
-            if (
-              !currentHead ||
-              currentHead.commit !== input.safetyTargetCommit
-            ) {
-              throw new WorktreeServiceError(
-                409,
-                "BRANCH_CHANGED",
-                "Workspace HEAD moved after the branch-deletion confirmation was prepared",
-              );
-            }
-            const merged = await options.git.branchMergedInto(
-              workspace.repositoryPath,
-              currentTip,
-              input.safetyTargetCommit,
-              signal,
+          }
+          const merged = await options.git.branchMergedInto(
+            workspace.repositoryPath,
+            currentTip,
+            input.safetyTargetCommit,
+            signal,
+          );
+          if (!merged) {
+            throw new WorktreeServiceError(
+              409,
+              "BRANCH_NOT_MERGED",
+              "Managed branch is not merged into the selected safety target",
             );
-            if (!merged) {
-              throw new WorktreeServiceError(
-                409,
-                "BRANCH_NOT_MERGED",
-                "Managed branch is not merged into the selected safety target",
-              );
-            }
+          }
+          try {
             await options.git.deleteBranch(
               workspace.repositoryPath,
               initial.branchRef,
               currentTip,
               signal,
             );
-            if (
-              await options.git.branchExists(
+            deletionAttempted = true;
+          } catch (error) {
+            try {
+              deletionAttempted = !(await options.git.branchExists(
                 workspace.repositoryPath,
                 initial.branchRef,
-                signal,
-              )
-            ) {
-              throw new WorktreeServiceError(
-                409,
-                "BRANCH_CHANGED",
-                "Managed branch still exists after atomic deletion",
-              );
+              ));
+            } catch {
+              deletionAttempted = true;
             }
-            return options.repository.updateState(id, {
-              safetyTargetCommit: input.safetyTargetCommit,
-              branchDeleted: true,
-              lastErrorCode: null,
-              lastErrorMessage: null,
-              updatedAt: now().toISOString(),
-            })!;
-          },
-        );
-        const response: DeleteWorktreeBranchResponse = {
-          operationId: started.operation.id,
-          deleted: true,
-          atomic: true,
-          worktree: toDto(updated),
-        };
-        return complete(started.operation.id, 200, response);
+            throw error;
+          }
+          options.repository.finalizeBranchDeletion({
+            operationId: started.operation.id,
+            worktreeId: initial.id,
+            expectedBranchTip: currentTip,
+            resultJson: JSON.stringify(response),
+            updatedAt: now().toISOString(),
+          });
+          activeOperations.delete(started.operation.id);
+        });
+        publishMembership({
+          type: "removed",
+          worktreeId: initial.id,
+          workspaceId: initial.workspaceId,
+        });
+        return response;
       } catch (error) {
+        if (deletionAttempted) {
+          activeOperations.delete(started.operation.id);
+          throw new WorktreeServiceError(
+            409,
+            "OPERATION_IN_PROGRESS",
+            "Branch deletion reached Git and will be finalized by reconciliation",
+            { operationId: started.operation.id, worktreeId: initial.id },
+          );
+        }
         return fail(
           started.operation.id,
           serviceError(error, "BRANCH_CHANGED"),
@@ -1124,7 +1176,11 @@ export function createWorktreeService(options: {
                         dirty: null,
                         updatedAt: now().toISOString(),
                       });
-                      options.onMembershipChange?.(removed.id);
+                      publishMembership({
+                        type: "upsert",
+                        worktreeId: removed.id,
+                        workspaceId: removed.workspaceId,
+                      });
                     }
                   }
                 } else if (exact) {
@@ -1234,27 +1290,61 @@ export function createWorktreeService(options: {
                     timestamp,
                   );
                 }
-              } else if (record.branchDeleted) {
-                const response: DeleteWorktreeBranchResponse = {
-                  operationId: operation.id,
-                  deleted: true,
-                  atomic: true,
-                  worktree: toDto(record),
-                };
-                options.repository.completeOperation(
-                  operation.id,
-                  200,
-                  JSON.stringify(response),
-                  timestamp,
-                );
               } else {
-                options.repository.failOperation(
-                  operation.id,
-                  409,
-                  "BRANCH_CHANGED",
-                  "Interrupted branch deletion could not be proven; inspect the ref before retrying",
-                  timestamp,
-                );
+                let expectedBranchTip: string | undefined;
+                try {
+                  const request = JSON.parse(operation.requestJson) as {
+                    expectedBranchTip?: unknown;
+                  };
+                  if (typeof request.expectedBranchTip === "string") {
+                    expectedBranchTip = request.expectedBranchTip;
+                  }
+                } catch {
+                  expectedBranchTip = undefined;
+                }
+                let branchExists: boolean;
+                try {
+                  branchExists = await options.git.branchExists(
+                    workspace.repositoryPath,
+                    record.branchRef,
+                  );
+                } catch {
+                  continue;
+                }
+                if (
+                  record.lifecycle === "removed" &&
+                  record.finalBranchTip &&
+                  expectedBranchTip === record.finalBranchTip &&
+                  !branchExists
+                ) {
+                  const response: DeleteWorktreeBranchResponse = {
+                    operationId: operation.id,
+                    deleted: true,
+                    atomic: true,
+                    worktreeId: record.id,
+                    workspaceId: record.workspaceId,
+                  };
+                  options.repository.finalizeBranchDeletion({
+                    operationId: operation.id,
+                    worktreeId: record.id,
+                    expectedBranchTip: record.finalBranchTip,
+                    resultJson: JSON.stringify(response),
+                    updatedAt: timestamp,
+                  });
+                  publishMembership({
+                    type: "removed",
+                    worktreeId: record.id,
+                    workspaceId: record.workspaceId,
+                  });
+                } else {
+                  options.repository.failOperation(
+                    operation.id,
+                    409,
+                    "BRANCH_CHANGED",
+                    "Interrupted branch deletion did not reach the expected absent-branch postcondition",
+                    timestamp,
+                  );
+                }
               }
             }
           });

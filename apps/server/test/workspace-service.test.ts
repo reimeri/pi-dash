@@ -124,8 +124,8 @@ describe("WorkspaceService", () => {
         `
         INSERT INTO worktrees (
           id, workspace_id, name, slug, path, branch_ref, base_ref, base_commit,
-          lifecycle, health, branch_deleted, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 'healthy', 0, ?, ?)
+          lifecycle, health, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 'healthy', ?, ?)
       `,
       )
       .run(

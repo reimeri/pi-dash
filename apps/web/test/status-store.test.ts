@@ -4,6 +4,7 @@ import type {
 } from "@pi-dash/contracts";
 import { describe, expect, it } from "vitest";
 import {
+  createWorkflowStatusStore,
   initialWorkflowStatusState,
   reduceWorkflowStatusState,
 } from "../src/lib/status/store.js";
@@ -20,11 +21,22 @@ const status: WorkflowStatusDto = {
 
 function snapshot(): ApplicationEventsServerFrame {
   return {
-    v: 2,
+    v: 3,
     type: "snapshot",
     cursor: 4,
     statuses: [status],
-    runtimes: [],
+    runtimes: [
+      {
+        worktreeId: status.worktreeId,
+        runtimeId: null,
+        state: "stopped",
+        startedAt: null,
+        exitedAt: null,
+        exitCode: null,
+        signal: null,
+        attachedClients: 0,
+      },
+    ],
     workspaceAttention: [],
   };
 }
@@ -50,7 +62,7 @@ describe("workflow status store", () => {
       snapshot(),
     ).state;
     const working = reduceWorkflowStatusState(initialized, {
-      v: 2,
+      v: 3,
       type: "status",
       cursor: 5,
       status: { ...status, state: "working", reason: "agent", revision: 1 },
@@ -59,13 +71,38 @@ describe("workflow status store", () => {
     expect(working.state.byWorktree[status.worktreeId]?.state).toBe("working");
     expect(
       reduceWorkflowStatusState(working.state, {
-        v: 2,
+        v: 3,
         type: "status",
         cursor: 7,
         status: { ...status, state: "done", reason: "settled", revision: 2 },
         workspaceAttention: [],
       }).resyncRequired,
     ).toBe(true);
+  });
+
+  it("evicts deleted worktree status and runtime state", () => {
+    const initialized = reduceWorkflowStatusState(
+      initialWorkflowStatusState,
+      snapshot(),
+    ).state;
+    const removed = reduceWorkflowStatusState(initialized, {
+      v: 3,
+      type: "worktreeRemoved",
+      cursor: 5,
+      worktreeId: status.worktreeId,
+      workspaceId: "22222222-2222-4222-8222-222222222222",
+      workspaceAttention: [],
+    });
+    expect(removed.state.byWorktree[status.worktreeId]).toBeUndefined();
+    expect(removed.state.runtimes[status.worktreeId]).toBeUndefined();
+  });
+
+  it("explicitly clears worktrees removed with workspace metadata", () => {
+    const store = createWorkflowStatusStore();
+    expect(store.apply(snapshot())).toBe(true);
+    store.removeWorktrees([status.worktreeId]);
+    expect(store.current().byWorktree[status.worktreeId]).toBeUndefined();
+    expect(store.current().runtimes[status.worktreeId]).toBeUndefined();
   });
 
   it("applies status and workspace aggregate atomically", () => {
@@ -75,7 +112,7 @@ describe("workflow status store", () => {
     ).state;
     const workspaceId = "22222222-2222-4222-8222-222222222222";
     const next = reduceWorkflowStatusState(initialized, {
-      v: 2,
+      v: 3,
       type: "status",
       cursor: 5,
       status: {

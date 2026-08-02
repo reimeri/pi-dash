@@ -27,7 +27,7 @@ The dashboard record shows the expected managed path, branch ref, base commit, l
 
 Removal and branch deletion are independent. A `BRANCH_NOT_MERGED` or `BRANCH_CHANGED` refusal leaves the removed worktree tombstone and the branch intact. Merge the branch into the intended workspace target or manage it manually. Pi Dash never force-deletes a branch.
 
-The atomic deletion guarantee applies only when the branch ref still equals the tombstone's expected OID. `git update-ref -d <ref> <expected-oid>` fails rather than deleting a moved ref.
+The atomic deletion guarantee applies only when the branch ref still equals the tombstone's expected OID. `git update-ref -d <ref> <expected-oid>` fails rather than deleting a moved ref. After successful deletion, Pi Dash stores an idempotent operation receipt and removes the tombstone, so its slug can be reused. If the daemon stops after recording delete intent and the expected branch is absent on restart, reconciliation completes that same finalization; an unchanged or moved branch produces a durable failure instead.
 
 ## Downgrade warning
 

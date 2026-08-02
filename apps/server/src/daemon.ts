@@ -209,7 +209,16 @@ export async function createDaemon(
         await terminals.stop(worktree.id);
         await terminals.dispose(worktree.id);
       },
-      onMembershipChange: (worktreeId) => statuses!.publishCurrent(worktreeId),
+      onMembershipChange: (change) => {
+        if (change.type === "removed") {
+          applicationEvents?.publishWorktreeRemoved(
+            change.worktreeId,
+            change.workspaceId,
+          );
+        } else {
+          statuses!.publishCurrent(change.worktreeId);
+        }
+      },
     });
     terminals = createTerminalManager({
       lifecycle,

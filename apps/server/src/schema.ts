@@ -66,10 +66,6 @@ export const worktrees = sqliteTable(
       enum: ["creating", "ready", "removing", "removed", "error"],
     }).notNull(),
     finalBranchTip: text("final_branch_tip"),
-    safetyTargetCommit: text("safety_target_commit"),
-    branchDeleted: integer("branch_deleted", { mode: "boolean" })
-      .notNull()
-      .default(false),
     health: text("health", {
       enum: ["healthy", "missing", "git_mismatch", "locked", "unknown"],
     })
@@ -146,9 +142,7 @@ export const worktreeOperations = sqliteTable(
     workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
-    worktreeId: text("worktree_id").references(() => worktrees.id, {
-      onDelete: "cascade",
-    }),
+    worktreeId: text("worktree_id"),
     requestHash: text("request_hash").notNull(),
     requestJson: text("request_json").notNull(),
     status: text("status", {

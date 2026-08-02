@@ -88,7 +88,7 @@
       <article class="decision"><h3>Persistence</h3><p>SQLite with Drizzle schema and migrations. npm workspaces, Vitest, and Playwright form the project toolchain.</p></article>
       <article class="decision"><h3>Pi startup</h3><p>Start Pi lazily on the first selection of a worktree terminal, then keep it alive until stop, removal, or daemon shutdown.</p></article>
       <article class="decision"><h3>Git defaults</h3><p>New branch from the workspace repository's current <code>HEAD</code>; branch name <code>pi-dash/&lt;slug&gt;</code>; worktree path under the central app data directory.</p></article>
-      <article class="decision"><h3>Removal</h3><p>Block dirty worktree removal. After removal, optionally perform a separately confirmed mergedness check and atomic expected-OID ref deletion.</p></article>
+      <article class="decision"><h3>Removal</h3><p>Block dirty worktree removal. After removal, optionally perform a separately confirmed mergedness check and atomic expected-OID ref deletion; successful branch cleanup stores an idempotent receipt, deletes the worktree tombstone, and releases its slug for reuse.</p></article>
       <article class="decision"><h3>Status</h3><p><code>ask_user</code> tool execution means blocked. <code>agent_settled</code> means done until the terminal is viewed or acknowledged.</p></article>
       <article class="decision"><h3>Folder selection</h3><p>Use a native Linux directory dialog initiated by the daemon, with explicit cancellation and unavailability handling.</p></article>
     </div>
@@ -172,6 +172,17 @@ Worktree {
   updatedAt: timestamp
 }
 
+WorktreeOperation {
+  id: UUID
+  idempotencyKey: UUID
+  workspaceId: UUID
+  worktreeId: historical UUID | null
+  type: create | remove | delete_branch
+  status: in_progress | succeeded | failed
+  requestHash: string
+  durableResultOrError: JSON
+}
+
 WorkflowStatus {
   worktreeId: UUID
   state: idle | working | blocked | done
@@ -211,9 +222,10 @@ WorkflowStatus {
       <li>Under the shared worktree lifecycle coordinator, atomically transition <code>ready → removing</code>; terminal start uses the same coordinator and is rejected after this point.</li>
       <li>Stop and dispose the Pi runtime only after the preliminary check and lifecycle claim say removal is eligible.</li>
       <li>Recheck dirtiness immediately after shutdown to close the race, then run normal <code>git worktree remove</code> without <code>--force</code>. New dirt or exact intact failure restores <code>ready</code>; ambiguity becomes <code>error</code>.</li>
-      <li>Retain a removed-worktree tombstone containing the verified branch and final tip so branch cleanup can be a separate operation.</li>
+      <li>After verifying Git no longer reports the worktree, transition it to <code>removed</code> and retain a temporary tombstone containing the verified branch and final tip so branch cleanup can be a separate operation.</li>
       <li>If separately confirmed afterward, verify no worktree uses the branch and that the recorded tip is merged into the chosen safety target, then atomically delete the ref with <code>git update-ref -d &lt;ref&gt; &lt;expected-tip&gt;</code>. A moved/unmerged branch refusal does not invalidate worktree removal.</li>
-      <li>Finalize the record only after Git no longer reports the worktree; ambiguous failures remain recoverable error/tombstone records.</li>
+      <li>After definitively proving the branch is absent, use one SQLite transaction to complete the durable idempotency receipt and delete the tombstone. The card/sidebar entry disappears and the former slug/branch identity becomes reusable.</li>
+      <li>If interruption occurs after durable delete intent, reconciliation finalizes only when Git definitively reports the branch absent; inspection errors retain the operation and tombstone for a later retry.</li>
     </ol>
   </section>
 
@@ -266,8 +278,8 @@ WorkflowStatus {
         <tr><td><code>DELETE /api/v1/workspaces/:id</code></td><td>Remove an empty workspace registration.</td></tr>
         <tr><td><code>GET /api/v1/workspaces/:id/refs</code></td><td>Return validated candidate base refs and current HEAD metadata.</td></tr>
         <tr><td><code>POST /api/v1/workspaces/:id/worktrees</code></td><td>Create a managed worktree and branch from an exact displayed <code>baseCommit</code>; mutating requests use an idempotency key.</td></tr>
-        <tr><td><code>POST /api/v1/worktrees/:id/remove</code></td><td>Remove a clean managed worktree without a force path and retain its branch tombstone.</td></tr>
-        <tr><td><code>POST /api/v1/worktrees/:id/delete-branch</code></td><td>Separately confirm and safely delete the unchanged recorded branch after worktree removal.</td></tr>
+        <tr><td><code>POST /api/v1/worktrees/:id/remove</code></td><td>Remove a clean managed worktree without a force path and retain a temporary branch tombstone.</td></tr>
+        <tr><td><code>POST /api/v1/worktrees/:id/delete-branch</code></td><td>Separately confirm and safely delete the unchanged recorded branch, then atomically record the receipt and delete the tombstone.</td></tr>
         <tr><td><code>POST /api/v1/worktrees/:id/terminal/start</code></td><td>Idempotently create or return the runtime.</td></tr>
         <tr><td><code>POST /api/v1/worktrees/:id/terminal/stop</code></td><td>Gracefully stop the runtime.</td></tr>
         <tr><td><code>POST /api/v1/worktrees/:id/terminal/restart</code></td><td>Stop then start a fresh Pi process.</td></tr>
@@ -331,7 +343,7 @@ WorkflowStatus {
       <li>Run Git and Pi with executable plus argument arrays and <code>shell: false</code>.</li>
       <li>Validate IDs, names, branch components, refs, terminal dimensions, WebSocket message sizes, and status frames at trust boundaries.</li>
       <li>Acquire an exclusive per-data-root daemon lock before migration/readiness, and serialize mutating Git operations with both in-process and cross-process locks keyed by canonical Git common directory.</li>
-      <li>Use database lifecycle markers for interrupted create/remove operations and reconcile them with <code>git worktree list --porcelain</code> on startup.</li>
+      <li>Use database lifecycle markers for interrupted create/remove operations and a detached idempotency ledger for branch deletion; reconcile against definitive Git worktree/ref inspection on startup.</li>
       <li>Bound terminal buffers, socket queues, logs, request bodies, and native dialog concurrency.</li>
       <li>Never log authentication tokens, Pi credentials, terminal input/output, prompt content, or status side-channel secrets by default.</li>
       <li>Use SIGTERM followed by a bounded wait and SIGKILL escalation for process-tree cleanup.</li>

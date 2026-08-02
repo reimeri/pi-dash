@@ -67,6 +67,22 @@ export function reduceWorkflowStatusState(
       },
     };
   }
+  if (frame.type === "worktreeRemoved") {
+    const byWorktree = { ...state.byWorktree };
+    const runtimes = { ...state.runtimes };
+    delete byWorktree[frame.worktreeId];
+    delete runtimes[frame.worktreeId];
+    return {
+      resyncRequired: false,
+      state: {
+        ...state,
+        cursor: frame.cursor,
+        byWorktree,
+        runtimes,
+        workspaceAttention: frame.workspaceAttention,
+      },
+    };
+  }
   return {
     resyncRequired: false,
     state: {
@@ -96,6 +112,23 @@ export function createWorkflowStatusStore() {
       const reduced = reduceWorkflowStatusState(current, frame);
       if (!reduced.resyncRequired) set(reduced.state);
       return !reduced.resyncRequired;
+    },
+    removeWorktrees(worktreeIds: string[]) {
+      if (worktreeIds.length === 0) return;
+      const removed = new Set(worktreeIds);
+      update((state) => ({
+        ...state,
+        byWorktree: Object.fromEntries(
+          Object.entries(state.byWorktree).filter(
+            ([worktreeId]) => !removed.has(worktreeId),
+          ),
+        ),
+        runtimes: Object.fromEntries(
+          Object.entries(state.runtimes).filter(
+            ([worktreeId]) => !removed.has(worktreeId),
+          ),
+        ),
+      }));
     },
     reset() {
       set(initialWorkflowStatusState);

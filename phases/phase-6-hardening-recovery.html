@@ -56,6 +56,7 @@
   <li><strong>REQ-06-13:</strong> Critical non-terminal workflows shall work by keyboard at 200% zoom, and status meaning shall remain available without color or animation.</li>
   <li><strong>REQ-06-14:</strong> The diagnostics API shall return only allowlisted versions, capability states, counts, limits, reconciliation summaries, and sanitized error codes.</li>
   <li><strong>REQ-06-15:</strong> Security review shall have no unresolved high-severity issue before the phase passes.</li>
+  <li><strong>REQ-06-16:</strong> Reconciliation of an interrupted branch deletion shall finalize its durable receipt and delete the tombstone only when the stored request matches the recorded final tip/safety target and Git definitively reports the branch absent. Ref-inspection errors shall preserve the in-progress operation and tombstone.</li>
 </ul>
 
 <h2>Non-functional requirements</h2>
@@ -68,7 +69,7 @@
 </ul>
 
 <h2>Technical design</h2>
-<p><code>ReconciliationCoordinator</code> runs after migration and before product readiness. It validates locks/permissions, resets stale runtime-dependent states, inspects workspaces, and reconciles managed worktrees under bounded concurrency and common-dir locks. Deterministic exact postconditions may advance an interrupted lifecycle; ambiguity becomes a repair card. Startup never deletes files or refs.</p>
+<p><code>ReconciliationCoordinator</code> runs after migration and before product readiness. It validates locks/permissions, resets stale runtime-dependent states, inspects workspaces, and reconciles managed worktrees and in-progress operation receipts under bounded concurrency and common-dir locks. Deterministic exact postconditions may advance an interrupted lifecycle. Durable branch-delete intent plus definitive ref absence may complete the receipt and delete only the dashboard tombstone metadata; Git inspection errors preserve it. Startup never deletes files or refs.</p>
 <p>Each TerminalRuntime owns an input lease <code>{ownerConnectionId, generation, expiresAt}</code>. The first eligible client may claim it. Takeover increments generation under the runtime mutex and broadcasts ownership. Every input frame carries generation; server comparison immediately before <code>pty.write</code> rejects stale buffered input. Output is multicast independently.</p>
 <p>Validated configuration centralizes defaults and hard ceilings. Protocol parsers reject sizes early; socket queue bytes are tracked; slow clients are disconnected with replay instructions. Inspection/mutation concurrency, process output, dialog count, request bodies, reconnect rate, and logs are bounded. Diagnostics are built from an explicit privacy allowlist.</p>
 <p>Backup uses the SQLite library's online backup facility (or an equivalently safe SQLite operation), verifies integrity/schema, and records no secret. Restore is an offline operator action followed by normal reconciliation.</p>
@@ -141,6 +142,7 @@ Idempotency-Key: &lt;client UUID&gt;
   <li>Two tabs claim simultaneously: runtime mutex produces one generation winner; stale input is rejected.</li>
   <li>Owner suspends without close: heartbeat expires; resumed buffered input has an old generation.</li>
   <li>Crash leaves creating/removing records: exact postconditions advance safely; ambiguity remains an error.</li>
+  <li>Crash follows atomic branch deletion but precedes SQLite finalization: matching durable intent plus definitive branch absence completes the receipt and removes the tombstone; inspection failure leaves both intact.</li>
   <li>Database restore disagrees with Git: repair cards show mismatches without adoption/deletion.</li>
   <li>Symlink/path changes between checks: postcondition containment/common-dir validation stops mutation.</li>
   <li>Output flood exceeds queues: slow clients disconnect/replay while PTY and APIs remain responsive.</li>
@@ -159,14 +161,14 @@ Idempotency-Key: &lt;client UUID&gt;
 </ul>
 <h3>Integration</h3>
 <ul>
-  <li>Fault injection at each Git saga boundary, database busy/full/read-only/WAL, socket disconnect, PTY hang/crash, picker error, shutdown signal, and stale startup.</li>
+  <li>Fault injection at each Git saga boundary, including post-ref-delete database failure and ref-inspection failure; database busy/full/read-only/WAL, socket disconnect, PTY hang/crash, picker error, shutdown signal, and stale startup.</li>
   <li>Multi-client ownership under concurrent claims, disconnect, suspend simulation, reconnect, and stale buffered frames.</li>
   <li>Host/Origin/CSRF/token/socket/path/ref injection and oversized/malformed boundary suites.</li>
   <li>Supported-capacity and sustained-output tests meet numeric budgets without leaks or API starvation.</li>
 </ul>
 <h3>End-to-end</h3>
 <ul>
-  <li>Complete product journey including dirty-removal refusal without stopping Pi, clean removal, and separate branch deletion.</li>
+  <li>Complete product journey including dirty-removal refusal without stopping Pi, clean removal, separate branch deletion, tombstone/UI eviction, idempotent replay, and slug reuse.</li>
   <li>Two browser contexts observe one terminal, transfer control, and prove only lease-owner input arrives.</li>
   <li>Kill/restart daemon and verify stopped runtimes, status reset/preservation, data survival, and non-destructive reconciliation.</li>
   <li>Keyboard-only, 200% zoom, reduced-motion, and accessible status/error checks.</li>
@@ -174,7 +176,7 @@ Idempotency-Key: &lt;client UUID&gt;
 
 <h2>Acceptance criteria</h2>
 <ul>
-  <li>☐ Reconciliation handles every injected exact/ambiguous/external state without unsafe adoption or deletion.</li>
+  <li>☐ Reconciliation handles every injected exact/ambiguous/external state without unsafe adoption or Git deletion, and removes branch tombstone metadata only after matched durable intent and definitive ref absence.</li>
   <li>☐ Single-writer leases prevent duplicate/stale input and provide visible observer/takeover behavior.</li>
   <li>☐ Numeric capacity, latency, output, memory, and shutdown budgets pass on the recorded reference machine.</li>
   <li>☐ Security review has no unresolved high-severity issue and privacy/log diagnostics contain no forbidden data.</li>

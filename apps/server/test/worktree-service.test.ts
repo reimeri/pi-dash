@@ -38,7 +38,11 @@ afterEach(() => {
 async function fixture(
   options: {
     stopRuntime?: () => Promise<void>;
-    onMembershipChange?: (worktreeId: string) => void;
+    onMembershipChange?: (change: {
+      type: "upsert" | "removed";
+      worktreeId: string;
+      workspaceId: string;
+    }) => void;
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "pi-dash-worktree-service-"));
@@ -292,6 +296,134 @@ describe("WorktreeService integration", () => {
     database.close();
   });
 
+  it("reconciles durable branch-deletion intent when the branch is absent", async () => {
+    const {
+      database,
+      repositoryPath,
+      workspace,
+      service,
+      manager,
+      worktreeRepository,
+    } = await fixture();
+    const snapshot = (await service.refs(workspace.id)).head!;
+    const created = await service.create(
+      workspace.id,
+      {
+        name: "Interrupted branch deletion",
+        slug: "interrupted-branch-deletion",
+        baseRef: snapshot.fullName,
+        baseCommit: snapshot.commit,
+        baseSnapshotToken: snapshot.baseSnapshotToken,
+      },
+      crypto.randomUUID(),
+    );
+    const removed = await service.remove(
+      created.worktree.id,
+      crypto.randomUUID(),
+    );
+    const operationId = crypto.randomUUID();
+    const idempotencyKey = crypto.randomUUID();
+    const timestamp = new Date().toISOString();
+    worktreeRepository.createOperation({
+      id: operationId,
+      idempotencyKey,
+      operationType: "delete_branch",
+      workspaceId: workspace.id,
+      worktreeId: created.worktree.id,
+      requestHash: "e".repeat(64),
+      requestJson: JSON.stringify({
+        id: created.worktree.id,
+        expectedBranchTip: removed.tombstone.branchTip,
+        safetyTargetCommit: snapshot.commit,
+      }),
+      status: "in_progress",
+      httpStatus: null,
+      resultJson: null,
+      errorCode: null,
+      errorMessage: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await manager.deleteBranch(
+      repositoryPath,
+      created.worktree.branchRef,
+      removed.tombstone.branchTip,
+    );
+    const originalBranchExists = manager.branchExists.bind(manager);
+    manager.branchExists = async () => {
+      throw new Error("injected branch inspection failure");
+    };
+
+    await service.reconcile(workspace.id);
+    expect(worktreeRepository.get(created.worktree.id)).toBeDefined();
+    expect(worktreeRepository.findOperation(idempotencyKey)?.status).toBe(
+      "in_progress",
+    );
+
+    manager.branchExists = originalBranchExists;
+    await service.reconcile(workspace.id);
+
+    expect(worktreeRepository.get(created.worktree.id)).toBeUndefined();
+    expect(worktreeRepository.findOperation(idempotencyKey)).toMatchObject({
+      status: "succeeded",
+      httpStatus: 200,
+      worktreeId: created.worktree.id,
+    });
+    database.close();
+  });
+
+  it("leaves post-Git finalization failures recoverable", async () => {
+    const { database, workspace, service, worktreeRepository } =
+      await fixture();
+    const snapshot = (await service.refs(workspace.id)).head!;
+    const created = await service.create(
+      workspace.id,
+      {
+        name: "Finalization failure",
+        slug: "finalization-failure",
+        baseRef: snapshot.fullName,
+        baseCommit: snapshot.commit,
+        baseSnapshotToken: snapshot.baseSnapshotToken,
+      },
+      crypto.randomUUID(),
+    );
+    const removed = await service.remove(
+      created.worktree.id,
+      crypto.randomUUID(),
+    );
+    const operationKey = crypto.randomUUID();
+    const originalFinalize = worktreeRepository.finalizeBranchDeletion;
+    worktreeRepository.finalizeBranchDeletion = () => {
+      throw new Error("injected finalization failure");
+    };
+
+    await expect(
+      service.deleteBranch(
+        created.worktree.id,
+        {
+          expectedBranchTip: removed.tombstone.branchTip,
+          safetyTargetCommit: snapshot.commit,
+        },
+        operationKey,
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining<Partial<WorktreeServiceError>>({
+        code: "OPERATION_IN_PROGRESS",
+      }),
+    );
+    expect(worktreeRepository.findOperation(operationKey)?.status).toBe(
+      "in_progress",
+    );
+
+    worktreeRepository.finalizeBranchDeletion = originalFinalize;
+    await service.reconcile(workspace.id);
+    expect(worktreeRepository.get(created.worktree.id)).toBeUndefined();
+    expect(worktreeRepository.findOperation(operationKey)?.status).toBe(
+      "succeeded",
+    );
+    database.close();
+  });
+
   it("keeps an unmerged branch after the worktree is removed", async () => {
     const { repositoryPath, database, workspace, service } = await fixture();
     const snapshot = (await service.refs(workspace.id)).head!;
@@ -346,10 +478,14 @@ describe("WorktreeService integration", () => {
     database.close();
   });
 
-  it("blocks dirty removal, then removes cleanly and atomically deletes a merged branch", async () => {
-    const membershipChanges: string[] = [];
-    const { database, workspace, service } = await fixture({
-      onMembershipChange: (worktreeId) => membershipChanges.push(worktreeId),
+  it("deletes a completed tombstone, preserves retries, and allows slug reuse", async () => {
+    const membershipChanges: Array<{
+      type: "upsert" | "removed";
+      worktreeId: string;
+      workspaceId: string;
+    }> = [];
+    const { database, workspace, service, worktreeRepository } = await fixture({
+      onMembershipChange: (change) => membershipChanges.push(change),
     });
     const snapshot = (await service.refs(workspace.id)).head!;
     const created = await service.create(
@@ -386,27 +522,81 @@ describe("WorktreeService integration", () => {
       cwd: created.worktree.path,
     });
 
-    const removed = await service.remove(
-      created.worktree.id,
-      crypto.randomUUID(),
-    );
+    const removeKey = crypto.randomUUID();
+    const removed = await service.remove(created.worktree.id, removeKey);
     expect(removed.worktree.lifecycle).toBe("removed");
-    expect(removed.worktree.branchDeleted).toBe(false);
-    expect(membershipChanges).toEqual([
-      created.worktree.id,
-      created.worktree.id,
-    ]);
 
+    const deletionInput = {
+      expectedBranchTip: removed.tombstone.branchTip,
+      safetyTargetCommit: snapshot.commit,
+    };
+    const deleteKey = crypto.randomUUID();
     const deleted = await service.deleteBranch(
       created.worktree.id,
+      deletionInput,
+      deleteKey,
+    );
+    expect(deleted).toEqual({
+      operationId: expect.any(String),
+      deleted: true,
+      atomic: true,
+      worktreeId: created.worktree.id,
+      workspaceId: workspace.id,
+    });
+    expect(worktreeRepository.get(created.worktree.id)).toBeUndefined();
+    expect(service.list(workspace.id)).toEqual([]);
+    expect(
+      await service.deleteBranch(created.worktree.id, deletionInput, deleteKey),
+    ).toEqual(deleted);
+    expect(await service.remove(created.worktree.id, removeKey)).toEqual(
+      removed,
+    );
+    await expect(
+      service.deleteBranch(
+        created.worktree.id,
+        deletionInput,
+        crypto.randomUUID(),
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining<Partial<WorktreeServiceError>>({
+        code: "WORKTREE_NOT_MANAGED",
+      }),
+    );
+
+    const recreated = await service.create(
+      workspace.id,
       {
-        expectedBranchTip: removed.tombstone.branchTip,
-        safetyTargetCommit: snapshot.commit,
+        name: "Clean removal reused",
+        slug: "clean-removal",
+        baseRef: snapshot.fullName,
+        baseCommit: snapshot.commit,
+        baseSnapshotToken: snapshot.baseSnapshotToken,
       },
       crypto.randomUUID(),
     );
-    expect(deleted).toMatchObject({ deleted: true, atomic: true });
-    expect(deleted.worktree.branchDeleted).toBe(true);
+    expect(recreated.worktree.branchRef).toBe(created.worktree.branchRef);
+    expect(membershipChanges).toEqual([
+      {
+        type: "upsert",
+        worktreeId: created.worktree.id,
+        workspaceId: workspace.id,
+      },
+      {
+        type: "upsert",
+        worktreeId: created.worktree.id,
+        workspaceId: workspace.id,
+      },
+      {
+        type: "removed",
+        worktreeId: created.worktree.id,
+        workspaceId: workspace.id,
+      },
+      {
+        type: "upsert",
+        worktreeId: recreated.worktree.id,
+        workspaceId: workspace.id,
+      },
+    ]);
     database.close();
   });
 });

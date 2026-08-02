@@ -21,6 +21,7 @@ export interface ApplicationEvents {
   readonly cursor: number;
   publishStatus(status: WorkflowStatusDto): void;
   publishRuntime(runtime: RuntimeDto): void;
+  publishWorktreeRemoved(worktreeId: string, workspaceId: string): void;
   subscribe(transport: ApplicationEventTransport): () => void;
   close(): void;
 }
@@ -84,6 +85,17 @@ export function createApplicationEvents(options: {
         type: "runtime",
         cursor,
         runtime,
+      });
+    },
+    publishWorktreeRemoved(worktreeId, workspaceId) {
+      cursor += 1;
+      append({
+        v: APPLICATION_EVENTS_PROTOCOL_VERSION,
+        type: "worktreeRemoved",
+        cursor,
+        worktreeId,
+        workspaceId,
+        workspaceAttention: options.workspaceAttention(),
       });
     },
     subscribe(transport) {

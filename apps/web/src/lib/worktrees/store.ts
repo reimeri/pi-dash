@@ -88,8 +88,12 @@ export function createWorktreeStore(
       }
     },
     async reconcile(workspaceId: string) {
+      const generation = (generations.get(workspaceId) ?? 0) + 1;
+      generations.set(workspaceId, generation);
       const response = await client.reconcileWorktrees(workspaceId);
-      replace(workspaceId, response.worktrees);
+      if (generations.get(workspaceId) === generation) {
+        replace(workspaceId, response.worktrees);
+      }
     },
     upsert(worktree: WorktreeDto) {
       generations.set(
@@ -117,7 +121,20 @@ export function createWorktreeStore(
         },
       }));
     },
+    remove(workspaceId: string, worktreeId: string) {
+      generations.set(workspaceId, (generations.get(workspaceId) ?? 0) + 1);
+      update((state) => ({
+        ...state,
+        byWorkspace: {
+          ...state.byWorkspace,
+          [workspaceId]: (state.byWorkspace[workspaceId] ?? []).filter(
+            (worktree) => worktree.id !== worktreeId,
+          ),
+        },
+      }));
+    },
     clearWorkspace(workspaceId: string) {
+      generations.set(workspaceId, (generations.get(workspaceId) ?? 0) + 1);
       update((state) => {
         const byWorkspace = { ...state.byWorkspace };
         const loadingByWorkspace = { ...state.loadingByWorkspace };

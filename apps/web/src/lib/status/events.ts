@@ -16,6 +16,8 @@ export function createStatusEventClient(
     url?: () => string;
     createSocket?: (url: string) => WebSocket;
     reconnectBaseMs?: number;
+    onWorktreeRemoved?: (workspaceId: string, worktreeId: string) => void;
+    onSnapshot?: () => void;
   } = {},
 ): StatusEventClient {
   const url =
@@ -60,8 +62,15 @@ export function createStatusEventClient(
         candidate.close(1008, "Invalid application event");
         return;
       }
-      if (!workflowStatusStore.apply(parsed as ApplicationEventsServerFrame)) {
+      const frame = parsed as ApplicationEventsServerFrame;
+      if (!workflowStatusStore.apply(frame)) {
         candidate.close(1012, "Status resynchronization required");
+        return;
+      }
+      if (frame.type === "worktreeRemoved") {
+        options.onWorktreeRemoved?.(frame.workspaceId, frame.worktreeId);
+      } else if (frame.type === "snapshot") {
+        options.onSnapshot?.();
       }
     });
     candidate.addEventListener("close", () => {

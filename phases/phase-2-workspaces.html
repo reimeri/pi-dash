@@ -49,7 +49,7 @@
   <li><strong>REQ-02-06:</strong> Registering an already stored canonical repository shall return <code>WORKSPACE_EXISTS</code> and identify the existing workspace.</li>
   <li><strong>REQ-02-07:</strong> Workspace display names shall default from the repository directory, remain user-editable, and produce a stable sanitized slug used for future branch defaults.</li>
   <li><strong>REQ-02-08:</strong> The sidebar shall list workspaces in deterministic user-friendly order and preserve expansion state locally.</li>
-  <li><strong>REQ-02-09:</strong> Workspace removal shall be blocked if related worktree rows exist and otherwise remove metadata only, never repository files.</li>
+  <li><strong>REQ-02-09:</strong> Workspace removal shall be blocked while any related worktree row is active (<code>lifecycle &lt;&gt; 'removed'</code>). Removed branch tombstones do not count as active dependents and are cascade-deleted with workspace metadata; repository worktrees and branches are never deleted by workspace removal.</li>
   <li><strong>REQ-02-10:</strong> Missing/inaccessible repositories shall remain visible as degraded records with repair/remove actions rather than disappearing.</li>
   <li><strong>REQ-02-11:</strong> Repository inspection commands shall use bounded output, timeouts, argument arrays, and explicit <code>cwd</code>.</li>
   <li><strong>REQ-02-12:</strong> Native dialog child processes shall be cancellable when the request or daemon closes.</li>

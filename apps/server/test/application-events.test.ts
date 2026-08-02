@@ -41,14 +41,19 @@ describe("application event stream", () => {
     });
     events.publishStatus({ ...status, state: "working", revision: 1 });
     events.publishRuntime({ ...runtime, state: "starting" });
+    events.publishWorktreeRemoved(
+      status.worktreeId,
+      "22222222-2222-4222-8222-222222222222",
+    );
     expect(received.map((frame) => frame.type)).toEqual([
       "snapshot",
       "status",
       "runtime",
+      "worktreeRemoved",
     ]);
-    expect(received.map((frame) => frame.v)).toEqual([2, 2, 2]);
+    expect(received.map((frame) => frame.v)).toEqual([3, 3, 3, 3]);
     expect(received.map((frame) => "cursor" in frame && frame.cursor)).toEqual([
-      0, 1, 2,
+      0, 1, 2, 3,
     ]);
   });
 

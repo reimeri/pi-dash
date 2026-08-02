@@ -42,8 +42,6 @@ export const WorktreeSchema = Type.Object(
     baseCommit: ObjectIdSchema,
     lifecycle: WorktreeLifecycleSchema,
     finalBranchTip: Type.Union([ObjectIdSchema, Type.Null()]),
-    safetyTargetCommit: Type.Union([ObjectIdSchema, Type.Null()]),
-    branchDeleted: Type.Boolean(),
     health: WorktreeHealthSchema,
     dirty: Type.Union([Type.Boolean(), Type.Null()]),
     lastError: Type.Optional(
@@ -174,7 +172,8 @@ export const DeleteWorktreeBranchResponseSchema = Type.Object(
     operationId: UuidSchema,
     deleted: Type.Literal(true),
     atomic: Type.Literal(true),
-    worktree: WorktreeSchema,
+    worktreeId: UuidSchema,
+    workspaceId: UuidSchema,
   },
   { additionalProperties: false },
 );

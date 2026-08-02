@@ -2,7 +2,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 export const STATUS_PROTOCOL_VERSION = 1 as const;
 export const STATUS_MAX_FRAME_BYTES = 16 * 1024;
-export const APPLICATION_EVENTS_PROTOCOL_VERSION = 2 as const;
+export const APPLICATION_EVENTS_PROTOCOL_VERSION = 3 as const;
 
 const UuidSchema = Type.String({
   pattern:
@@ -195,6 +195,17 @@ export const ApplicationEventsServerFrameSchema = Type.Union([
       type: Type.Literal("status"),
       cursor: Type.Integer({ minimum: 1 }),
       status: WorkflowStatusSchema,
+      workspaceAttention: Type.Array(WorkspaceAttentionSchema),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      v: Type.Literal(APPLICATION_EVENTS_PROTOCOL_VERSION),
+      type: Type.Literal("worktreeRemoved"),
+      cursor: Type.Integer({ minimum: 1 }),
+      worktreeId: UuidSchema,
+      workspaceId: UuidSchema,
       workspaceAttention: Type.Array(WorkspaceAttentionSchema),
     },
     { additionalProperties: false },

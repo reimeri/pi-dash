@@ -19,7 +19,7 @@ Removal is clean-only. `git status --porcelain=v1 -z --untracked-files=all` runs
 
 The shared lifecycle coordinator atomically claims `ready → removing` before invoking the future terminal-stop hook. Phase 4 must use the same coordinator and start processes only while lifecycle is `ready`. An exact intact command failure restores `ready` with a warning. Ambiguous partial state becomes `error`; verified absence becomes `removed`.
 
-Removed rows are durable tombstones but do not count as active dependents when removing a workspace. Deleting workspace metadata cascade-deletes those tombstones.
+Removed rows are durable tombstones only while their managed branch remains. They do not count as active dependents when removing a workspace. Successful branch deletion atomically records an idempotent operation receipt and deletes the tombstone; the historical operation retains the former worktree ID without owning the worktree row.
 
 ## Branch deletion
 
@@ -29,10 +29,10 @@ Worktree removal keeps the branch. A separate confirmation submits the recorded 
 - the ref still equals the recorded tip;
 - that tip is an ancestor of the explicit safety target.
 
-It then runs `git update-ref -d <ref> <expected-tip>`. A moved or unmerged branch is left intact and does not undo worktree removal.
+It then runs `git update-ref -d <ref> <expected-tip>`. A moved or unmerged branch is left intact and does not undo worktree removal. Once absence is verified, one SQLite transaction completes the operation receipt and deletes the tombstone, releasing its slug and managed branch identity for reuse.
 
 ## Reconciliation
 
 Startup and manual reconciliation run under the same common-directory mutation lock and compare database records with `git worktree list --porcelain -z`. Exact interrupted creates may become `ready`; verified completed removals become `removed` only when the final branch tip was durable before removal; exact intact removals return to `ready`. Mismatches remain visible as `error`, `missing`, or `git_mismatch`. Unknown Git worktrees are never adopted or removed.
 
-Durable `in_progress` idempotency rows are reconciled with lifecycle postconditions. Proven create/remove outcomes receive their original durable response, while ambiguous operations become a durable failure rather than remaining in progress forever. An interrupted branch deletion is never declared successful unless the database already recorded the atomic deletion; an absent or changed ref remains an explicit manual-inspection error.
+Durable `in_progress` idempotency rows are reconciled with lifecycle postconditions. Proven create/remove outcomes receive their original durable response, while ambiguous operations become a durable failure rather than remaining in progress forever. For branch deletion, durable delete intent plus the expected absent-branch postcondition completes the receipt and removes the tombstone after a crash; an unchanged or moved ref remains a durable failure. Completed receipts remain replayable after worktree deletion but are removed if the workspace metadata is deleted.

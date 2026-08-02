@@ -361,7 +361,7 @@ a:focus-visible,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 22px 18px 16px;
+  padding: 10px 14px 16px;
 }
 
 .eyebrow {
@@ -390,7 +390,7 @@ h1 {
   width: 28px;
   height: 28px;
   place-items: center;
-  border: 1px solid var(--border);
+  border: 0px solid var(--border);
   border-radius: 6px;
   color: var(--subtle);
   background: transparent;
@@ -487,7 +487,7 @@ main {
 }
 
 .icon-button:not(:disabled) {
-  color: var(--muted);
+  color: var(--subtle);
   cursor: pointer;
 }
 

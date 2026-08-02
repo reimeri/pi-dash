@@ -16,8 +16,6 @@ export interface WorktreeRecord {
   baseCommit: string;
   lifecycle: WorktreeLifecycle;
   finalBranchTip: string | null;
-  safetyTargetCommit: string | null;
-  branchDeleted: boolean;
   health: WorktreeHealth;
   dirty: boolean | null;
   lastErrorCode: string | null;
@@ -57,8 +55,6 @@ interface WorktreeRow {
   base_commit: string;
   lifecycle: WorktreeLifecycle;
   final_branch_tip: string | null;
-  safety_target_commit: string | null;
-  branch_deleted: number;
   health: WorktreeHealth;
   dirty: number | null;
   last_error_code: string | null;
@@ -86,8 +82,8 @@ interface OperationRow {
 
 const WORKTREE_COLUMNS = `
   id, workspace_id, name, slug, path, branch_ref, base_ref, base_commit,
-  lifecycle, final_branch_tip, safety_target_commit, branch_deleted, health,
-  dirty, last_error_code, last_error_message, created_at, updated_at
+  lifecycle, final_branch_tip, health, dirty, last_error_code,
+  last_error_message, created_at, updated_at
 `;
 const OPERATION_COLUMNS = `
   id, idempotency_key, operation_type, workspace_id, worktree_id, request_hash,
@@ -107,8 +103,6 @@ function worktreeFromRow(row: WorktreeRow): WorktreeRecord {
     baseCommit: row.base_commit,
     lifecycle: row.lifecycle,
     finalBranchTip: row.final_branch_tip,
-    safetyTargetCommit: row.safety_target_commit,
-    branchDeleted: row.branch_deleted === 1,
     health: row.health,
     dirty: row.dirty === null ? null : row.dirty === 1,
     lastErrorCode: row.last_error_code,
@@ -150,8 +144,6 @@ export interface WorktreeRepository {
     update: {
       lifecycle?: WorktreeLifecycle;
       finalBranchTip?: string | null;
-      safetyTargetCommit?: string | null;
-      branchDeleted?: boolean;
       health?: WorktreeHealth;
       dirty?: boolean | null;
       lastErrorCode?: string | null;
@@ -165,7 +157,6 @@ export interface WorktreeRepository {
     next: WorktreeLifecycle,
     updatedAt: string,
   ): WorktreeRecord | undefined;
-  activeCount(workspaceId: string): number;
   findOperation(idempotencyKey: string): WorktreeOperationRecord | undefined;
   listInProgress(workspaceId: string): WorktreeOperationRecord[];
   createOperation(record: WorktreeOperationRecord): WorktreeOperationRecord;
@@ -179,14 +170,21 @@ export interface WorktreeRepository {
     httpStatus: number,
     resultJson: string,
     updatedAt: string,
-  ): void;
+  ): boolean;
   failOperation(
     id: string,
     httpStatus: number,
     code: ApiErrorCode,
     message: string,
     updatedAt: string,
-  ): void;
+  ): boolean;
+  finalizeBranchDeletion(input: {
+    operationId: string;
+    worktreeId: string;
+    expectedBranchTip: string;
+    resultJson: string;
+    updatedAt: string;
+  }): void;
   transaction<T>(operation: () => T): T;
 }
 
@@ -205,9 +203,9 @@ export function createWorktreeRepository(
   const insert = sqlite.prepare(`
     INSERT INTO worktrees (
       id, workspace_id, name, slug, path, branch_ref, base_ref, base_commit,
-      lifecycle, final_branch_tip, safety_target_commit, branch_deleted, health,
-      dirty, last_error_code, last_error_message, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      lifecycle, final_branch_tip, health, dirty, last_error_code,
+      last_error_message, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const operationGet = sqlite.prepare(
     `SELECT ${OPERATION_COLUMNS} FROM worktree_operations WHERE idempotency_key = ?`,
@@ -274,8 +272,6 @@ export function createWorktreeRepository(
         record.baseCommit,
         record.lifecycle,
         record.finalBranchTip,
-        record.safetyTargetCommit,
-        record.branchDeleted ? 1 : 0,
         record.health,
         record.dirty === null ? null : record.dirty ? 1 : 0,
         record.lastErrorCode,
@@ -295,10 +291,6 @@ export function createWorktreeRepository(
       if ("lifecycle" in update) set("lifecycle", update.lifecycle);
       if ("finalBranchTip" in update)
         set("final_branch_tip", update.finalBranchTip);
-      if ("safetyTargetCommit" in update)
-        set("safety_target_commit", update.safetyTargetCommit);
-      if ("branchDeleted" in update)
-        set("branch_deleted", update.branchDeleted ? 1 : 0);
       if ("health" in update) set("health", update.health);
       if ("dirty" in update)
         set("dirty", update.dirty === null ? null : update.dirty ? 1 : 0);
@@ -319,14 +311,6 @@ export function createWorktreeRepository(
         )
         .run(next, updatedAt, id, expected);
       return result.changes > 0 ? repository.get(id) : undefined;
-    },
-    activeCount(workspaceId) {
-      const row = sqlite
-        .prepare(
-          "SELECT count(*) AS count FROM worktrees WHERE workspace_id = ? AND lifecycle <> 'removed'",
-        )
-        .get(workspaceId) as { count: number };
-      return row.count;
     },
     findOperation(idempotencyKey) {
       const row = operationGet.get(idempotencyKey) as OperationRow | undefined;
@@ -368,28 +352,64 @@ export function createWorktreeRepository(
         .run(worktreeId, updatedAt, id);
     },
     completeOperation(id, httpStatus, resultJson, updatedAt) {
-      sqlite
+      const result = sqlite
         .prepare(
           `
           UPDATE worktree_operations
           SET status = 'succeeded', http_status = ?, result_json = ?,
               error_code = NULL, error_message = NULL, updated_at = ?
-          WHERE id = ?
+          WHERE id = ? AND status = 'in_progress'
         `,
         )
         .run(httpStatus, resultJson, updatedAt, id);
+      return result.changes === 1;
     },
     failOperation(id, httpStatus, code, message, updatedAt) {
-      sqlite
+      const result = sqlite
         .prepare(
           `
           UPDATE worktree_operations
           SET status = 'failed', http_status = ?, result_json = NULL,
               error_code = ?, error_message = ?, updated_at = ?
-          WHERE id = ?
+          WHERE id = ? AND status = 'in_progress'
         `,
         )
         .run(httpStatus, code, message, updatedAt, id);
+      return result.changes === 1;
+    },
+    finalizeBranchDeletion(input) {
+      sqlite.transaction(() => {
+        const completed = sqlite
+          .prepare(
+            `
+            UPDATE worktree_operations
+            SET status = 'succeeded', http_status = 200, result_json = ?,
+                error_code = NULL, error_message = NULL, updated_at = ?
+            WHERE id = ? AND operation_type = 'delete_branch'
+              AND worktree_id = ? AND status = 'in_progress'
+          `,
+          )
+          .run(
+            input.resultJson,
+            input.updatedAt,
+            input.operationId,
+            input.worktreeId,
+          );
+        if (completed.changes !== 1) {
+          throw new Error("Branch deletion operation is no longer in progress");
+        }
+        const deleted = sqlite
+          .prepare(
+            `
+            DELETE FROM worktrees
+            WHERE id = ? AND lifecycle = 'removed' AND final_branch_tip = ?
+          `,
+          )
+          .run(input.worktreeId, input.expectedBranchTip);
+        if (deleted.changes !== 1) {
+          throw new Error("Removed worktree tombstone changed before deletion");
+        }
+      })();
     },
     transaction<T>(operation: () => T): T {
       return sqlite.transaction(operation)();

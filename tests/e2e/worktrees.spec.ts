@@ -220,12 +220,12 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
   await branchDialog
     .getByRole("button", { name: "Delete merged branch" })
     .click();
-  await expect(card).toContainText("Branch deleted safely");
+  await expect(card).toHaveCount(0);
 
   await page.getByRole("button", { name: "Expand Worktree E2E" }).click();
-  const removedSidebarWorktree = page
-    .locator(".worktree-sidebar-list")
-    .getByRole("button", { name: /Feature work/ });
-  await expect(removedSidebarWorktree).toBeVisible();
-  await expect(removedSidebarWorktree).toBeDisabled();
+  await expect(
+    page
+      .locator(".worktree-sidebar-list")
+      .getByRole("button", { name: /Feature work/ }),
+  ).toHaveCount(0);
 });
