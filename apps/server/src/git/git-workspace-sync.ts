@@ -134,7 +134,7 @@ class CommandGitWorkspaceSynchronizer implements GitWorkspaceSynchronizer {
     path: string,
     signal?: AbortSignal,
   ): Promise<void> {
-    for (const scope of ["--local", "--worktree"] as const) {
+    const inspectScope = async (scope: "--local" | "--worktree") => {
       const result = await this.git(
         ["config", scope, "--name-only", "--list", "-z"],
         path,
@@ -165,7 +165,28 @@ class CommandGitWorkspaceSynchronizer implements GitWorkspaceSynchronizer {
           "Remove repository-local executable Git configuration before syncing",
         );
       }
+    };
+
+    await inspectScope("--local");
+    const worktreeConfig = await this.git(
+      [
+        "config",
+        "--local",
+        "--type=bool",
+        "--get",
+        "extensions.worktreeConfig",
+      ],
+      path,
+      signal,
+    );
+    if (worktreeConfig.exitCode === 1) return;
+    if (worktreeConfig.exitCode !== 0) {
+      throw new GitWorkspaceSyncError(
+        "WORKSPACE_SYNC_FAILED",
+        "The workspace Git configuration could not be inspected",
+      );
     }
+    if (output(worktreeConfig) === "true") await inspectScope("--worktree");
   }
 
   private async branch(path: string, signal?: AbortSignal): Promise<string> {

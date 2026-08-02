@@ -113,6 +113,16 @@ describe("GitWorkspaceSynchronizer", () => {
     await expect(synchronizer.sync(workspace)).resolves.toEqual({ headCommit });
   });
 
+  it("inspects repositories with multiple linked worktrees", async () => {
+    const { root, workspace } = remoteFixture();
+    const linked = join(root, "linked");
+    git(workspace, "worktree", "add", "-b", "linked", linked);
+    const headCommit = git(workspace, "rev-parse", "HEAD");
+    const synchronizer = await createGitWorkspaceSynchronizer();
+
+    await expect(synchronizer.sync(workspace)).resolves.toEqual({ headCommit });
+  });
+
   it("refuses tracked or untracked workspace changes before fetching", async () => {
     const { workspace, remote } = remoteFixture();
     writeFileSync(join(workspace, "untracked.txt"), "local\n");
