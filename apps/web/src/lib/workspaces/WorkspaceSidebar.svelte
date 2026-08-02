@@ -188,7 +188,7 @@
           onOpenChange={(open) => setExpanded(workspace.id, open)}
         >
           <Sidebar.MenuItem>
-            <div class="flex items-center gap-1">
+            <div class="group/workspace flex items-center gap-1">
               <Collapsible.Trigger>
                 {#snippet child({ props })}
                   <Button
@@ -234,6 +234,7 @@
                 {/if}
               </Sidebar.MenuButton>
               <Button
+                class="focus-within:opacity-100 group-hover/workspace:opacity-100 md:opacity-0"
                 variant="ghost"
                 size="icon-sm"
                 disabled={workspace.repository.health !== "healthy"}
