@@ -234,6 +234,35 @@ export async function registerWorkspaceRoutes(
     },
   );
 
+  app.post<{ Params: WorkspaceIdParams }>(
+    "/api/v1/workspaces/:id/sync",
+    {
+      schema: {
+        params: WorkspaceIdParamsSchema,
+        body: Type.Object({}, { additionalProperties: false }),
+        response: {
+          200: WorkspaceResponseSchema,
+          404: ApiErrorEnvelopeSchema,
+          409: ApiErrorEnvelopeSchema,
+          502: ApiErrorEnvelopeSchema,
+          503: ApiErrorEnvelopeSchema,
+          504: ApiErrorEnvelopeSchema,
+        },
+      },
+    },
+    async (request) => {
+      try {
+        return {
+          workspace: await withRequestAbort(request, (signal) =>
+            options.workspaces.sync(request.params.id, signal),
+          ),
+        };
+      } catch (error) {
+        serviceError(error);
+      }
+    },
+  );
+
   app.delete<{ Params: WorkspaceIdParams }>(
     "/api/v1/workspaces/:id",
     {

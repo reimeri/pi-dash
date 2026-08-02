@@ -14,6 +14,7 @@ import { openDatabase } from "../src/database.js";
 import { createGitDiffInspector } from "../src/git/git-diff-inspector.js";
 import { createGitInspector } from "../src/git/git-inspector.js";
 import { createGitWorktreeManager } from "../src/git/git-worktree-manager.js";
+import { createGitWorkspaceSynchronizer } from "../src/git/git-workspace-sync.js";
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
 import { createWorkspaceService } from "../src/workspaces/workspace-service.js";
 import { createBaseSnapshotSigner } from "../src/worktrees/base-snapshot.js";
@@ -55,9 +56,14 @@ async function fixture(
   });
   const workspaceRepository = createWorkspaceRepository(database.sqlite);
   const inspector = await createGitInspector();
+  const lockRoot = join(root, "locks");
+  mkdirSync(lockRoot, { mode: 0o700 });
+  const lock = createGitMutationLock({ root: lockRoot });
   const workspaceService = createWorkspaceService({
     repository: workspaceRepository,
     git: inspector,
+    syncer: await createGitWorkspaceSynchronizer(),
+    lock,
   });
   const workspace = await workspaceService.create({
     path: repositoryPath,
@@ -66,14 +72,12 @@ async function fixture(
   const worktreeRepository = createWorktreeRepository(database.sqlite);
   const manager = await createGitWorktreeManager();
   const diffs = await createGitDiffInspector();
-  const lockRoot = join(root, "locks");
-  mkdirSync(lockRoot, { mode: 0o700 });
   const service = createWorktreeService({
     repository: worktreeRepository,
     workspaces: workspaceRepository,
     git: manager,
     diffs,
-    lock: createGitMutationLock({ root: lockRoot }),
+    lock,
     lifecycle: createWorktreeLifecycleCoordinator({
       repository: worktreeRepository,
     }),

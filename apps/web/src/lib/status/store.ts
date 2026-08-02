@@ -67,6 +67,12 @@ export function reduceWorkflowStatusState(
       },
     };
   }
+  if (frame.type === "workspaceUpdated") {
+    return {
+      resyncRequired: false,
+      state: { ...state, cursor: frame.cursor },
+    };
+  }
   if (frame.type === "worktreeRemoved") {
     const byWorktree = { ...state.byWorktree };
     const runtimes = { ...state.runtimes };

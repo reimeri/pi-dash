@@ -2,6 +2,7 @@ import type {
   ApplicationEventsServerFrame,
   RuntimeDto,
   WorkflowStatusDto,
+  WorkspaceDto,
 } from "@pi-dash/contracts";
 import { describe, expect, it } from "vitest";
 import { createApplicationEvents } from "../src/events/application-events.js";
@@ -14,6 +15,21 @@ const status: WorkflowStatusDto = {
   changedAt: "2026-01-01T00:00:00.000Z",
   acknowledgedAt: null,
   integration: "disconnected",
+};
+const workspace: WorkspaceDto = {
+  id: "22222222-2222-4222-8222-222222222222",
+  name: "Example",
+  slug: "example",
+  repositoryPath: "/tmp/example",
+  repository: {
+    health: "healthy",
+    currentBranch: "main",
+    headCommit: "a".repeat(40),
+    checkedAt: "2026-01-01T00:00:00.000Z",
+  },
+  worktreeCount: 0,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
 };
 const runtime: RuntimeDto = {
   worktreeId: status.worktreeId,
@@ -41,6 +57,7 @@ describe("application event stream", () => {
     });
     events.publishStatus({ ...status, state: "working", revision: 1 });
     events.publishRuntime({ ...runtime, state: "starting" });
+    events.publishWorkspaceUpdated(workspace);
     events.publishWorktreeRemoved(
       status.worktreeId,
       "22222222-2222-4222-8222-222222222222",
@@ -49,11 +66,12 @@ describe("application event stream", () => {
       "snapshot",
       "status",
       "runtime",
+      "workspaceUpdated",
       "worktreeRemoved",
     ]);
-    expect(received.map((frame) => frame.v)).toEqual([3, 3, 3, 3]);
+    expect(received.map((frame) => frame.v)).toEqual([4, 4, 4, 4, 4]);
     expect(received.map((frame) => "cursor" in frame && frame.cursor)).toEqual([
-      0, 1, 2, 3,
+      0, 1, 2, 3, 4,
     ]);
   });
 

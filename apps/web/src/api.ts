@@ -152,6 +152,12 @@ export const api = {
       WorkspaceResponseSchema,
       { method: "POST", body: {} },
     ),
+  syncWorkspace: (id: string) =>
+    requestJson(
+      `/api/v1/workspaces/${encodeURIComponent(id)}/sync`,
+      WorkspaceResponseSchema,
+      { method: "POST", body: {} },
+    ),
   removeWorkspace: (id: string) =>
     requestEmpty(`/api/v1/workspaces/${encodeURIComponent(id)}`, {
       method: "DELETE",

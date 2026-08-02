@@ -2,6 +2,7 @@ import {
   APPLICATION_EVENTS_PROTOCOL_VERSION,
   ApplicationEventsServerFrameSchema,
   type ApplicationEventsServerFrame,
+  type WorkspaceDto,
 } from "@pi-dash/contracts";
 import { Value } from "@sinclair/typebox/value";
 import { workflowStatusStore } from "./store.js";
@@ -17,6 +18,7 @@ export function createStatusEventClient(
     createSocket?: (url: string) => WebSocket;
     reconnectBaseMs?: number;
     onWorktreeRemoved?: (workspaceId: string, worktreeId: string) => void;
+    onWorkspaceUpdated?: (workspace: WorkspaceDto) => void;
     onSnapshot?: () => void;
   } = {},
 ): StatusEventClient {
@@ -69,6 +71,8 @@ export function createStatusEventClient(
       }
       if (frame.type === "worktreeRemoved") {
         options.onWorktreeRemoved?.(frame.workspaceId, frame.worktreeId);
+      } else if (frame.type === "workspaceUpdated") {
+        options.onWorkspaceUpdated?.(frame.workspace);
       } else if (frame.type === "snapshot") {
         options.onSnapshot?.();
       }
