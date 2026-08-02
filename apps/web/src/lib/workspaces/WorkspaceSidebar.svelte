@@ -22,6 +22,7 @@
   import { Spinner } from "$lib/components/ui/spinner";
   import WorkflowStatusIndicator from "../status/WorkflowStatusIndicator.svelte";
   import WorkspaceSyncIndicator from "./WorkspaceSyncIndicator.svelte";
+  import { orderWorktreesByActivity } from "../worktrees/order.js";
   import { cn } from "tailwind-variants";
 
   export let workspaces: WorkspaceDto[];
@@ -194,6 +195,10 @@
         {@const activity = workspaceAttentionStatuses.find(
           (attention) => attention.workspaceId === workspace.id,
         )}
+        {@const orderedWorktrees = orderWorktreesByActivity(
+          worktreesByWorkspace[workspace.id] ?? [],
+          workflowStatuses,
+        )}
         <Collapsible.Root
           open={expanded.has(workspace.id)}
           onOpenChange={(open) => setExpanded(workspace.id, open)}
@@ -272,7 +277,7 @@
                     {healthLabel(workspace)}
                   </li>
                 {/if}
-                {#if worktreeLoadingByWorkspace[workspace.id] && (worktreesByWorkspace[workspace.id] ?? []).length === 0}
+                {#if worktreeLoadingByWorkspace[workspace.id] && orderedWorktrees.length === 0}
                   <li
                     class="flex items-center gap-2 px-3 py-1 text-xs text-muted-foreground"
                     role="status"
@@ -284,8 +289,8 @@
                   <li class="px-3 py-1 text-xs text-destructive" role="alert">
                     {worktreeErrorsByWorkspace[workspace.id]}
                   </li>
-                {:else if (worktreesByWorkspace[workspace.id] ?? []).length > 0}
-                  {#each worktreesByWorkspace[workspace.id] ?? [] as worktree (worktree.id)}
+                {:else if orderedWorktrees.length > 0}
+                  {#each orderedWorktrees as worktree (worktree.id)}
                     {@const diffSummary = diffSummaries[worktree.id]}
                     <Sidebar.MenuSubItem>
                       <Button
