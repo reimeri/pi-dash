@@ -380,9 +380,6 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
   await expect(terminalControls).toContainText("running");
   await expect(terminalControls).toContainText("connected");
   await expect(terminalControls).toContainText("Interactive");
-  await terminalControls
-    .getByRole("button", { name: "Focus terminal" })
-    .click();
   await page.keyboard.type("echo-terminal");
   await expect(terminal).toContainText("echo-terminal");
 
@@ -401,9 +398,6 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     .getByRole("button", { name: "Start", exact: true })
     .click();
   await expect(terminalControls).toContainText("running");
-  await terminalControls
-    .getByRole("button", { name: "Focus terminal" })
-    .click();
   await page.keyboard.type("after-restart");
   await expect(terminal).toContainText("after-restart");
 });
