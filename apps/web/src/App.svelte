@@ -851,10 +851,6 @@
                     class="flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between"
                   >
                     {#if selectedWorkspace.repository.health === "healthy"}
-                      <p class="text-sm text-muted-foreground">
-                        Fetch and fast-forward the current branch from its
-                        configured upstream.
-                      </p>
                       <Button
                         disabled={syncingIds.has(selectedWorkspace.id)}
                         onclick={() => syncWorkspace(selectedWorkspace)}
