@@ -12,14 +12,7 @@
     FolderGitIcon,
   } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
-  import { DragDropProvider, PointerSensor } from "@dnd-kit/svelte";
-  import {
-    Accessibility,
-    PointerActivationConstraints,
-    type DragEndEvent,
-    type DragOverEvent,
-  } from "@dnd-kit/dom";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import * as Alert from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
@@ -28,7 +21,6 @@
   import * as Sidebar from "$lib/components/ui/sidebar";
   import { Spinner } from "$lib/components/ui/spinner";
   import WorkflowStatusIndicator from "../status/WorkflowStatusIndicator.svelte";
-  import SortableWorkspaceItem from "./SortableWorkspaceItem.svelte";
   import WorkspaceSyncIndicator from "./WorkspaceSyncIndicator.svelte";
   import { orderWorktreesByActivity } from "../worktrees/order.js";
   import { cn } from "tailwind-variants";
@@ -57,33 +49,20 @@
   const storageKey = "pi-dash.expanded-workspaces.v1";
   let expanded = new SvelteSet<string>();
   const requestedExpanded = new SvelteSet<string>();
+  interface WorkspaceDragCandidate {
+    element: HTMLElement;
+    pointerId: number;
+    pointerType: string;
+    startX: number;
+    startY: number;
+    workspaceId: string;
+    activationTimer?: ReturnType<typeof setTimeout>;
+  }
+
   let dragging = false;
   let renderedWorkspaces = workspaces;
-  const pointerSensors = [
-    PointerSensor.configure({
-      activationConstraints: [
-        new PointerActivationConstraints.Delay({
-          value: 500,
-          tolerance: 5,
-        }),
-      ],
-      preventActivation(event) {
-        if (
-          reordering ||
-          renderedWorkspaces.length < 2 ||
-          !event.isPrimary ||
-          event.button !== 0
-        ) {
-          return true;
-        }
-        const target = event.target;
-        return !(
-          target instanceof Element &&
-          target.closest("[data-workspace-drag-surface]")
-        );
-      },
-    }),
-  ];
+  let dragCandidate: WorkspaceDragCandidate | undefined;
+  let ignoreWorkspaceClickId: string | undefined;
 
   function moveWorkspace(
     items: WorkspaceDto[],
@@ -109,37 +88,128 @@
     return next;
   }
 
-  function handleDragStart(): void {
+  function clearDragCandidate(): void {
+    if (!dragCandidate) return;
+    clearTimeout(dragCandidate.activationTimer);
+    if (dragCandidate.element.hasPointerCapture(dragCandidate.pointerId)) {
+      dragCandidate.element.releasePointerCapture(dragCandidate.pointerId);
+    }
+    dragCandidate = undefined;
+  }
+
+  function activateWorkspaceDrag(candidate: WorkspaceDragCandidate): void {
+    if (dragCandidate !== candidate || dragging) return;
+    clearTimeout(candidate.activationTimer);
+    candidate.activationTimer = undefined;
     dragging = true;
     renderedWorkspaces = [...workspaces];
   }
 
-  function handleDragOver(event: DragOverEvent): void {
-    const sourceId = event.operation.source?.id;
-    const targetId = event.operation.target?.id;
+  function handleWorkspacePointerDown(
+    event: PointerEvent,
+    workspaceId: string,
+  ): void {
     if (
-      sourceId === undefined ||
-      sourceId === null ||
-      targetId === undefined ||
-      targetId === null
+      reordering ||
+      renderedWorkspaces.length < 2 ||
+      !event.isPrimary ||
+      event.button !== 0
     ) {
       return;
     }
+
+    clearDragCandidate();
+    const element = event.currentTarget;
+    if (!(element instanceof HTMLElement)) return;
+
+    const candidate: WorkspaceDragCandidate = {
+      element,
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      startX: event.clientX,
+      startY: event.clientY,
+      workspaceId,
+    };
+    dragCandidate = candidate;
+    element.setPointerCapture(event.pointerId);
+
+    if (event.pointerType === "touch") {
+      candidate.activationTimer = setTimeout(
+        () => activateWorkspaceDrag(candidate),
+        500,
+      );
+    }
+  }
+
+  function handleWorkspacePointerMove(event: PointerEvent): void {
+    const candidate = dragCandidate;
+    if (!candidate || event.pointerId !== candidate.pointerId) return;
+
+    if (!dragging) {
+      const distance = Math.hypot(
+        event.clientX - candidate.startX,
+        event.clientY - candidate.startY,
+      );
+      if (candidate.pointerType === "touch") {
+        if (distance > 8) clearDragCandidate();
+        return;
+      }
+      if (distance < 5) return;
+      activateWorkspaceDrag(candidate);
+    }
+
+    event.preventDefault();
+    const target = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>("[data-workspace-id]");
+    const targetId = target?.dataset.workspaceId;
+    if (!targetId) return;
     renderedWorkspaces = moveWorkspace(
       renderedWorkspaces,
-      String(sourceId),
-      String(targetId),
+      candidate.workspaceId,
+      targetId,
     );
   }
 
-  function handleDragEnd(event: DragEndEvent): void {
-    const workspaceIds = renderedWorkspaces.map((workspace) => workspace.id);
-    dragging = false;
-    if (event.canceled) {
-      renderedWorkspaces = workspaces;
+  function handleWorkspacePointerUp(event: PointerEvent): void {
+    const candidate = dragCandidate;
+    if (!candidate || event.pointerId !== candidate.pointerId) return;
+
+    if (!dragging) {
+      clearDragCandidate();
       return;
     }
-    void onReorder(workspaceIds);
+
+    const workspaceIds = renderedWorkspaces.map((workspace) => workspace.id);
+    const orderChanged = workspaceIds.some(
+      (workspaceId, index) => workspaceId !== workspaces[index]?.id,
+    );
+    ignoreWorkspaceClickId = candidate.workspaceId;
+    dragging = false;
+    clearDragCandidate();
+    setTimeout(() => {
+      if (ignoreWorkspaceClickId === candidate.workspaceId) {
+        ignoreWorkspaceClickId = undefined;
+      }
+    });
+
+    if (orderChanged) void onReorder(workspaceIds);
+    else renderedWorkspaces = workspaces;
+  }
+
+  function cancelWorkspaceDrag(event: PointerEvent | undefined): void {
+    if (event && dragCandidate && event.pointerId !== dragCandidate.pointerId) {
+      return;
+    }
+    dragging = false;
+    renderedWorkspaces = workspaces;
+    clearDragCandidate();
+  }
+
+  function handleDragKeydown(event: KeyboardEvent): void {
+    if (event.key !== "Escape" || !dragging) return;
+    event.preventDefault();
+    cancelWorkspaceDrag(undefined);
   }
 
   function save() {
@@ -168,6 +238,16 @@
   function selectWorkspace(id: string): void {
     closeMobileSidebar();
     onSelect(id);
+  }
+
+  function handleWorkspaceClick(event: MouseEvent, id: string): void {
+    if (ignoreWorkspaceClickId === id) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      ignoreWorkspaceClickId = undefined;
+      return;
+    }
+    selectWorkspace(id);
   }
 
   function handleWorkspaceKeydown(event: KeyboardEvent, id: string): void {
@@ -222,6 +302,8 @@
     }
   }
 
+  onDestroy(() => clearDragCandidate());
+
   onMount(() => {
     try {
       const stored: unknown = JSON.parse(
@@ -259,6 +341,13 @@
   );
 </script>
 
+<svelte:window
+  onpointermove={handleWorkspacePointerMove}
+  onpointerup={handleWorkspacePointerUp}
+  onpointercancel={cancelWorkspaceDrag}
+  onkeydown={handleDragKeydown}
+/>
+
 <nav aria-label="Workspaces" class="min-h-0 flex-1 overflow-y-auto px-2">
   {#if status === "loading" && workspaces.length === 0}
     <div
@@ -293,181 +382,180 @@
         <Alert.Description>{message}</Alert.Description>
       </Alert.Root>
     {/if}
-    <DragDropProvider
-      plugins={(defaults) =>
-        defaults.filter((plugin) => plugin !== Accessibility)}
-      sensors={pointerSensors}
-      onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
-      onDragEnd={handleDragEnd}
-    >
-      <Sidebar.Menu>
-        {#each renderedWorkspaces as workspace, index (workspace.id)}
-          {@const activity = workspaceAttentionStatuses.find(
-            (attention) => attention.workspaceId === workspace.id,
-          )}
-          {@const orderedWorktrees = orderWorktreesByActivity(
-            worktreesByWorkspace[workspace.id] ?? [],
-            workflowStatuses,
-          )}
-          <Collapsible.Root
-            open={expanded.has(workspace.id)}
-            onOpenChange={(open) => setExpanded(workspace.id, open)}
+    <Sidebar.Menu>
+      {#each renderedWorkspaces as workspace (workspace.id)}
+        {@const activity = workspaceAttentionStatuses.find(
+          (attention) => attention.workspaceId === workspace.id,
+        )}
+        {@const orderedWorktrees = orderWorktreesByActivity(
+          worktreesByWorkspace[workspace.id] ?? [],
+          workflowStatuses,
+        )}
+        <Collapsible.Root
+          open={expanded.has(workspace.id)}
+          onOpenChange={(open) => setExpanded(workspace.id, open)}
+        >
+          <Sidebar.MenuItem
+            data-workspace-id={workspace.id}
+            data-dragging={dragging &&
+            dragCandidate?.workspaceId === workspace.id
+              ? "true"
+              : undefined}
+            class={cn(
+              "transition-[opacity,transform] motion-reduce:transition-none",
+              dragging &&
+                dragCandidate?.workspaceId === workspace.id &&
+                "opacity-60 ring-1 ring-sidebar-ring",
+            )}
           >
-            <SortableWorkspaceItem id={workspace.id} {index}>
-              <div
-                class="group/workspace flex items-center gap-1"
-                data-workspace-drag-source
-                role="presentation"
-                tabindex="-1"
-              >
-                <Collapsible.Trigger>
-                  {#snippet child({ props })}
-                    <Button
-                      {...props}
-                      variant="ghost_no_expand"
-                      size="icon-sm"
-                      aria-label={`${expanded.has(workspace.id) ? "Collapse" : "Expand"} ${workspace.name}`}
-                      aria-controls={`workspace-panel-${workspace.id}`}
-                    >
-                      <HugeiconsIcon
-                        icon={ArrowRight01Icon}
-                        class={cn(
-                          "transition-transform",
-                          expanded.has(workspace.id) && "rotate-90",
-                        )}
-                        strokeWidth={2}
-                      />
-                    </Button>
-                  {/snippet}
-                </Collapsible.Trigger>
-                <Sidebar.MenuButton
-                  class={cn(
-                    "touch-pan-y select-none",
-                    !reordering &&
-                      renderedWorkspaces.length > 1 &&
-                      "cursor-grab active:cursor-grabbing",
-                  )}
-                  data-workspace-drag-surface
-                  title="Hold to rearrange workspace"
-                  isActive={selectedId === workspace.id && !selectedWorktreeId}
-                  aria-current={selectedId === workspace.id &&
-                  !selectedWorktreeId
-                    ? "page"
-                    : undefined}
-                  aria-label={workspaceLabel(workspace)}
-                  onkeydown={(event) =>
-                    handleWorkspaceKeydown(event, workspace.id)}
-                  onclick={() => selectWorkspace(workspace.id)}
-                >
-                  <HugeiconsIcon
-                    icon={FolderGitIcon}
-                    strokeWidth={2}
-                    aria-hidden="true"
-                  />
-                  <span class="min-w-0 flex-1 truncate">{workspace.name}</span>
-                  <WorkspaceSyncIndicator
-                    status={workspace.repository.syncStatus}
-                  />
-                  {#if !expanded.has(workspace.id) && statusChannel === "connected" && activity && activity.state !== "idle" && activity.integration === "connected"}
-                    <WorkflowStatusIndicator
-                      stateOverride={activity.state}
-                      integrationOverride={activity.integration}
-                      aggregateCount={activity.count}
-                      labelPrefix={`${workspace.name} workflow`}
-                      channel={statusChannel}
+            <div class="group/workspace flex items-center gap-1">
+              <Collapsible.Trigger>
+                {#snippet child({ props })}
+                  <Button
+                    {...props}
+                    variant="ghost_no_expand"
+                    size="icon-sm"
+                    aria-label={`${expanded.has(workspace.id) ? "Collapse" : "Expand"} ${workspace.name}`}
+                    aria-controls={`workspace-panel-${workspace.id}`}
+                  >
+                    <HugeiconsIcon
+                      icon={ArrowRight01Icon}
+                      class={cn(
+                        "transition-transform",
+                        expanded.has(workspace.id) && "rotate-90",
+                      )}
+                      strokeWidth={2}
                     />
-                  {/if}
-                </Sidebar.MenuButton>
-                <Button
-                  class="focus-within:opacity-100 group-hover/workspace:opacity-100 md:opacity-0"
-                  variant="ghost"
-                  size="icon-sm"
-                  disabled={workspace.repository.health !== "healthy"}
-                  aria-label={`New worktree in ${workspace.name}`}
-                  aria-describedby={workspace.repository.health !== "healthy"
-                    ? `workspace-health-${workspace.id}`
-                    : undefined}
-                  onclick={() => createWorktree(workspace)}
-                >
-                  <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-                </Button>
-              </div>
-              <Collapsible.Content id={`workspace-panel-${workspace.id}`}>
-                <Sidebar.MenuSub>
-                  {#if workspace.repository.health !== "healthy"}
-                    <li
-                      id={`workspace-health-${workspace.id}`}
-                      class="px-3 py-1 text-xs text-destructive"
-                      role="status"
-                    >
-                      {healthLabel(workspace)}
-                    </li>
-                  {/if}
-                  {#if worktreeLoadingByWorkspace[workspace.id] && orderedWorktrees.length === 0}
-                    <li
-                      class="flex items-center gap-2 px-3 py-1 text-xs text-muted-foreground"
-                      role="status"
-                    >
-                      <Spinner aria-hidden="true" />
-                      Loading worktrees…
-                    </li>
-                  {:else if worktreeErrorsByWorkspace[workspace.id]}
-                    <li class="px-3 py-1 text-xs text-destructive" role="alert">
-                      {worktreeErrorsByWorkspace[workspace.id]}
-                    </li>
-                  {:else if orderedWorktrees.length > 0}
-                    {#each orderedWorktrees as worktree (worktree.id)}
-                      {@const diffSummary = diffSummaries[worktree.id]}
-                      <Sidebar.MenuSubItem>
-                        <Button
-                          class="w-full min-w-0 justify-start"
-                          variant={selectedWorktreeId === worktree.id
-                            ? "secondary"
-                            : "ghost"}
-                          size="sm"
-                          disabled={!canOpenTerminal(worktree)}
-                          aria-label={worktreeLabel(worktree)}
-                          title={canOpenTerminal(worktree)
-                            ? `Open ${worktree.name} terminal`
-                            : "Terminal unavailable until this worktree is ready and healthy"}
-                          onclick={() => selectWorktree(worktree)}
+                  </Button>
+                {/snippet}
+              </Collapsible.Trigger>
+              <Sidebar.MenuButton
+                class={cn(
+                  "touch-pan-y select-none",
+                  !reordering &&
+                    renderedWorkspaces.length > 1 &&
+                    "cursor-grab active:cursor-grabbing",
+                )}
+                data-workspace-drag-surface
+                title="Drag to rearrange workspace"
+                isActive={selectedId === workspace.id && !selectedWorktreeId}
+                aria-current={selectedId === workspace.id && !selectedWorktreeId
+                  ? "page"
+                  : undefined}
+                aria-label={workspaceLabel(workspace)}
+                onpointerdown={(event) =>
+                  handleWorkspacePointerDown(event, workspace.id)}
+                onkeydown={(event) =>
+                  handleWorkspaceKeydown(event, workspace.id)}
+                onclick={(event) => handleWorkspaceClick(event, workspace.id)}
+              >
+                <HugeiconsIcon
+                  icon={FolderGitIcon}
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+                <span class="min-w-0 flex-1 truncate">{workspace.name}</span>
+                <WorkspaceSyncIndicator
+                  status={workspace.repository.syncStatus}
+                />
+                {#if !expanded.has(workspace.id) && statusChannel === "connected" && activity && activity.state !== "idle" && activity.integration === "connected"}
+                  <WorkflowStatusIndicator
+                    stateOverride={activity.state}
+                    integrationOverride={activity.integration}
+                    aggregateCount={activity.count}
+                    labelPrefix={`${workspace.name} workflow`}
+                    channel={statusChannel}
+                  />
+                {/if}
+              </Sidebar.MenuButton>
+              <Button
+                class="focus-within:opacity-100 group-hover/workspace:opacity-100 md:opacity-0"
+                variant="ghost"
+                size="icon-sm"
+                disabled={workspace.repository.health !== "healthy"}
+                aria-label={`New worktree in ${workspace.name}`}
+                aria-describedby={workspace.repository.health !== "healthy"
+                  ? `workspace-health-${workspace.id}`
+                  : undefined}
+                onclick={() => createWorktree(workspace)}
+              >
+                <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+              </Button>
+            </div>
+            <Collapsible.Content id={`workspace-panel-${workspace.id}`}>
+              <Sidebar.MenuSub>
+                {#if workspace.repository.health !== "healthy"}
+                  <li
+                    id={`workspace-health-${workspace.id}`}
+                    class="px-3 py-1 text-xs text-destructive"
+                    role="status"
+                  >
+                    {healthLabel(workspace)}
+                  </li>
+                {/if}
+                {#if worktreeLoadingByWorkspace[workspace.id] && orderedWorktrees.length === 0}
+                  <li
+                    class="flex items-center gap-2 px-3 py-1 text-xs text-muted-foreground"
+                    role="status"
+                  >
+                    <Spinner aria-hidden="true" />
+                    Loading worktrees…
+                  </li>
+                {:else if worktreeErrorsByWorkspace[workspace.id]}
+                  <li class="px-3 py-1 text-xs text-destructive" role="alert">
+                    {worktreeErrorsByWorkspace[workspace.id]}
+                  </li>
+                {:else if orderedWorktrees.length > 0}
+                  {#each orderedWorktrees as worktree (worktree.id)}
+                    {@const diffSummary = diffSummaries[worktree.id]}
+                    <Sidebar.MenuSubItem>
+                      <Button
+                        class="w-full min-w-0 justify-start"
+                        variant={selectedWorktreeId === worktree.id
+                          ? "secondary"
+                          : "ghost"}
+                        size="sm"
+                        disabled={!canOpenTerminal(worktree)}
+                        aria-label={worktreeLabel(worktree)}
+                        title={canOpenTerminal(worktree)
+                          ? `Open ${worktree.name} terminal`
+                          : "Terminal unavailable until this worktree is ready and healthy"}
+                        onclick={() => selectWorktree(worktree)}
+                      >
+                        <WorkflowStatusIndicator
+                          status={workflowStatuses[worktree.id]}
+                          labelPrefix={`${worktree.name} workflow`}
+                          channel={statusChannel}
+                        />
+                        <span class="min-w-0 flex-1 truncate text-left"
+                          >{worktree.name}</span
                         >
-                          <WorkflowStatusIndicator
-                            status={workflowStatuses[worktree.id]}
-                            labelPrefix={`${worktree.name} workflow`}
-                            channel={statusChannel}
-                          />
-                          <span class="min-w-0 flex-1 truncate text-left"
-                            >{worktree.name}</span
+                        {#if diffSummary?.hasChanges}
+                          <span
+                            class="ml-auto flex shrink-0 items-center gap-1 text-[0.625rem] leading-none tabular-nums"
+                            aria-hidden="true"
                           >
-                          {#if diffSummary?.hasChanges}
-                            <span
-                              class="ml-auto flex shrink-0 items-center gap-1 text-[0.625rem] leading-none tabular-nums"
-                              aria-hidden="true"
+                            <span class="text-diff-addition"
+                              >+{diffSummary.additions}</span
                             >
-                              <span class="text-diff-addition"
-                                >+{diffSummary.additions}</span
-                              >
-                              <span class="text-diff-deletion"
-                                >−{diffSummary.deletions}</span
-                              >
-                            </span>
-                          {/if}
-                        </Button>
-                      </Sidebar.MenuSubItem>
-                    {/each}
-                  {:else}
-                    <li class="px-3 py-1 text-xs text-muted-foreground">
-                      No managed worktrees
-                    </li>
-                  {/if}
-                </Sidebar.MenuSub>
-              </Collapsible.Content>
-            </SortableWorkspaceItem>
-          </Collapsible.Root>
-        {/each}
-      </Sidebar.Menu>
-    </DragDropProvider>
+                            <span class="text-diff-deletion"
+                              >−{diffSummary.deletions}</span
+                            >
+                          </span>
+                        {/if}
+                      </Button>
+                    </Sidebar.MenuSubItem>
+                  {/each}
+                {:else}
+                  <li class="px-3 py-1 text-xs text-muted-foreground">
+                    No managed worktrees
+                  </li>
+                {/if}
+              </Sidebar.MenuSub>
+            </Collapsible.Content>
+          </Sidebar.MenuItem>
+        </Collapsible.Root>
+      {/each}
+    </Sidebar.Menu>
   {/if}
 </nav>

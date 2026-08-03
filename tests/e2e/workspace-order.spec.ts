@@ -53,7 +53,7 @@ async function dragWorkspace(
   page: Page,
   sourceName: string,
   targetName: string,
-  holdMs: number,
+  expectActivation: boolean,
 ): Promise<void> {
   const navigation = page.getByRole("navigation", { name: "Workspaces" });
   const source = navigation.getByRole("button", {
@@ -68,12 +68,19 @@ async function dragWorkspace(
   const targetBox = await target.boundingBox();
   if (!sourceBox || !targetBox) throw new Error("Workspace row is not visible");
 
-  await page.mouse.move(
-    sourceBox.x + sourceBox.width / 2,
-    sourceBox.y + sourceBox.height / 2,
-  );
+  const sourceX = sourceBox.x + sourceBox.width / 2;
+  const sourceY = sourceBox.y + sourceBox.height / 2;
+  await page.mouse.move(sourceX, sourceY);
   await page.mouse.down();
-  await page.waitForTimeout(holdMs);
+  await page.mouse.move(sourceX + 8, sourceY, { steps: 4 });
+
+  const draggedItem = navigation.locator('[data-dragging="true"]');
+  if (expectActivation) {
+    await expect(draggedItem).toHaveCount(1);
+  } else {
+    await expect(draggedItem).toHaveCount(0);
+  }
+
   await page.mouse.move(
     targetBox.x + targetBox.width / 2,
     targetBox.y + targetBox.height / 2,
@@ -151,7 +158,7 @@ test.afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-test("long-press dragging rearranges and persists workspace order", async ({
+test("mouse dragging rearranges and persists workspace order", async ({
   page,
 }) => {
   await page.goto(bootstrapUrl);
@@ -168,30 +175,32 @@ test("long-press dragging rearranges and persists workspace order", async ({
     "First workspace",
   ]);
 
-  const firstWorkspace = page
-    .getByRole("navigation", { name: "Workspaces" })
-    .getByRole("button", { name: "First workspace", exact: true });
-  await firstWorkspace.focus();
+  const navigation = page.getByRole("navigation", { name: "Workspaces" });
+  const secondWorkspace = navigation.getByRole("button", {
+    name: "Second workspace",
+    exact: true,
+  });
+  await secondWorkspace.focus();
   await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Second workspace" }),
+  ).toBeVisible();
+
+  await navigation
+    .getByRole("button", { name: "First workspace", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { name: "First workspace" }),
   ).toBeVisible();
 
-  await dragWorkspace(page, "Third workspace", "First workspace", 200);
+  await dragWorkspace(page, "Expand Third workspace", "First workspace", false);
   await expect(workspaceNames(page)).toHaveText([
     "Third workspace",
     "Second workspace",
     "First workspace",
   ]);
 
-  await dragWorkspace(page, "Expand Third workspace", "First workspace", 550);
-  await expect(workspaceNames(page)).toHaveText([
-    "Third workspace",
-    "Second workspace",
-    "First workspace",
-  ]);
-
-  await dragWorkspace(page, "Third workspace", "First workspace", 550);
+  await dragWorkspace(page, "Third workspace", "First workspace", true);
   await expect(workspaceNames(page)).toHaveText([
     "Second workspace",
     "First workspace",
