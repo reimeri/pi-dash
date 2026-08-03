@@ -372,7 +372,7 @@
   onkeydown={handleDragKeydown}
 />
 
-<nav aria-label="Workspaces" class="min-h-0 flex-1 overflow-y-auto px-2">
+<nav aria-label="Workspaces" class="min-h-0 flex-1 overflow-y-auto px-2 py-1">
   {#if status === "loading" && workspaces.length === 0}
     <div
       class="flex items-center gap-2 p-3 text-sm text-muted-foreground"
@@ -462,7 +462,7 @@
               </Collapsible.Trigger>
               <Sidebar.MenuButton
                 class={cn(
-                  "touch-pan-y select-none",
+                  "touch-pan-y select-none hover:bg-muted dark:hover:bg-muted/50 data-active:hover:bg-sidebar-accent",
                   dragging &&
                     dragCandidate?.workspaceId === workspace.id &&
                     "cursor-grabbing",
@@ -553,7 +553,9 @@
                           labelPrefix={`${worktree.name} workflow`}
                           channel={statusChannel}
                         />
-                        <span class="min-w-0 flex-1 truncate text-left"
+                        <span class={cn("min-w-0 flex-1 truncate text-left",
+                          workflowStatuses[worktree.id]?.integration !== "connected" && "opacity-50"
+                        )}
                           >{worktree.name}</span
                         >
                         {#if diffSummary?.hasChanges}
