@@ -48,8 +48,14 @@
     type StartupState,
   } from "./connection.js";
   import AddWorkspaceDialog from "./lib/workspaces/AddWorkspaceDialog.svelte";
+  import HealthBadge from "./lib/workspaces/HealthBadge.svelte";
   import RemoveWorkspaceDialog from "./lib/workspaces/RemoveWorkspaceDialog.svelte";
   import RenameWorkspaceDialog from "./lib/workspaces/RenameWorkspaceDialog.svelte";
+  import {
+    healthLabel,
+    repositoryHealthIssue,
+    worktreeHealthIssue,
+  } from "./lib/workspaces/health.js";
   import WorkspaceSidebar from "./lib/workspaces/WorkspaceSidebar.svelte";
   import WorkspaceSidebarAddButton from "./lib/workspaces/WorkspaceSidebarAddButton.svelte";
   import WorkspaceSyncIndicator from "./lib/workspaces/WorkspaceSyncIndicator.svelte";
@@ -736,6 +742,9 @@
                 </Empty.Header>
               </Empty.Root>
             {:else if selectedWorkspace}
+              {@const repositoryIssue = repositoryHealthIssue(
+                selectedWorkspace.repository.health,
+              )}
               <section
                 class="mx-auto flex w-full max-w-5xl flex-col gap-6"
                 aria-labelledby="workspace-title"
@@ -799,14 +808,29 @@
                       >
                     </div>
                     <Card.Action>
-                      <Badge
-                        variant={selectedWorkspace.repository.health ===
-                        "healthy"
-                          ? "secondary"
-                          : "destructive"}
-                      >
-                        {selectedWorkspace.repository.health.replace("_", " ")}
-                      </Badge>
+                      <HealthBadge
+                        label={healthLabel(selectedWorkspace.repository.health)}
+                        subject="Repository"
+                        issue={repositoryIssue}
+                        details={[
+                          {
+                            label: "Path",
+                            value: displayPath(
+                              selectedWorkspace.repositoryPath,
+                            ),
+                          },
+                          ...(selectedWorkspace.repository.checkedAt
+                            ? [
+                                {
+                                  label: "Checked",
+                                  value: new Date(
+                                    selectedWorkspace.repository.checkedAt,
+                                  ).toLocaleString(),
+                                },
+                              ]
+                            : []),
+                        ]}
+                      />
                     </Card.Action>
                   </Card.Header>
                   <Card.Content>
@@ -973,6 +997,10 @@
                   {:else}
                     <div class="grid gap-4 md:grid-cols-2">
                       {#each selectedWorktrees as worktree (worktree.id)}
+                        {@const worktreeIssue = worktreeHealthIssue(
+                          worktree.health,
+                          worktree.lifecycle,
+                        )}
                         <Card.Root
                           role="article"
                           aria-label={worktree.name}
@@ -986,14 +1014,24 @@
                                 >{worktree.lifecycle}</Card.Description
                               >
                             </div>
-                            <Card.Action
-                              ><Badge
-                                variant={worktree.health === "healthy"
-                                  ? "secondary"
-                                  : "destructive"}
-                                >{worktree.health.replace("_", " ")}</Badge
-                              ></Card.Action
-                            >
+                            <Card.Action>
+                              <HealthBadge
+                                label={healthLabel(worktree.health)}
+                                subject="Worktree"
+                                issue={worktreeIssue}
+                                details={[
+                                  {
+                                    label: "Path",
+                                    value: displayPath(worktree.path),
+                                  },
+                                  {
+                                    label: "Lifecycle",
+                                    value: worktree.lifecycle,
+                                  },
+                                ]}
+                                lastError={worktree.lastError}
+                              />
+                            </Card.Action>
                           </Card.Header>
                           <Card.Content class="flex flex-col gap-3">
                             <code class="truncate text-sm"
