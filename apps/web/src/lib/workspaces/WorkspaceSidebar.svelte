@@ -68,11 +68,12 @@
     items: WorkspaceDto[],
     sourceId: string,
     targetId: string,
+    insertAfter: boolean,
   ): WorkspaceDto[] {
     const sourceIndex = items.findIndex(
       (workspace) => workspace.id === sourceId,
     );
-    const targetIndex = items.findIndex(
+    let targetIndex = items.findIndex(
       (workspace) => workspace.id === targetId,
     );
     if (
@@ -84,8 +85,22 @@
     }
     const next = [...items];
     const [source] = next.splice(sourceIndex, 1);
-    next.splice(targetIndex, 0, source!);
+    if (sourceIndex < targetIndex) {
+      targetIndex -= 1;
+    }
+    const insertIndex = insertAfter ? targetIndex + 1 : targetIndex;
+    next.splice(insertIndex, 0, source!);
     return next;
+  }
+
+  function workspaceOrderEqual(
+    left: WorkspaceDto[],
+    right: WorkspaceDto[],
+  ): boolean {
+    return (
+      left.length === right.length &&
+      left.every((workspace, index) => workspace.id === right[index]?.id)
+    );
   }
 
   function clearDragCandidate(): void {
@@ -159,16 +174,24 @@
     }
 
     event.preventDefault();
-    const target = document
+    const targetElement = document
       .elementFromPoint(event.clientX, event.clientY)
       ?.closest<HTMLElement>("[data-workspace-id]");
-    const targetId = target?.dataset.workspaceId;
+    const targetId = targetElement?.dataset.workspaceId;
     if (!targetId) return;
-    renderedWorkspaces = moveWorkspace(
+
+    const targetRect = targetElement.getBoundingClientRect();
+    const insertAfter =
+      event.clientY >= targetRect.top + targetRect.height / 2;
+    const nextWorkspaces = moveWorkspace(
       renderedWorkspaces,
       candidate.workspaceId,
       targetId,
+      insertAfter,
     );
+    if (!workspaceOrderEqual(nextWorkspaces, renderedWorkspaces)) {
+      renderedWorkspaces = nextWorkspaces;
+    }
   }
 
   function handleWorkspacePointerUp(event: PointerEvent): void {
