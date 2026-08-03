@@ -442,14 +442,21 @@
                     aria-label={`${expanded.has(workspace.id) ? "Collapse" : "Expand"} ${workspace.name}`}
                     aria-controls={`workspace-panel-${workspace.id}`}
                   >
-                    <HugeiconsIcon
-                      icon={ArrowRight01Icon}
-                      class={cn(
-                        "transition-transform",
-                        expanded.has(workspace.id) && "rotate-90",
-                      )}
-                      strokeWidth={2}
-                    />
+                    <span class="relative size-4 shrink-0" aria-hidden="true">
+                      <HugeiconsIcon
+                        icon={Folder}
+                        class="size-4 group-hover/workspace:opacity-0 group-focus-visible/button:opacity-0"
+                        strokeWidth={2}
+                      />
+                      <HugeiconsIcon
+                        icon={ArrowRight01Icon}
+                        class={cn(
+                          "pointer-events-none absolute inset-0 size-4 opacity-0 transition-[opacity,transform] group-hover/workspace:opacity-100 group-focus-visible/button:opacity-100",
+                          expanded.has(workspace.id) && "rotate-90",
+                        )}
+                        strokeWidth={2}
+                      />
+                    </span>
                   </Button>
                 {/snippet}
               </Collapsible.Trigger>
@@ -473,11 +480,6 @@
                   handleWorkspaceKeydown(event, workspace.id)}
                 onclick={(event) => handleWorkspaceClick(event, workspace.id)}
               >
-                <HugeiconsIcon
-                  icon={Folder}
-                  strokeWidth={2}
-                  aria-hidden="true"
-                />
                 <span class="min-w-0 flex-1 truncate">{workspace.name}</span>
                 <WorkspaceSyncIndicator
                   status={workspace.repository.syncStatus}
