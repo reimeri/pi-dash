@@ -405,7 +405,7 @@
               "transition-[opacity,transform] motion-reduce:transition-none",
               dragging &&
                 dragCandidate?.workspaceId === workspace.id &&
-                "opacity-60 ring-1 ring-sidebar-ring",
+                "opacity-60",
             )}
           >
             <div class="group/workspace flex items-center gap-1">
@@ -432,9 +432,9 @@
               <Sidebar.MenuButton
                 class={cn(
                   "touch-pan-y select-none",
-                  !reordering &&
-                    renderedWorkspaces.length > 1 &&
-                    "cursor-grab active:cursor-grabbing",
+                  dragging &&
+                    dragCandidate?.workspaceId === workspace.id &&
+                    "cursor-grabbing",
                 )}
                 data-workspace-drag-surface
                 title="Drag to rearrange workspace"
