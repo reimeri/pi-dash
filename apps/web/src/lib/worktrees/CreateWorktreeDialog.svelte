@@ -16,8 +16,11 @@
   import * as NativeSelect from "$lib/components/ui/native-select";
   import { Spinner } from "$lib/components/ui/spinner";
   import { ApiClientError, api } from "../../api.js";
+  import WorkspaceSyncNotice from "../workspaces/WorkspaceSyncNotice.svelte";
 
   export let workspace: WorkspaceDto;
+  export let syncing = false;
+  export let onSync: (() => void) | undefined = undefined;
   export let onClose: () => void;
   export let onCreated: (worktree: WorktreeDto) => void;
 
@@ -33,10 +36,20 @@
   let dialogOpen = true;
   let nameInput: HTMLInputElement | null = null;
   let returnFocus: HTMLElement | null = null;
+  let loadedHeadCommit = workspace.repository.headCommit;
   $: selected = refs.find(
     (ref) => `${ref.fullName}:${ref.commit}` === selectedKey,
   );
   $: branch = slug ? `pi-dash/${slug}` : "pi-dash/…";
+  $: if (
+    !loading &&
+    !saving &&
+    !syncing &&
+    workspace.repository.headCommit !== loadedHeadCommit
+  ) {
+    loadedHeadCommit = workspace.repository.headCommit;
+    void loadRefs();
+  }
 
   function restoreFocus(): void {
     requestAnimationFrame(
@@ -86,6 +99,7 @@
         return true;
       });
       selectedKey = refs[0] ? `${refs[0].fullName}:${refs[0].commit}` : "";
+      loadedHeadCommit = workspace.repository.headCommit;
       if (!selectedKey)
         error = "Repository has no commit that can be used as a base.";
     } catch (caught) {
@@ -162,6 +176,14 @@
         >Create a new branch and linked worktree from an exact commit snapshot.</Dialog.Description
       ></Dialog.Header
     >
+    {#if workspace.repository.health === "healthy"}
+      <WorkspaceSyncNotice
+        status={workspace.repository.syncStatus}
+        context="worktree"
+        {syncing}
+        {onSync}
+      />
+    {/if}
     {#if loading}
       <div
         class="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"

@@ -59,8 +59,10 @@
   import WorkspaceSidebar from "./lib/workspaces/WorkspaceSidebar.svelte";
   import WorkspaceSidebarAddButton from "./lib/workspaces/WorkspaceSidebarAddButton.svelte";
   import WorkspaceSyncIndicator from "./lib/workspaces/WorkspaceSyncIndicator.svelte";
+  import WorkspaceSyncNotice from "./lib/workspaces/WorkspaceSyncNotice.svelte";
   import { workspaceStore } from "./lib/workspaces/store.js";
   import { displayPath } from "./lib/workspaces/display.js";
+  import { syncStatusLabel } from "./lib/workspaces/sync.js";
   import type { TerminalControls } from "./lib/terminal/controls.js";
   import LazyTerminalWorkspace from "./lib/terminal/LazyTerminalWorkspace.svelte";
   import {
@@ -85,7 +87,7 @@
   let refreshingId: string | undefined;
   let selectedWorktreeId: string | undefined;
   let visibleDiffWorktreeIds: string[] = [];
-  let createWorktreeTarget: WorkspaceDto | undefined;
+  let createWorktreeWorkspaceId: string | undefined;
   let removeWorktreeTarget: WorktreeDto | undefined;
   let deleteBranchTarget: WorktreeDto | undefined;
   let terminalControls: TerminalControls | undefined;
@@ -103,6 +105,11 @@
   $: selectedWorkspace = $workspaceStore.workspaces.find(
     (workspace) => workspace.id === selectedId,
   );
+  $: createWorktreeWorkspace = createWorktreeWorkspaceId
+    ? $workspaceStore.workspaces.find(
+        (workspace) => workspace.id === createWorktreeWorkspaceId,
+      )
+    : undefined;
   $: selectedWorktrees = selectedWorkspace
     ? ($worktreeStore.byWorkspace[selectedWorkspace.id] ?? [])
     : [];
@@ -223,6 +230,18 @@
     }
   }
 
+  async function refreshWorkspaceStatus(workspaceId: string): Promise<void> {
+    refreshingId = workspaceId;
+    try {
+      const response = await api.refreshWorkspace(workspaceId);
+      workspaceStore.upsert(response.workspace);
+    } catch {
+      // Automatic status refresh failures stay silent; manual refresh still surfaces errors.
+    } finally {
+      if (refreshingId === workspaceId) refreshingId = undefined;
+    }
+  }
+
   async function syncWorkspace(workspace: WorkspaceDto) {
     syncingIds.add(workspace.id);
     workspaceActionError = "";
@@ -230,7 +249,10 @@
       const response = await api.syncWorkspace(workspace.id);
       workspaceStore.upsert(response.workspace);
     } catch (error) {
-      if (selectedId === workspace.id) {
+      if (
+        selectedId === workspace.id ||
+        createWorktreeWorkspaceId === workspace.id
+      ) {
         workspaceActionError =
           error instanceof Error ? error.message : "Unable to sync workspace.";
       }
@@ -248,6 +270,7 @@
     selectedId = id;
     selectedWorktreeId = undefined;
     void worktreeStore.load(id);
+    void refreshWorkspaceStatus(id);
   }
 
   function loadWorkspaceWorktrees(id: string) {
@@ -271,7 +294,8 @@
   }
 
   function openCreateWorktree(workspace: WorkspaceDto) {
-    createWorktreeTarget = workspace;
+    createWorktreeWorkspaceId = workspace.id;
+    void refreshWorkspaceStatus(workspace.id);
   }
 
   function canOpenTerminal(worktree: WorktreeDto): boolean {
@@ -780,6 +804,12 @@
                       <WorkspaceSyncIndicator
                         status={selectedWorkspace.repository.syncStatus}
                       />
+                      {#if refreshingId === selectedWorkspace.id}
+                        <Spinner
+                          class="size-4 text-muted-foreground"
+                          aria-label="Refreshing sync status"
+                        />
+                      {/if}
                     </h2>
                     <p
                       class="mt-1 break-all font-mono text-sm text-muted-foreground"
@@ -810,6 +840,14 @@
                     </Button>
                   </div>
                 </header>
+
+                {#if selectedWorkspace.repository.health === "healthy"}
+                  <WorkspaceSyncNotice
+                    status={selectedWorkspace.repository.syncStatus}
+                    syncing={syncingIds.has(selectedWorkspace.id)}
+                    onSync={() => syncWorkspace(selectedWorkspace)}
+                  />
+                {/if}
 
                 <Card.Root>
                   <Card.Header>
@@ -865,6 +903,14 @@
                             0,
                             12,
                           ) ?? "No commit"}
+                        </dd>
+                      </div>
+                      <div class="min-w-0">
+                        <dt class="text-sm text-muted-foreground">Upstream</dt>
+                        <dd class="truncate text-sm font-medium">
+                          {syncStatusLabel(
+                            selectedWorkspace.repository.syncStatus,
+                          )}
                         </dd>
                       </div>
                       <div class="min-w-0">
@@ -1259,10 +1305,13 @@
     onRemoved={removeWorkspace}
   />
 {/if}
-{#if createWorktreeTarget}
+{#if createWorktreeWorkspace}
+  {@const createTarget = createWorktreeWorkspace}
   <CreateWorktreeDialog
-    workspace={createWorktreeTarget}
-    onClose={() => (createWorktreeTarget = undefined)}
+    workspace={createTarget}
+    syncing={syncingIds.has(createTarget.id)}
+    onSync={() => syncWorkspace(createTarget)}
+    onClose={() => (createWorktreeWorkspaceId = undefined)}
     onCreated={upsertWorktree}
   />
 {/if}
