@@ -117,7 +117,7 @@ describe("Fastify foundation API", () => {
     expect(response.json()).toEqual({
       status: "ready",
       version: "0.1.0",
-      schemaVersion: 6,
+      schemaVersion: 7,
       capabilities: {
         git: "available",
         pi: "unavailable",

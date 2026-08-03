@@ -23,6 +23,7 @@ export interface ApplicationEvents {
   publishStatus(status: WorkflowStatusDto): void;
   publishRuntime(runtime: RuntimeDto): void;
   publishWorkspaceUpdated(workspace: WorkspaceDto): void;
+  publishWorkspaceOrderUpdated(workspaceIds: string[]): void;
   publishWorktreeRemoved(worktreeId: string, workspaceId: string): void;
   subscribe(transport: ApplicationEventTransport): () => void;
   close(): void;
@@ -96,6 +97,15 @@ export function createApplicationEvents(options: {
         type: "workspaceUpdated",
         cursor,
         workspace,
+      });
+    },
+    publishWorkspaceOrderUpdated(workspaceIds) {
+      cursor += 1;
+      append({
+        v: APPLICATION_EVENTS_PROTOCOL_VERSION,
+        type: "workspaceOrderUpdated",
+        cursor,
+        workspaceIds,
       });
     },
     publishWorktreeRemoved(worktreeId, workspaceId) {

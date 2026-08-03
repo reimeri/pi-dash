@@ -67,7 +67,10 @@ export function reduceWorkflowStatusState(
       },
     };
   }
-  if (frame.type === "workspaceUpdated") {
+  if (
+    frame.type === "workspaceUpdated" ||
+    frame.type === "workspaceOrderUpdated"
+  ) {
     return {
       resyncRequired: false,
       state: { ...state, cursor: frame.cursor },

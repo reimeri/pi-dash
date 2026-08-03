@@ -33,12 +33,14 @@ export const WorkspaceRepositorySchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const WorkspaceIdSchema = Type.String({
+  pattern:
+    "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+});
+
 export const WorkspaceSchema = Type.Object(
   {
-    id: Type.String({
-      pattern:
-        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
-    }),
+    id: WorkspaceIdSchema,
     name: Type.String({ minLength: 1, maxLength: 100 }),
     slug: Type.String({
       minLength: 1,
@@ -69,15 +71,27 @@ export const WorkspaceResponseSchema = Type.Object(
 export type WorkspaceResponse = Static<typeof WorkspaceResponseSchema>;
 
 export const WorkspaceIdParamsSchema = Type.Object(
+  { id: WorkspaceIdSchema },
+  { additionalProperties: false },
+);
+export type WorkspaceIdParams = Static<typeof WorkspaceIdParamsSchema>;
+
+export const ReorderWorkspacesRequestSchema = Type.Object(
   {
-    id: Type.String({
-      pattern:
-        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+    expectedWorkspaceIds: Type.Array(WorkspaceIdSchema, {
+      minItems: 1,
+      maxItems: 50,
+    }),
+    workspaceIds: Type.Array(WorkspaceIdSchema, {
+      minItems: 1,
+      maxItems: 50,
     }),
   },
   { additionalProperties: false },
 );
-export type WorkspaceIdParams = Static<typeof WorkspaceIdParamsSchema>;
+export type ReorderWorkspacesRequest = Static<
+  typeof ReorderWorkspacesRequestSchema
+>;
 
 export const WorkspacePathRequestSchema = Type.Object(
   { path: Type.String({ minLength: 1, maxLength: 4096 }) },

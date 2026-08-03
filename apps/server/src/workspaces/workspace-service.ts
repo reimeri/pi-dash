@@ -94,6 +94,7 @@ export interface WorkspaceService {
     signal?: AbortSignal;
   }): Promise<WorkspaceDto>;
   rename(id: string, name: string): WorkspaceDto;
+  reorder(expectedIds: string[], ids: string[]): WorkspaceDto[];
   remove(id: string): void;
   refresh(id: string, signal?: AbortSignal): Promise<WorkspaceDto>;
   sync(id: string, signal?: AbortSignal): Promise<WorkspaceDto>;
@@ -108,6 +109,7 @@ export function createWorkspaceService(options: {
   syncer: GitWorkspaceSynchronizer;
   lock: GitMutationLock;
   onRepositoryChange?: (workspace: WorkspaceDto) => void;
+  onOrderChange?: (workspaceIds: string[]) => void;
   now?: () => Date;
   id?: () => string;
   refreshIntervalMs?: number;
@@ -147,6 +149,16 @@ export function createWorkspaceService(options: {
       options.onRepositoryChange?.(workspace);
     } catch {
       // Persisted repository state must not be undone by event publication.
+    }
+  };
+
+  const publishOrderChange = (): void => {
+    try {
+      options.onOrderChange?.(
+        options.repository.list().map((workspace) => workspace.id),
+      );
+    } catch {
+      // Persisted workspace order must not be undone by event publication.
     }
   };
 
@@ -215,7 +227,7 @@ export function createWorkspaceService(options: {
     async create(input) {
       const inspection = await inspect(input.path, input.signal);
       const name = normalizeName(input.name);
-      return options.repository.transaction(() => {
+      const workspace = options.repository.transaction(() => {
         const existing = options.repository.findByRepositoryPath(
           inspection.repositoryPath,
         );
@@ -225,6 +237,14 @@ export function createWorkspaceService(options: {
             "WORKSPACE_EXISTS",
             "This repository is already registered",
             { workspaceId: existing.id, workspaceName: existing.name },
+          );
+        }
+
+        if (options.repository.list().length >= 50) {
+          throw new WorkspaceServiceError(
+            409,
+            "LIMIT_EXCEEDED",
+            "Pi Dash supports up to 50 registered workspaces",
           );
         }
 
@@ -238,7 +258,7 @@ export function createWorkspaceService(options: {
         }
         const timestamp = now().toISOString();
         return toDto(
-          options.repository.create({
+          options.repository.createFirst({
             id: createId(),
             name,
             slug,
@@ -253,6 +273,8 @@ export function createWorkspaceService(options: {
           }),
         );
       });
+      publishOrderChange();
+      return workspace;
     },
     rename(id, inputName) {
       requireRecord(id);
@@ -263,6 +285,48 @@ export function createWorkspaceService(options: {
       );
       return toDto(record!);
     },
+    reorder(expectedIds, ids) {
+      const hasDuplicates = (values: string[]): boolean =>
+        new Set(values).size !== values.length;
+      if (hasDuplicates(expectedIds) || hasDuplicates(ids)) {
+        throw new WorkspaceServiceError(
+          400,
+          "VALIDATION_ERROR",
+          "Workspace order cannot contain duplicate IDs",
+        );
+      }
+      const workspaces = options.repository.transaction(() => {
+        const currentIds = options.repository
+          .list()
+          .map((workspace) => workspace.id);
+        if (
+          currentIds.length !== expectedIds.length ||
+          currentIds.some((id, index) => expectedIds[index] !== id)
+        ) {
+          throw new WorkspaceServiceError(
+            409,
+            "WORKSPACE_ORDER_CHANGED",
+            "Workspace order changed before this reorder was applied",
+            { workspaceIds: currentIds },
+          );
+        }
+        const currentIdSet = new Set(currentIds);
+        if (
+          ids.length !== currentIds.length ||
+          ids.some((id) => !currentIdSet.has(id))
+        ) {
+          throw new WorkspaceServiceError(
+            400,
+            "VALIDATION_ERROR",
+            "Workspace order must contain every workspace exactly once",
+          );
+        }
+        options.repository.reorder(ids);
+        return options.repository.list().map(toDto);
+      });
+      publishOrderChange();
+      return workspaces;
+    },
     remove(id) {
       requireRecord(id);
       if ((pendingGitOperations.get(id) ?? 0) > 0) {
@@ -272,17 +336,20 @@ export function createWorkspaceService(options: {
           "A repository operation is already in progress for this workspace",
         );
       }
-      const count = options.repository.worktreeCount(id);
-      if (count > 0) {
-        throw new WorkspaceServiceError(
-          409,
-          "WORKSPACE_HAS_WORKTREES",
-          "Remove managed worktrees before removing this workspace",
-          { worktreeCount: count },
-        );
-      }
-      options.repository.delete(id);
+      options.repository.transaction(() => {
+        const count = options.repository.worktreeCount(id);
+        if (count > 0) {
+          throw new WorkspaceServiceError(
+            409,
+            "WORKSPACE_HAS_WORKTREES",
+            "Remove managed worktrees before removing this workspace",
+            { worktreeCount: count },
+          );
+        }
+        options.repository.delete(id);
+      });
       syncStatuses.delete(id);
+      publishOrderChange();
     },
     refresh(id, signal) {
       pendingGitOperations.set(id, (pendingGitOperations.get(id) ?? 0) + 1);

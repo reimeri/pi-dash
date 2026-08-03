@@ -199,6 +199,8 @@ export async function createDaemon(
       lock: gitMutationLock,
       onRepositoryChange: (workspace) =>
         applicationEvents?.publishWorkspaceUpdated(workspace),
+      onOrderChange: (workspaceIds) =>
+        applicationEvents?.publishWorkspaceOrderUpdated(workspaceIds),
     });
     const lifecycle = createWorktreeLifecycleCoordinator({
       repository: worktreeRepository,

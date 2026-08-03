@@ -42,8 +42,8 @@ describe("foundation database", () => {
       path: target.path,
       migrationsDirectory,
     });
-    expect(database.schemaVersion).toBe(6);
-    expect(database.foundation.getSchemaVersion()).toBe(6);
+    expect(database.schemaVersion).toBe(7);
+    expect(database.foundation.getSchemaVersion()).toBe(7);
     expect(
       database.sqlite
         .prepare(
@@ -64,6 +64,74 @@ describe("foundation database", () => {
     database.close();
     database.close();
     expect(statSync(target.path).mode & 0o777).toBe(0o600);
+  });
+
+  it("backfills workspace order using the previous deterministic ordering", async () => {
+    const target = temporaryDatabase();
+    const sqlite = new BetterSqlite3(target.path);
+    const migrationNames = [
+      "0001_foundation.sql",
+      "0002_workspaces.sql",
+      "0003_worktrees.sql",
+      "0004_workflow_status.sql",
+      "0005_finalize_worktree_deletion.sql",
+      "0006_fault_tolerant_worktree_removal.sql",
+    ];
+    for (const [index, name] of migrationNames.entries()) {
+      const sql = readFileSync(join(migrationsDirectory, name), "utf8");
+      sqlite.transaction(() => {
+        sqlite.exec(sql);
+        sqlite
+          .prepare(
+            "INSERT INTO migration_journal(version, name, checksum, applied_at) VALUES (?, ?, ?, ?)",
+          )
+          .run(
+            index + 1,
+            name,
+            createHash("sha256").update(sql).digest("hex"),
+            "2026-01-01T00:00:00.000Z",
+          );
+        sqlite.pragma(`user_version = ${index + 1}`);
+      })();
+    }
+    const insert = sqlite.prepare(`
+      INSERT INTO workspaces (
+        id, name, slug, repository_path, git_common_dir, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const [index, name] of [
+      "Zebra",
+      "Project 2",
+      "alpha",
+      "Project 10",
+    ].entries()) {
+      insert.run(
+        `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        name,
+        name.toLowerCase().replaceAll(" ", "-"),
+        `/repo-${index}`,
+        `/repo-${index}/.git`,
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+      );
+    }
+    sqlite.close();
+
+    const database = await openDatabase({
+      path: target.path,
+      migrationsDirectory,
+    });
+    expect(
+      database.sqlite
+        .prepare("SELECT name FROM workspaces ORDER BY sort_order")
+        .all(),
+    ).toEqual([
+      { name: "alpha" },
+      { name: "Project 10" },
+      { name: "Project 2" },
+      { name: "Zebra" },
+    ]);
+    database.close();
   });
 
   it("enforces hexadecimal object IDs in worktree lifecycle rows", async () => {
@@ -321,8 +389,8 @@ describe("foundation database", () => {
       migrationsDirectory,
       now: () => new Date("2026-01-01T00:00:00Z"),
     });
-    expect(database.schemaVersion).toBe(6);
-    expect(database.backupPaths).toHaveLength(6);
+    expect(database.schemaVersion).toBe(7);
+    expect(database.backupPaths).toHaveLength(7);
     const backup = new BetterSqlite3(database.backupPaths[0]!, {
       readonly: true,
     });

@@ -240,6 +240,70 @@ describe("workspace API", () => {
     expect(repository).toBeTruthy();
   });
 
+  it("reorders workspaces with stale-order protection", async () => {
+    const { root, app, authHeaders } = await fixture();
+    const firstResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/workspaces",
+      headers: authHeaders,
+      payload: {
+        path: createGitRepository(root, "first-order"),
+        name: "First",
+      },
+    });
+    const secondResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/workspaces",
+      headers: authHeaders,
+      payload: {
+        path: createGitRepository(root, "second-order"),
+        name: "Second",
+      },
+    });
+    const first = firstResponse.json().workspace;
+    const second = secondResponse.json().workspace;
+
+    const reordered = await app.inject({
+      method: "POST",
+      url: "/api/v1/workspaces/reorder",
+      headers: authHeaders,
+      payload: {
+        expectedWorkspaceIds: [second.id, first.id],
+        workspaceIds: [first.id, second.id],
+      },
+    });
+    expect(reordered.statusCode).toBe(200);
+    expect(
+      reordered
+        .json()
+        .workspaces.map((workspace: { id: string }) => workspace.id),
+    ).toEqual([first.id, second.id]);
+
+    const stale = await app.inject({
+      method: "POST",
+      url: "/api/v1/workspaces/reorder",
+      headers: authHeaders,
+      payload: {
+        expectedWorkspaceIds: [second.id, first.id],
+        workspaceIds: [second.id, first.id],
+      },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error).toMatchObject({
+      code: "WORKSPACE_ORDER_CHANGED",
+      details: { workspaceIds: [first.id, second.id] },
+    });
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/api/v1/workspaces",
+      headers: baseHeaders({ cookie: authHeaders.cookie }),
+    });
+    expect(
+      listed.json().workspaces.map((workspace: { id: string }) => workspace.id),
+    ).toEqual([first.id, second.id]);
+  });
+
   it("syncs a workspace to its remote tracking branch", async () => {
     const { root, app, authHeaders } = await fixture();
     const remote = join(root, "remote.git");
