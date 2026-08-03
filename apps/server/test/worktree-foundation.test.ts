@@ -1,9 +1,22 @@
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseWorktreePorcelain } from "../src/git/git-worktree-manager.js";
 import { createBaseSnapshotSigner } from "../src/worktrees/base-snapshot.js";
+import {
+  mountedPathsWithin,
+  purgeQuarantinedPath,
+} from "../src/worktrees/managed-path-removal.js";
+import { createRemovalConfirmationSigner } from "../src/worktrees/removal-confirmation.js";
 import {
   createGitMutationLock,
   GitMutationBusyError,
@@ -73,7 +86,9 @@ describe("worktree foundations", () => {
         branchRef: "refs/heads/main",
         detached: false,
         locked: false,
+        lockReason: null,
         prunable: false,
+        prunableReason: null,
       },
       {
         path: "/linked",
@@ -81,9 +96,71 @@ describe("worktree foundations", () => {
         branchRef: null,
         detached: true,
         locked: true,
+        lockReason: "reason",
         prunable: false,
+        prunableReason: null,
       },
     ]);
+  });
+
+  it("binds destructive confirmation tokens to the inspected state", () => {
+    let instant = new Date("2026-01-01T00:00:00Z");
+    const signer = createRemovalConfirmationSigner({
+      key: Buffer.alloc(32, 4),
+      now: () => instant,
+      ttlMs: 1_000,
+    });
+    const expected = {
+      worktreeId: "worktree",
+      recordUpdatedAt: "2026-01-01T00:00:00.000Z",
+      inspectionHash: "a".repeat(64),
+    };
+    const confirmation = signer.sign(expected);
+    expect(signer.verify(confirmation.token, expected)).toBe(true);
+    expect(
+      signer.verify(confirmation.token, {
+        ...expected,
+        inspectionHash: "b".repeat(64),
+      }),
+    ).toBe(false);
+    instant = new Date("2026-01-01T00:00:02Z");
+    expect(signer.verify(confirmation.token, expected)).toBe(false);
+  });
+
+  it("refuses to purge replacement data at a journaled quarantine path", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-dash-quarantine-"));
+    roots.push(root);
+    const workspaceRoot = join(root, "workspace");
+    const trashRoot = join(workspaceRoot, ".pi-dash-trash");
+    const operationId = "11111111-1111-4111-8111-111111111111";
+    const quarantinePath = join(trashRoot, operationId);
+    const movedAside = join(trashRoot, "original-data");
+    mkdirSync(quarantinePath, { recursive: true });
+    writeFileSync(join(quarantinePath, "original.txt"), "original\n");
+    const original = lstatSync(quarantinePath, { bigint: true });
+    renameSync(quarantinePath, movedAside);
+    mkdirSync(quarantinePath);
+    writeFileSync(join(quarantinePath, "replacement.txt"), "replacement\n");
+
+    await expect(
+      purgeQuarantinedPath({
+        path: quarantinePath,
+        workspaceRoot,
+        operationId,
+        expectedIdentity: {
+          device: original.dev.toString(),
+          inode: original.ino.toString(),
+          kind: "directory",
+        },
+      }),
+    ).rejects.toThrow("Quarantine identity changed");
+    expect(existsSync(join(quarantinePath, "replacement.txt"))).toBe(true);
+    expect(existsSync(join(movedAside, "original.txt"))).toBe(true);
+  });
+
+  it("treats a mounted deletion root as mounted content", async () => {
+    if (process.platform !== "linux") return;
+    expect(await mountedPathsWithin("/")).toContain("/");
   });
 
   it("binds signed snapshots and rejects expiry or changed input", () => {

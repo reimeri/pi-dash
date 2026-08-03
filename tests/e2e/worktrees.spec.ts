@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -236,19 +236,52 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
   let removeDialog = page.getByRole("alertdialog", {
     name: "Remove managed worktree",
   });
-  await removeDialog
-    .getByRole("button", { name: "Remove clean worktree" })
-    .click();
-  await expect(removeDialog).toContainText("tracked or untracked changes");
-  unlinkSync(dirt);
+  await expect(removeDialog).toContainText("1 untracked changes");
+  await expect(
+    removeDialog.getByRole("button", { name: "Review forced removal" }),
+  ).toBeVisible();
   await removeDialog.getByRole("button", { name: "Cancel" }).click();
+  unlinkSync(dirt);
 
+  execFileSync("git", ["switch", "-c", "pi-dash/e2e-switched"], {
+    cwd: managedPath,
+    stdio: "ignore",
+  });
   await card.getByRole("button", { name: "Remove", exact: true }).click();
   removeDialog = page.getByRole("alertdialog", {
     name: "Remove managed worktree",
   });
+  await expect(removeDialog).toContainText("refs/heads/pi-dash/feature-work");
+  await expect(removeDialog).toContainText("refs/heads/pi-dash/e2e-switched");
   await removeDialog
-    .getByRole("button", { name: "Remove clean worktree" })
+    .getByRole("button", { name: "Review forced removal" })
+    .click();
+  removeDialog = page.getByRole("alertdialog", {
+    name: "Confirm forced removal",
+  });
+  const forceButton = removeDialog.getByRole("button", {
+    name: "Force remove worktree",
+  });
+  await expect(forceButton).toBeDisabled();
+  await removeDialog.getByLabel(/Type delete to confirm/).fill("delete");
+  const removalResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/remove") &&
+      response.request().method() === "POST",
+  );
+  await forceButton.click();
+  const removalResponse = await removalResponsePromise;
+  const removalBody = await removalResponse.json();
+  expect(
+    removalResponse.status(),
+    `${JSON.stringify(removalResponse.request().postDataJSON())} ${JSON.stringify(removalBody)}`,
+  ).toBe(200);
+  await expect(
+    page.getByRole("alertdialog", { name: "Worktree removed" }),
+  ).toContainText("will be left untouched");
+  await page
+    .getByRole("alertdialog", { name: "Worktree removed" })
+    .getByRole("button", { name: "Done" })
     .click();
   await expect(card).toContainText("removed");
   await card.getByRole("button", { name: "Delete merged branch" }).click();

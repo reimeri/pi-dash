@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   ApiErrorEnvelopeSchema,
   HealthResponseSchema,
+  RemoveWorktreeRequestSchema,
+  RemoveWorktreeResponseSchema,
   WorkspaceSchema,
+  WorktreeRemovalInspectionSchema,
   WorktreeDiffSchema,
   WorktreeDiffSummarySchema,
 } from "../src/index.js";
@@ -85,6 +88,81 @@ describe("shared contracts", () => {
         omittedFiles: [{ path: "file", reason: "unknown" }],
       }),
     ).toBe(false);
+  });
+
+  it("validates removal inspection, typed confirmation, and outcomes", () => {
+    const inspection = {
+      worktreeId: "2cb84366-6fb7-4a60-b15e-6726381b190c",
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      confirmationToken: "x".repeat(32),
+      expiresAt: "2026-01-01T00:05:00.000Z",
+      safeRemovalAllowed: false,
+      forceRemovalAllowed: true,
+      expected: {
+        path: "/data/worktree",
+        allocatedPath: "/data/worktree",
+        branchRef: "refs/heads/pi-dash/expected",
+        gitCommonDir: "/repo/.git",
+      },
+      observed: {
+        pathExists: true,
+        pathKind: "directory",
+        canonicalPath: "/data/worktree",
+        branchRef: "refs/heads/pi-dash/observed",
+        head: "a".repeat(40),
+        gitCommonDir: "/repo/.git",
+        detached: false,
+        locked: false,
+        lockReason: null,
+        prunable: false,
+      },
+      dirty: {
+        available: true,
+        dirty: false,
+        tracked: 0,
+        untracked: 0,
+      },
+      branchDisposition: {
+        kind: "adopt_observed",
+        cleanupBranchRef: "refs/heads/pi-dash/observed",
+        untouchedBranchRefs: ["refs/heads/pi-dash/expected"],
+      },
+      removalStrategy: "git",
+      issues: [
+        {
+          code: "BRANCH_CHANGED",
+          summary: "Expected one branch and found another",
+          destructive: false,
+        },
+      ],
+      warnings: ["The recorded branch will be left untouched"],
+    };
+    expect(Value.Check(WorktreeRemovalInspectionSchema, inspection)).toBe(true);
+    expect(
+      Value.Check(RemoveWorktreeRequestSchema, {
+        mode: "force",
+        confirmationToken: inspection.confirmationToken,
+        confirmation: "delete",
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(RemoveWorktreeRequestSchema, {
+        mode: "force",
+        confirmationToken: inspection.confirmationToken,
+        confirmation: "DELETE",
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(RemoveWorktreeResponseSchema, {
+        operationId: "5b100f2a-315f-4d9b-bb22-c1fd852c5005",
+        removed: true,
+        outcome: "forgotten",
+        branchCleanup: null,
+        warnings: ["Git metadata was left untouched"],
+        worktreeId: inspection.worktreeId,
+        workspaceId: "90b9a1a7-4594-40bd-88f7-6ea4a598f9f9",
+      }),
+    ).toBe(true);
   });
 
   it("requires stable error envelope fields", () => {

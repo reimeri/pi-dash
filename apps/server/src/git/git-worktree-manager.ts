@@ -41,7 +41,9 @@ export interface GitWorktreeListEntry {
   branchRef: string | null;
   detached: boolean;
   locked: boolean;
+  lockReason: string | null;
   prunable: boolean;
+  prunableReason: string | null;
 }
 
 export interface DirtySummary {
@@ -82,7 +84,12 @@ export interface GitWorktreeManager {
   ): Promise<void>;
   list(cwd: string, signal?: AbortSignal): Promise<GitWorktreeListEntry[]>;
   status(path: string, signal?: AbortSignal): Promise<DirtySummary>;
-  remove(cwd: string, path: string, signal?: AbortSignal): Promise<void>;
+  remove(
+    cwd: string,
+    path: string,
+    signal?: AbortSignal,
+    force?: "none" | "dirty" | "locked",
+  ): Promise<void>;
   branchTip(
     cwd: string,
     branchRef: string,
@@ -139,7 +146,9 @@ export function parseWorktreePorcelain(output: string): GitWorktreeListEntry[] {
         branchRef: null,
         detached: false,
         locked: false,
+        lockReason: null,
         prunable: false,
+        prunableReason: null,
       };
       continue;
     }
@@ -154,8 +163,10 @@ export function parseWorktreePorcelain(output: string): GitWorktreeListEntry[] {
       current.detached = true;
     } else if (key === "locked") {
       current.locked = true;
+      current.lockReason = fieldValue || null;
     } else if (key === "prunable") {
       current.prunable = true;
+      current.prunableReason = fieldValue || null;
     }
   }
   if (current) entries.push(current);
@@ -421,9 +432,20 @@ class CommandGitWorktreeManager implements GitWorktreeManager {
     };
   }
 
-  async remove(cwd: string, path: string, signal?: AbortSignal) {
+  async remove(
+    cwd: string,
+    path: string,
+    signal?: AbortSignal,
+    force: "none" | "dirty" | "locked" = "none",
+  ) {
+    const forceArgs =
+      force === "locked"
+        ? ["--force", "--force"]
+        : force === "dirty"
+          ? ["--force"]
+          : [];
     const result = await this.git(
-      ["worktree", "remove", "--", path],
+      ["worktree", "remove", ...forceArgs, "--", path],
       cwd,
       signal,
       60_000,

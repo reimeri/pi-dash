@@ -26,6 +26,31 @@ export interface WorktreeRecord {
 
 export type WorktreeOperationType = "create" | "remove" | "delete_branch";
 export type WorktreeOperationStatus = "in_progress" | "succeeded" | "failed";
+export type WorktreeRemovalStrategy = "git" | "filesystem_only";
+export type WorktreeRemovalPhase =
+  "prepared" | "mutation_started" | "quarantined" | "purged" | "finalized";
+
+export interface WorktreeRemovalJournalRecord {
+  operationId: string;
+  workspaceId: string;
+  worktreeId: string;
+  mode: "safe" | "force";
+  priorLifecycle: "ready" | "error";
+  strategy: WorktreeRemovalStrategy;
+  phase: WorktreeRemovalPhase;
+  originalPath: string;
+  quarantinePath: string | null;
+  originalDevice: string | null;
+  originalInode: string | null;
+  originalKind: "directory" | "symlink" | "other" | null;
+  recordedBranchRef: string;
+  cleanupBranchRef: string | null;
+  cleanupBranchTip: string | null;
+  inspectionJson: string;
+  warningsJson: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface WorktreeOperationRecord {
   id: string;
@@ -59,6 +84,28 @@ interface WorktreeRow {
   dirty: number | null;
   last_error_code: string | null;
   last_error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface RemovalJournalRow {
+  operation_id: string;
+  workspace_id: string;
+  worktree_id: string;
+  mode: "safe" | "force";
+  prior_lifecycle: "ready" | "error";
+  strategy: WorktreeRemovalStrategy;
+  phase: WorktreeRemovalPhase;
+  original_path: string;
+  quarantine_path: string | null;
+  original_device: string | null;
+  original_inode: string | null;
+  original_kind: "directory" | "symlink" | "other" | null;
+  recorded_branch_ref: string;
+  cleanup_branch_ref: string | null;
+  cleanup_branch_tip: string | null;
+  inspection_json: string;
+  warnings_json: string;
   created_at: string;
   updated_at: string;
 }
@@ -112,6 +159,32 @@ function worktreeFromRow(row: WorktreeRow): WorktreeRecord {
   };
 }
 
+function removalJournalFromRow(
+  row: RemovalJournalRow,
+): WorktreeRemovalJournalRecord {
+  return {
+    operationId: row.operation_id,
+    workspaceId: row.workspace_id,
+    worktreeId: row.worktree_id,
+    mode: row.mode,
+    priorLifecycle: row.prior_lifecycle,
+    strategy: row.strategy,
+    phase: row.phase,
+    originalPath: row.original_path,
+    quarantinePath: row.quarantine_path,
+    originalDevice: row.original_device,
+    originalInode: row.original_inode,
+    originalKind: row.original_kind,
+    recordedBranchRef: row.recorded_branch_ref,
+    cleanupBranchRef: row.cleanup_branch_ref,
+    cleanupBranchTip: row.cleanup_branch_tip,
+    inspectionJson: row.inspection_json,
+    warningsJson: row.warnings_json,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function operationFromRow(row: OperationRow): WorktreeOperationRecord {
   return {
     id: row.id,
@@ -138,11 +211,17 @@ export interface WorktreeRepository {
   slugExists(workspaceId: string, slug: string): boolean;
   pathExists(path: string): boolean;
   branchExistsInCommonDir(gitCommonDir: string, branchRef: string): boolean;
+  branchOwnedByOther(
+    gitCommonDir: string,
+    branchRef: string,
+    worktreeId: string,
+  ): boolean;
   create(record: WorktreeRecord): WorktreeRecord;
   updateState(
     id: string,
     update: {
       lifecycle?: WorktreeLifecycle;
+      branchRef?: string;
       finalBranchTip?: string | null;
       health?: WorktreeHealth;
       dirty?: boolean | null;
@@ -178,6 +257,32 @@ export interface WorktreeRepository {
     message: string,
     updatedAt: string,
   ): boolean;
+  getRemovalJournal(
+    operationId: string,
+  ): WorktreeRemovalJournalRecord | undefined;
+  listIncompleteRemovalJournals(
+    workspaceId: string,
+  ): WorktreeRemovalJournalRecord[];
+  createRemovalJournal(record: WorktreeRemovalJournalRecord): void;
+  updateRemovalJournal(
+    operationId: string,
+    update: {
+      phase?: WorktreeRemovalPhase;
+      quarantinePath?: string | null;
+      originalDevice?: string | null;
+      originalInode?: string | null;
+      cleanupBranchRef?: string | null;
+      cleanupBranchTip?: string | null;
+      warningsJson?: string;
+      updatedAt: string;
+    },
+  ): void;
+  finalizeForgottenRemoval(input: {
+    operationId: string;
+    worktreeId: string;
+    resultJson: string;
+    updatedAt: string;
+  }): void;
   finalizeBranchDeletion(input: {
     operationId: string;
     worktreeId: string;
@@ -216,6 +321,18 @@ export function createWorktreeRepository(
       request_hash, request_json, status, http_status, result_json, error_code,
       error_message, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const removalJournalGet = sqlite.prepare(`
+    SELECT * FROM worktree_removal_journal WHERE operation_id = ?
+  `);
+  const removalJournalInsert = sqlite.prepare(`
+    INSERT INTO worktree_removal_journal (
+      operation_id, workspace_id, worktree_id, mode, prior_lifecycle,
+      strategy, phase,
+      original_path, quarantine_path, original_device, original_inode,
+      original_kind, recorded_branch_ref, cleanup_branch_ref,
+      cleanup_branch_tip, inspection_json, warnings_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const repository: WorktreeRepository = {
@@ -260,6 +377,22 @@ export function createWorktreeRepository(
           .get(gitCommonDir, branchRef),
       );
     },
+    branchOwnedByOther(gitCommonDir, branchRef, worktreeId) {
+      return Boolean(
+        sqlite
+          .prepare(
+            `
+            SELECT 1 AS present
+            FROM worktrees
+            INNER JOIN workspaces ON workspaces.id = worktrees.workspace_id
+            WHERE workspaces.git_common_dir = ? AND worktrees.branch_ref = ?
+              AND worktrees.id <> ?
+            LIMIT 1
+          `,
+          )
+          .get(gitCommonDir, branchRef, worktreeId),
+      );
+    },
     create(record) {
       insert.run(
         record.id,
@@ -289,6 +422,7 @@ export function createWorktreeRepository(
         values.push(value);
       };
       if ("lifecycle" in update) set("lifecycle", update.lifecycle);
+      if ("branchRef" in update) set("branch_ref", update.branchRef);
       if ("finalBranchTip" in update)
         set("final_branch_tip", update.finalBranchTip);
       if ("health" in update) set("health", update.health);
@@ -376,6 +510,105 @@ export function createWorktreeRepository(
         )
         .run(httpStatus, code, message, updatedAt, id);
       return result.changes === 1;
+    },
+    getRemovalJournal(operationId) {
+      const row = removalJournalGet.get(operationId) as
+        RemovalJournalRow | undefined;
+      return row ? removalJournalFromRow(row) : undefined;
+    },
+    listIncompleteRemovalJournals(workspaceId) {
+      return (
+        sqlite
+          .prepare(
+            `SELECT * FROM worktree_removal_journal
+             WHERE workspace_id = ? AND phase <> 'finalized'
+             ORDER BY created_at, operation_id`,
+          )
+          .all(workspaceId) as RemovalJournalRow[]
+      ).map(removalJournalFromRow);
+    },
+    createRemovalJournal(record) {
+      removalJournalInsert.run(
+        record.operationId,
+        record.workspaceId,
+        record.worktreeId,
+        record.mode,
+        record.priorLifecycle,
+        record.strategy,
+        record.phase,
+        record.originalPath,
+        record.quarantinePath,
+        record.originalDevice,
+        record.originalInode,
+        record.originalKind,
+        record.recordedBranchRef,
+        record.cleanupBranchRef,
+        record.cleanupBranchTip,
+        record.inspectionJson,
+        record.warningsJson,
+        record.createdAt,
+        record.updatedAt,
+      );
+    },
+    updateRemovalJournal(operationId, update) {
+      const assignments: string[] = [];
+      const values: unknown[] = [];
+      const set = (column: string, value: unknown) => {
+        assignments.push(`${column} = ?`);
+        values.push(value);
+      };
+      if ("phase" in update) set("phase", update.phase);
+      if ("quarantinePath" in update)
+        set("quarantine_path", update.quarantinePath);
+      if ("originalDevice" in update)
+        set("original_device", update.originalDevice);
+      if ("originalInode" in update)
+        set("original_inode", update.originalInode);
+      if ("cleanupBranchRef" in update)
+        set("cleanup_branch_ref", update.cleanupBranchRef);
+      if ("cleanupBranchTip" in update)
+        set("cleanup_branch_tip", update.cleanupBranchTip);
+      if ("warningsJson" in update) set("warnings_json", update.warningsJson);
+      set("updated_at", update.updatedAt);
+      sqlite
+        .prepare(
+          `UPDATE worktree_removal_journal SET ${assignments.join(", ")} WHERE operation_id = ?`,
+        )
+        .run(...values, operationId);
+    },
+    finalizeForgottenRemoval(input) {
+      sqlite.transaction(() => {
+        const completed = sqlite
+          .prepare(
+            `
+            UPDATE worktree_operations
+            SET status = 'succeeded', http_status = 200, result_json = ?,
+                error_code = NULL, error_message = NULL, updated_at = ?
+            WHERE id = ? AND operation_type = 'remove'
+              AND worktree_id = ? AND status = 'in_progress'
+          `,
+          )
+          .run(
+            input.resultJson,
+            input.updatedAt,
+            input.operationId,
+            input.worktreeId,
+          );
+        if (completed.changes !== 1) {
+          throw new Error("Removal operation is no longer in progress");
+        }
+        const deleted = sqlite
+          .prepare("DELETE FROM worktrees WHERE id = ?")
+          .run(input.worktreeId);
+        if (deleted.changes !== 1) {
+          throw new Error("Managed worktree changed before it was forgotten");
+        }
+        sqlite
+          .prepare(
+            "UPDATE worktree_removal_journal SET phase = 'finalized', updated_at = ? WHERE operation_id = ?",
+          )
+          .run(input.updatedAt, input.operationId);
+      })();
     },
     finalizeBranchDeletion(input) {
       sqlite.transaction(() => {

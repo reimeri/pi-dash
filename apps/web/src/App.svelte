@@ -1255,7 +1255,13 @@
     worktree={removeWorktreeTarget}
     fallbackFocus={mainContent}
     onClose={() => (removeWorktreeTarget = undefined)}
-    onRemoved={upsertWorktree}
+    onRemoved={(result) => {
+      if (result.outcome === "removed_with_branch_cleanup") {
+        upsertWorktree(result.worktree);
+      } else {
+        removeWorktree(result.workspaceId, result.worktreeId);
+      }
+    }}
   />
 {/if}
 {#if deleteBranchTarget && selectedWorkspace}

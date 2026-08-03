@@ -4,6 +4,7 @@ import {
   isApiErrorEnvelope,
   RemoveWorktreeResponseSchema,
   RestartRuntimeResponseSchema,
+  WorktreeRemovalInspectionSchema,
   RuntimeResponseSchema,
   SessionResponseSchema,
   StatusAcknowledgeResponseSchema,
@@ -20,6 +21,7 @@ import {
   type CreateWorkspaceRequest,
   type CreateWorktreeRequest,
   type DeleteWorktreeBranchRequest,
+  type RemoveWorktreeRequest,
   type RenameWorkspaceRequest,
   type StatusAcknowledgeRequest,
   type WorkspacePathRequest,
@@ -195,11 +197,21 @@ export const api = {
       WorktreeDiffSchema,
       { signal },
     ),
-  removeWorktree: (id: string, idempotencyKey: string) =>
+  prepareWorktreeRemoval: (id: string, signal?: AbortSignal) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(id)}/remove/prepare`,
+      WorktreeRemovalInspectionSchema,
+      { method: "POST", body: {}, signal },
+    ),
+  removeWorktree: (
+    id: string,
+    body: RemoveWorktreeRequest,
+    idempotencyKey: string,
+  ) =>
     requestJson(
       `/api/v1/worktrees/${encodeURIComponent(id)}/remove`,
       RemoveWorktreeResponseSchema,
-      { method: "POST", body: {}, idempotencyKey },
+      { method: "POST", body, idempotencyKey },
     ),
   deleteWorktreeBranch: (
     id: string,

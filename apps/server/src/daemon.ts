@@ -47,6 +47,7 @@ import {
 } from "./workspaces/workspace-service.js";
 import { createWorkspaceRepository } from "./workspaces/workspace-repository.js";
 import { createBaseSnapshotSigner } from "./worktrees/base-snapshot.js";
+import { createRemovalConfirmationSigner } from "./worktrees/removal-confirmation.js";
 import { createGitMutationLock } from "./worktrees/git-mutation-lock.js";
 import { createWorktreeLifecycleCoordinator } from "./worktrees/worktree-lifecycle.js";
 import { createWorktreeRepository } from "./worktrees/worktree-repository.js";
@@ -202,6 +203,7 @@ export async function createDaemon(
     const lifecycle = createWorktreeLifecycleCoordinator({
       repository: worktreeRepository,
     });
+    const snapshotKey = loadOrCreateSnapshotKey(paths.snapshotKey);
     worktrees = createWorktreeService({
       repository: worktreeRepository,
       workspaces: workspaceRepository,
@@ -209,8 +211,9 @@ export async function createDaemon(
       diffs: gitDiffs,
       lock: gitMutationLock,
       lifecycle,
-      snapshots: createBaseSnapshotSigner({
-        key: loadOrCreateSnapshotKey(paths.snapshotKey),
+      snapshots: createBaseSnapshotSigner({ key: snapshotKey }),
+      removalConfirmations: createRemovalConfirmationSigner({
+        key: snapshotKey,
       }),
       managedRoot: paths.worktrees,
       stopRuntime: async (worktree) => {

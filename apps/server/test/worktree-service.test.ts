@@ -1,8 +1,12 @@
 import { execFileSync } from "node:child_process";
 import {
+  existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  renameSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -18,6 +22,7 @@ import { createGitWorkspaceSynchronizer } from "../src/git/git-workspace-sync.js
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
 import { createWorkspaceService } from "../src/workspaces/workspace-service.js";
 import { createBaseSnapshotSigner } from "../src/worktrees/base-snapshot.js";
+import { createRemovalConfirmationSigner } from "../src/worktrees/removal-confirmation.js";
 import { createGitMutationLock } from "../src/worktrees/git-mutation-lock.js";
 import { createWorktreeLifecycleCoordinator } from "../src/worktrees/worktree-lifecycle.js";
 import { createWorktreeRepository } from "../src/worktrees/worktree-repository.js";
@@ -82,6 +87,9 @@ async function fixture(
       repository: worktreeRepository,
     }),
     snapshots: createBaseSnapshotSigner({ key: Buffer.alloc(32, 7) }),
+    removalConfirmations: createRemovalConfirmationSigner({
+      key: Buffer.alloc(32, 8),
+    }),
     managedRoot: join(root, "managed"),
     stopRuntime: options.stopRuntime,
     onMembershipChange: options.onMembershipChange,
@@ -96,6 +104,41 @@ async function fixture(
     worktreeRepository,
     workspaceService,
   };
+}
+
+async function removalInput(
+  service: ReturnType<typeof createWorktreeService>,
+  worktreeId: string,
+  mode: "safe" | "force" = "safe",
+) {
+  const inspection = await service.prepareRemoval(worktreeId);
+  return mode === "safe"
+    ? ({
+        mode: "safe",
+        confirmationToken: inspection.confirmationToken,
+      } as const)
+    : ({
+        mode: "force",
+        confirmationToken: inspection.confirmationToken,
+        confirmation: "delete",
+      } as const);
+}
+
+async function removePrepared(
+  service: ReturnType<typeof createWorktreeService>,
+  worktreeId: string,
+  idempotencyKey: string,
+  mode: "safe" | "force" = "safe",
+) {
+  const response = await service.remove(
+    worktreeId,
+    await removalInput(service, worktreeId, mode),
+    idempotencyKey,
+  );
+  if (response.outcome !== "removed_with_branch_cleanup") {
+    throw new Error("Expected a removal tombstone");
+  }
+  return response;
 }
 
 describe("WorktreeService integration", () => {
@@ -269,7 +312,7 @@ describe("WorktreeService integration", () => {
     );
 
     await expect(
-      service.remove(created.worktree.id, crypto.randomUUID()),
+      removePrepared(service, created.worktree.id, crypto.randomUUID()),
     ).rejects.toEqual(
       expect.objectContaining<Partial<WorktreeServiceError>>({
         code: "WORKTREE_REMOVE_FAILED",
@@ -279,6 +322,60 @@ describe("WorktreeService integration", () => {
       lifecycle: "ready",
       health: "healthy",
     });
+    database.close();
+  });
+
+  it("does not let a losing concurrent removal restore the winner to ready", async () => {
+    let announceStop!: () => void;
+    const stopEntered = new Promise<void>((resolve) => {
+      announceStop = resolve;
+    });
+    let releaseStop!: () => void;
+    const stopReleased = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const { database, workspace, service } = await fixture({
+      stopRuntime: async () => {
+        announceStop();
+        await stopReleased;
+      },
+    });
+    const snapshot = (await service.refs(workspace.id)).head!;
+    const created = await service.create(
+      workspace.id,
+      {
+        name: "Concurrent removal",
+        slug: "concurrent-removal",
+        baseRef: snapshot.fullName,
+        baseCommit: snapshot.commit,
+        baseSnapshotToken: snapshot.baseSnapshotToken,
+      },
+      crypto.randomUUID(),
+    );
+    const firstInput = await removalInput(service, created.worktree.id);
+    const secondInput = await removalInput(service, created.worktree.id);
+    const first = service.remove(
+      created.worktree.id,
+      firstInput,
+      crypto.randomUUID(),
+    );
+    const second = service.remove(
+      created.worktree.id,
+      secondInput,
+      crypto.randomUUID(),
+    );
+
+    await stopEntered;
+    await expect(Promise.race([first, second])).rejects.toMatchObject({
+      code: "WORKTREE_REMOVAL_CHANGED",
+    });
+    expect(service.get(created.worktree.id).lifecycle).toBe("removing");
+    releaseStop();
+    const outcomes = await Promise.allSettled([first, second]);
+    expect(
+      outcomes.filter((outcome) => outcome.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(service.get(created.worktree.id).lifecycle).toBe("removed");
     database.close();
   });
 
@@ -322,15 +419,40 @@ describe("WorktreeService integration", () => {
       createdAt: timestamp,
       updatedAt: timestamp,
     });
+    const identity = lstatSync(created.worktree.path, { bigint: true });
+    worktreeRepository.createRemovalJournal({
+      operationId,
+      workspaceId: workspace.id,
+      worktreeId: created.worktree.id,
+      mode: "safe",
+      priorLifecycle: "ready",
+      strategy: "git",
+      phase: "mutation_started",
+      originalPath: created.worktree.path,
+      quarantinePath: null,
+      originalDevice: identity.dev.toString(),
+      originalInode: identity.ino.toString(),
+      originalKind: "directory",
+      recordedBranchRef: created.worktree.branchRef,
+      cleanupBranchRef: created.worktree.branchRef,
+      cleanupBranchTip: created.worktree.baseCommit,
+      inspectionJson: "{}",
+      warningsJson: "[]",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
     worktreeRepository.updateState(created.worktree.id, {
       lifecycle: "removing",
-      finalBranchTip: created.worktree.baseCommit,
+      finalBranchTip: null,
       updatedAt: timestamp,
     });
     await manager.remove(repositoryPath, created.worktree.path);
 
     await service.reconcile(workspace.id);
-    expect(service.get(created.worktree.id).lifecycle).toBe("removed");
+    expect(service.get(created.worktree.id)).toMatchObject({
+      lifecycle: "removed",
+      finalBranchTip: created.worktree.baseCommit,
+    });
     expect(worktreeRepository.findOperation(idempotencyKey)).toMatchObject({
       status: "succeeded",
       httpStatus: 200,
@@ -359,7 +481,8 @@ describe("WorktreeService integration", () => {
       },
       crypto.randomUUID(),
     );
-    const removed = await service.remove(
+    const removed = await removePrepared(
+      service,
       created.worktree.id,
       crypto.randomUUID(),
     );
@@ -375,7 +498,7 @@ describe("WorktreeService integration", () => {
       requestHash: "e".repeat(64),
       requestJson: JSON.stringify({
         id: created.worktree.id,
-        expectedBranchTip: removed.tombstone.branchTip,
+        expectedBranchTip: removed.branchCleanup.branchTip,
         safetyTargetCommit: snapshot.commit,
       }),
       status: "in_progress",
@@ -389,7 +512,7 @@ describe("WorktreeService integration", () => {
     await manager.deleteBranch(
       repositoryPath,
       created.worktree.branchRef,
-      removed.tombstone.branchTip,
+      removed.branchCleanup.branchTip,
     );
     const originalBranchExists = manager.branchExists.bind(manager);
     manager.branchExists = async () => {
@@ -429,7 +552,8 @@ describe("WorktreeService integration", () => {
       },
       crypto.randomUUID(),
     );
-    const removed = await service.remove(
+    const removed = await removePrepared(
+      service,
       created.worktree.id,
       crypto.randomUUID(),
     );
@@ -443,7 +567,7 @@ describe("WorktreeService integration", () => {
       service.deleteBranch(
         created.worktree.id,
         {
-          expectedBranchTip: removed.tombstone.branchTip,
+          expectedBranchTip: removed.branchCleanup.branchTip,
           safetyTargetCommit: snapshot.commit,
         },
         operationKey,
@@ -488,7 +612,8 @@ describe("WorktreeService integration", () => {
       cwd: created.worktree.path,
       stdio: "ignore",
     });
-    const removed = await service.remove(
+    const removed = await removePrepared(
+      service,
       created.worktree.id,
       crypto.randomUUID(),
     );
@@ -497,7 +622,7 @@ describe("WorktreeService integration", () => {
       service.deleteBranch(
         created.worktree.id,
         {
-          expectedBranchTip: removed.tombstone.branchTip,
+          expectedBranchTip: removed.branchCleanup.branchTip,
           safetyTargetCommit: snapshot.commit,
         },
         crypto.randomUUID(),
@@ -516,7 +641,425 @@ describe("WorktreeService integration", () => {
           encoding: "utf8",
         },
       ),
-    ).toContain(removed.tombstone.branchTip);
+    ).toContain(removed.branchCleanup.branchTip);
+    database.close();
+  });
+
+  it("reports a changed branch and force-removes it with explicit adoption", async () => {
+    const { database, repositoryPath, workspace, service, manager } =
+      await fixture();
+    const snapshot = (await service.refs(workspace.id)).head!;
+    const created = await service.create(
+      workspace.id,
+      {
+        name: "Changed branch",
+        slug: "changed-branch",
+        baseRef: snapshot.fullName,
+        baseCommit: snapshot.commit,
+        baseSnapshotToken: snapshot.baseSnapshotToken,
+      },
+      crypto.randomUUID(),
+    );
+    const adoptedRef = "refs/heads/pi-dash/adopted-branch";
+    execFileSync("git", ["branch", adoptedRef.slice("refs/heads/".length)], {
+      cwd: repositoryPath,
+    });
+    execFileSync("git", ["switch", adoptedRef.slice("refs/heads/".length)], {
+      cwd: created.worktree.path,
+      stdio: "ignore",
+    });
+
+    const inspection = await service.prepareRemoval(created.worktree.id);
+    expect(inspection).toMatchObject({
+      safeRemovalAllowed: false,
+      forceRemovalAllowed: true,
+      removalStrategy: "git",
+      observed: { branchRef: adoptedRef },
+      branchDisposition: {
+        kind: "adopt_observed",
+        cleanupBranchRef: adoptedRef,
+        untouchedBranchRefs: [created.worktree.branchRef],
+      },
+    });
+    expect(inspection.issues).toContainEqual(
+      expect.objectContaining({
+        code: "BRANCH_CHANGED",
+        summary: expect.stringContaining(created.worktree.branchRef),
+      }),
+    );
+    await expect(
+      service.remove(
+        created.worktree.id,
+        {
+          mode: "force",
+          confirmationToken: inspection.confirmationToken,
+        },
+        crypto.randomUUID(),
+      ),
+    ).rejects.toMatchObject({
+      code: "WORKTREE_REMOVAL_CONFIRMATION_INVALID",
+    });
+
+    const removed = await service.remove(
+      created.worktree.id,
+      {
+        mode: "force",
+        confirmationToken: inspection.confirmationToken,
+        confirmation: "delete",
+      },
+      crypto.randomUUID(),
+    );
+    expect(removed.outcome).toBe("removed_with_branch_cleanup");
+    if (removed.outcome !== "removed_with_branch_cleanup") return;
+    expect(removed.branchCleanup.branchRef).toBe(adoptedRef);
+    expect(removed.worktree.branchRef).toBe(adoptedRef);
+    expect(removed.warnings.join(" ")).toContain(created.worktree.branchRef);
+    expect(existsSync(created.worktree.path)).toBe(false);
+    expect(
+      await manager.branchExists(repositoryPath, created.worktree.branchRef),
+    ).toBe(true);
+    database.close();
+  });
+
+  it("does not adopt an observed branch when Git removal fails intact", async () => {
+    const { database, repositoryPath, workspace, service, manager } =
+      await fixture();
+    const snapshot = (await service.refs(workspace.id)).head!;
+    const created = await service.create(
+      workspace.id,
+      {
+        name: "Failed adoption",
+        slug: "failed-adoption",
+        baseRef: snapshot.fullName,
+        baseCommit: snapshot.commit,
+        baseSnapshotToken: snapshot.baseSnapshotToken,
+      },
+      crypto.randomUUID(),
+    );
+    const observedRef = "refs/heads/pi-dash/failed-adoption-observed";
+    execFileSync("git", ["branch", observedRef.slice("refs/heads/".length)], {
+      cwd: repositoryPath,
+    });
+    execFileSync("git", ["switch", observedRef.slice("refs/heads/".length)], {
+      cwd: created.worktree.path,
+      stdio: "ignore",
+    });
+    const inspection = await service.prepareRemoval(created.worktree.id);
+    const originalRemove = manager.remove.bind(manager);
+    manager.remove = async () => {
+      throw new Error("injected Git removal failure");
+    };
+
+    await expect(
+      service.remove(
+        created.worktree.id,
+        {
+          mode: "force",
+          confirmationToken: inspection.confirmationToken,
+          confirmation: "delete",
+        },
+        crypto.randomUUID(),
+      ),
+    ).rejects.toMatchObject({ code: "WORKTREE_REMOVE_FAILED" });
+    manager.remove = originalRemove;
+    expect(service.get(created.worktree.id)).toMatchObject({
+      lifecycle: "ready",
+      branchRef: created.worktree.branchRef,
+      finalBranchTip: null,
+    });
+    database.close();
+  });
+
+  it("force-removes dirty locked worktrees after typed confirmation", async () => {
+    const { database, repositoryPath, workspace, service } = await fixture();
+    const snapshot = (await service.refs(workspace.id)).head!;
+    const created = await service.create(
+      workspace.id,
+      {
+        name: "Dirty locked",
+        slug: "dirty-locked",
+        baseRef: snapshot.fullName,
+        baseCommit: snapshot.commit,
+        baseSnapshotToken: snapshot.baseSnapshotToken,
+      },
+      crypto.randomUUID(),
+    );
+    writeFileSync(join(created.worktree.path, "discard-me.txt"), "discard\n");
+    execFileSync(
+      "git",
+      ["worktree", "lock", "--reason", "external owner", created.worktree.path],
+      { cwd: repositoryPath },
+    );
+
+    const inspection = await service.prepareRemoval(created.worktree.id);
+    expect(inspection.dirty).toMatchObject({
+      available: true,
+      dirty: true,
+      untracked: 1,
+    });
+    expect(inspection.observed).toMatchObject({
+      locked: true,
+      lockReason: "external owner",
+    });
+    const removed = await service.remove(
+      created.worktree.id,
+      {
+        mode: "force",
+        confirmationToken: inspection.confirmationToken,
+        confirmation: "delete",
+      },
+      crypto.randomUUID(),
+    );
+    expect(removed.outcome).toBe("removed_with_branch_cleanup");
+    expect(existsSync(created.worktree.path)).toBe(false);
+    database.close();
+  });
+
+  it("quarantines an unprovable allocation, forgets it, and preserves external data", async () => {
+    const {
+      root,
+      database,
+      repositoryPath,
+      workspace,
+      service,
+      manager,
+      worktreeRepository,
+    } = await fixture();
+    const snapshot = (await service.refs(workspace.id)).head!;
+    const created = await service.create(
+      workspace.id,
+      {
+        name: "Unprovable",
+        slug: "unprovable",
+        baseRef: snapshot.fullName,
+        baseCommit: snapshot.commit,
+        baseSnapshotToken: snapshot.baseSnapshotToken,
+      },
+      crypto.randomUUID(),
+    );
+    await manager.remove(repositoryPath, created.worktree.path);
+    const external = join(root, "external-data");
+    mkdirSync(external);
+    writeFileSync(join(external, "keep.txt"), "keep\n");
+    symlinkSync(external, created.worktree.path);
+
+    const inspection = await service.prepareRemoval(created.worktree.id);
+    expect(inspection).toMatchObject({
+      safeRemovalAllowed: false,
+      forceRemovalAllowed: true,
+      removalStrategy: "filesystem_only",
+      observed: { pathKind: "symlink" },
+      branchDisposition: { kind: "manual", cleanupBranchRef: null },
+    });
+    const operationKey = crypto.randomUUID();
+    const removed = await service.remove(
+      created.worktree.id,
+      {
+        mode: "force",
+        confirmationToken: inspection.confirmationToken,
+        confirmation: "delete",
+      },
+      operationKey,
+    );
+    expect(removed).toMatchObject({
+      outcome: "forgotten",
+      worktreeId: created.worktree.id,
+      workspaceId: workspace.id,
+    });
+    expect(existsSync(created.worktree.path)).toBe(false);
+    expect(existsSync(join(external, "keep.txt"))).toBe(true);
+    expect(worktreeRepository.get(created.worktree.id)).toBeUndefined();
+    expect(worktreeRepository.findOperation(operationKey)).toMatchObject({
+      status: "succeeded",
+      httpStatus: 200,
+    });
+    database.close();
+  });
+
+  it("reconciles filesystem-only finalization failure after purge", async () => {
+    const {
+      database,
+      repositoryPath,
+      workspace,
+      service,
+      manager,
+      worktreeRepository,
+    } = await fixture();
+    const snapshot = (await service.refs(workspace.id)).head!;
+    const created = await service.create(
+      workspace.id,
+      {
+        name: "Purge finalization failure",
+        slug: "purge-finalization-failure",
+        baseRef: snapshot.fullName,
+        baseCommit: snapshot.commit,
+        baseSnapshotToken: snapshot.baseSnapshotToken,
+      },
+      crypto.randomUUID(),
+    );
+    await manager.remove(repositoryPath, created.worktree.path);
+    mkdirSync(created.worktree.path);
+    writeFileSync(join(created.worktree.path, "discard.txt"), "discard\n");
+    const inspection = await service.prepareRemoval(created.worktree.id);
+    expect(inspection.removalStrategy).toBe("filesystem_only");
+    const operationKey = crypto.randomUUID();
+    const originalFinalize = worktreeRepository.finalizeForgottenRemoval;
+    worktreeRepository.finalizeForgottenRemoval = () => {
+      throw new Error("injected forgotten finalization failure");
+    };
+
+    await expect(
+      service.remove(
+        created.worktree.id,
+        {
+          mode: "force",
+          confirmationToken: inspection.confirmationToken,
+          confirmation: "delete",
+        },
+        operationKey,
+      ),
+    ).rejects.toMatchObject({ code: "OPERATION_IN_PROGRESS" });
+    expect(existsSync(created.worktree.path)).toBe(false);
+    expect(worktreeRepository.findOperation(operationKey)?.status).toBe(
+      "in_progress",
+    );
+    expect(
+      worktreeRepository.getRemovalJournal(
+        worktreeRepository.findOperation(operationKey)!.id,
+      )?.phase,
+    ).toBe("purged");
+
+    worktreeRepository.finalizeForgottenRemoval = originalFinalize;
+    await service.reconcile(workspace.id);
+    expect(worktreeRepository.get(created.worktree.id)).toBeUndefined();
+    expect(worktreeRepository.findOperation(operationKey)).toMatchObject({
+      status: "succeeded",
+      httpStatus: 200,
+    });
+    database.close();
+  });
+
+  it("reconciles a crash after filesystem quarantine and forgets the record", async () => {
+    const {
+      database,
+      repositoryPath,
+      workspace,
+      service,
+      manager,
+      worktreeRepository,
+    } = await fixture();
+    const snapshot = (await service.refs(workspace.id)).head!;
+    const created = await service.create(
+      workspace.id,
+      {
+        name: "Quarantine recovery",
+        slug: "quarantine-recovery",
+        baseRef: snapshot.fullName,
+        baseCommit: snapshot.commit,
+        baseSnapshotToken: snapshot.baseSnapshotToken,
+      },
+      crypto.randomUUID(),
+    );
+    await manager.remove(repositoryPath, created.worktree.path);
+    mkdirSync(created.worktree.path);
+    writeFileSync(join(created.worktree.path, "partial.txt"), "partial\n");
+
+    const operationId = crypto.randomUUID();
+    const idempotencyKey = crypto.randomUUID();
+    const timestamp = new Date().toISOString();
+    const quarantineRoot = join(created.worktree.path, "..", ".pi-dash-trash");
+    mkdirSync(quarantineRoot, { recursive: true });
+    const quarantinePath = join(quarantineRoot, operationId);
+    renameSync(created.worktree.path, quarantinePath);
+    const quarantineIdentity = lstatSync(quarantinePath, { bigint: true });
+    worktreeRepository.createOperation({
+      id: operationId,
+      idempotencyKey,
+      operationType: "remove",
+      workspaceId: workspace.id,
+      worktreeId: created.worktree.id,
+      requestHash: "d".repeat(64),
+      requestJson: JSON.stringify({ id: created.worktree.id, mode: "force" }),
+      status: "in_progress",
+      httpStatus: null,
+      resultJson: null,
+      errorCode: null,
+      errorMessage: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    worktreeRepository.createRemovalJournal({
+      operationId,
+      workspaceId: workspace.id,
+      worktreeId: created.worktree.id,
+      mode: "force",
+      priorLifecycle: "ready",
+      strategy: "filesystem_only",
+      phase: "quarantined",
+      originalPath: created.worktree.path,
+      quarantinePath,
+      originalDevice: quarantineIdentity.dev.toString(),
+      originalInode: quarantineIdentity.ino.toString(),
+      originalKind: "directory",
+      recordedBranchRef: created.worktree.branchRef,
+      cleanupBranchRef: null,
+      cleanupBranchTip: null,
+      inspectionJson: "{}",
+      warningsJson: JSON.stringify(["Git metadata was left untouched"]),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    worktreeRepository.updateState(created.worktree.id, {
+      lifecycle: "removing",
+      updatedAt: timestamp,
+    });
+
+    await service.reconcile(workspace.id);
+    expect(existsSync(quarantinePath)).toBe(false);
+    expect(worktreeRepository.get(created.worktree.id)).toBeUndefined();
+    expect(worktreeRepository.findOperation(idempotencyKey)).toMatchObject({
+      status: "succeeded",
+      httpStatus: 200,
+    });
+    database.close();
+  });
+
+  it("rejects a stale removal confirmation with a fresh mismatch report", async () => {
+    const { database, repositoryPath, workspace, service } = await fixture();
+    const snapshot = (await service.refs(workspace.id)).head!;
+    const created = await service.create(
+      workspace.id,
+      {
+        name: "Stale confirmation",
+        slug: "stale-confirmation",
+        baseRef: snapshot.fullName,
+        baseCommit: snapshot.commit,
+        baseSnapshotToken: snapshot.baseSnapshotToken,
+      },
+      crypto.randomUUID(),
+    );
+    const inspection = await service.prepareRemoval(created.worktree.id);
+    const changedRef = "refs/heads/pi-dash/changed-after-review";
+    execFileSync("git", ["branch", changedRef.slice("refs/heads/".length)], {
+      cwd: repositoryPath,
+    });
+    execFileSync("git", ["switch", changedRef.slice("refs/heads/".length)], {
+      cwd: created.worktree.path,
+      stdio: "ignore",
+    });
+
+    await expect(
+      service.remove(
+        created.worktree.id,
+        { mode: "safe", confirmationToken: inspection.confirmationToken },
+        crypto.randomUUID(),
+      ),
+    ).rejects.toMatchObject({
+      code: "WORKTREE_REMOVAL_CHANGED",
+      details: expect.objectContaining({
+        observed: expect.objectContaining({ branchRef: changedRef }),
+      }),
+    });
     database.close();
   });
 
@@ -545,7 +1088,7 @@ describe("WorktreeService integration", () => {
     const dirt = join(created.worktree.path, "untracked.txt");
     writeFileSync(dirt, "do not delete\n");
     await expect(
-      service.remove(created.worktree.id, crypto.randomUUID()),
+      removePrepared(service, created.worktree.id, crypto.randomUUID()),
     ).rejects.toEqual(
       expect.objectContaining<Partial<WorktreeServiceError>>({
         code: "WORKTREE_DIRTY",
@@ -554,7 +1097,7 @@ describe("WorktreeService integration", () => {
     expect(() => unlinkSync(dirt)).not.toThrow();
     writeFileSync(join(created.worktree.path, "README.md"), "tracked change\n");
     await expect(
-      service.remove(created.worktree.id, crypto.randomUUID()),
+      removePrepared(service, created.worktree.id, crypto.randomUUID()),
     ).rejects.toEqual(
       expect.objectContaining<Partial<WorktreeServiceError>>({
         code: "WORKTREE_DIRTY",
@@ -565,11 +1108,19 @@ describe("WorktreeService integration", () => {
     });
 
     const removeKey = crypto.randomUUID();
-    const removed = await service.remove(created.worktree.id, removeKey);
+    const removeInput = await removalInput(service, created.worktree.id);
+    const removed = await service.remove(
+      created.worktree.id,
+      removeInput,
+      removeKey,
+    );
+    if (removed.outcome !== "removed_with_branch_cleanup") {
+      throw new Error("Expected a removal tombstone");
+    }
     expect(removed.worktree.lifecycle).toBe("removed");
 
     const deletionInput = {
-      expectedBranchTip: removed.tombstone.branchTip,
+      expectedBranchTip: removed.branchCleanup.branchTip,
       safetyTargetCommit: snapshot.commit,
     };
     const deleteKey = crypto.randomUUID();
@@ -590,9 +1141,9 @@ describe("WorktreeService integration", () => {
     expect(
       await service.deleteBranch(created.worktree.id, deletionInput, deleteKey),
     ).toEqual(deleted);
-    expect(await service.remove(created.worktree.id, removeKey)).toEqual(
-      removed,
-    );
+    expect(
+      await service.remove(created.worktree.id, removeInput, removeKey),
+    ).toEqual(removed);
     await expect(
       service.deleteBranch(
         created.worktree.id,

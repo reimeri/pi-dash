@@ -88,7 +88,7 @@
       <article class="decision"><h3>Persistence</h3><p>SQLite with Drizzle schema and migrations. npm workspaces, Vitest, and Playwright form the project toolchain.</p></article>
       <article class="decision"><h3>Pi startup</h3><p>Start Pi lazily on the first selection of a worktree terminal, then keep it alive until stop, removal, or daemon shutdown.</p></article>
       <article class="decision"><h3>Git defaults</h3><p>New branch from the workspace repository's current <code>HEAD</code>; branch name <code>pi-dash/&lt;slug&gt;</code>; worktree path under the central app data directory.</p></article>
-      <article class="decision"><h3>Removal</h3><p>Block dirty worktree removal. After removal, optionally perform a separately confirmed mergedness check and atomic expected-OID ref deletion; successful branch cleanup stores an idempotent receipt, deletes the worktree tombstone, and releases its slug for reuse.</p></article>
+      <article class="decision"><h3>Removal</h3><p>Inspect exact expected/current path and Git identity before removal. Safe removal stays clean-only; a second typed confirmation can override dirt, locks, or identity damage within the deterministic allocation boundary. Mounted content remains blocked. Branch deletion is still separate and mergedness checked.</p></article>
       <article class="decision"><h3>Status</h3><p><code>ask_user</code> tool execution means blocked. <code>agent_settled</code> means done until the terminal is viewed or acknowledged.</p></article>
       <article class="decision"><h3>Folder selection</h3><p>Use a native Linux directory dialog initiated by the daemon, with explicit cancellation and unavailability handling.</p></article>
     </div>
@@ -218,14 +218,13 @@ WorkflowStatus {
 
     <h3>Worktree removal</h3>
     <ol>
-      <li>Check <code>git status --porcelain=v1 --untracked-files=all</code> before disturbing a running Pi terminal; reject all dirty worktrees with no force path.</li>
-      <li>Under the shared worktree lifecycle coordinator, atomically transition <code>ready → removing</code>; terminal start uses the same coordinator and is rejected after this point.</li>
-      <li>Stop and dispose the Pi runtime only after the preliminary check and lifecycle claim say removal is eligible.</li>
-      <li>Recheck dirtiness immediately after shutdown to close the race, then run normal <code>git worktree remove</code> without <code>--force</code>. New dirt or exact intact failure restores <code>ready</code>; ambiguity becomes <code>error</code>.</li>
-      <li>After verifying Git no longer reports the worktree, transition it to <code>removed</code> and retain a temporary tombstone containing the verified branch and final tip so branch cleanup can be a separate operation.</li>
-      <li>If separately confirmed afterward, verify no worktree uses the branch and that the recorded tip is merged into the chosen safety target, then atomically delete the ref with <code>git update-ref -d &lt;ref&gt; &lt;expected-tip&gt;</code>. A moved/unmerged branch refusal does not invalidate worktree removal.</li>
-      <li>After definitively proving the branch is absent, use one SQLite transaction to complete the durable idempotency receipt and delete the tombstone. The card/sidebar entry disappears and the former slug/branch identity becomes reusable.</li>
-      <li>If interruption occurs after durable delete intent, reconciliation finalizes only when Git definitively reports the branch absent; inspection errors retain the operation and tombstone for a later retry.</li>
+      <li>Prepare a structured inspection showing recorded and observed path, branch, common directory, HEAD, dirty counts, lock reason, mounts, removal strategy, and branch disposition.</li>
+      <li>Bind that snapshot to a short-lived signed confirmation token. Exact clean unlocked worktrees allow safe removal; all destructive overrides require a second review and typing <code>delete</code>. Mounted content and a non-deterministic recorded path remain blocked.</li>
+      <li>Under the shared lifecycle coordinator, transition the record to <code>removing</code>, stop its runtime, reacquire the common-directory lock, and reject any state change since confirmation.</li>
+      <li>For a proven repository worktree, run normal Git removal or <code>--force</code>/<code>--force --force</code> for confirmed dirt/lock overrides. A changed unclaimed <code>refs/heads/pi-dash/*</code> branch may be adopted; the previous ref is left untouched.</li>
+      <li>For unprovable Git identity, recompute the deterministic allocation, quarantine and purge only that path without following symlinks, leave unknown Git metadata untouched, and forget the managed row.</li>
+      <li>Persist each removal phase so startup reconciliation resumes Git postcondition finalization or quarantine purge without deleting a replacement at the original path.</li>
+      <li>If branch cleanup remains available, retain a tombstone and use the separate mergedness check plus atomic <code>git update-ref -d &lt;ref&gt; &lt;expected-tip&gt;</code>. Otherwise return a forgotten outcome with manual-cleanup warnings.</li>
     </ol>
   </section>
 
@@ -278,7 +277,8 @@ WorkflowStatus {
         <tr><td><code>DELETE /api/v1/workspaces/:id</code></td><td>Remove an empty workspace registration.</td></tr>
         <tr><td><code>GET /api/v1/workspaces/:id/refs</code></td><td>Return validated candidate base refs and current HEAD metadata.</td></tr>
         <tr><td><code>POST /api/v1/workspaces/:id/worktrees</code></td><td>Create a managed worktree and branch from an exact displayed <code>baseCommit</code>; mutating requests use an idempotency key.</td></tr>
-        <tr><td><code>POST /api/v1/worktrees/:id/remove</code></td><td>Remove a clean managed worktree without a force path and retain a temporary branch tombstone.</td></tr>
+        <tr><td><code>POST /api/v1/worktrees/:id/remove/prepare</code></td><td>Inspect exact expected/current identity and return a signed removal confirmation.</td></tr>
+        <tr><td><code>POST /api/v1/worktrees/:id/remove</code></td><td>Execute safe or explicitly confirmed forced removal and return a branch-cleanup or forgotten outcome.</td></tr>
         <tr><td><code>POST /api/v1/worktrees/:id/delete-branch</code></td><td>Separately confirm and safely delete the unchanged recorded branch, then atomically record the receipt and delete the tombstone.</td></tr>
         <tr><td><code>POST /api/v1/worktrees/:id/terminal/start</code></td><td>Idempotently create or return the runtime.</td></tr>
         <tr><td><code>POST /api/v1/worktrees/:id/terminal/stop</code></td><td>Gracefully stop the runtime.</td></tr>

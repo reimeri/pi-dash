@@ -27,7 +27,7 @@
   <li>Per-common-dir mutation locking within the daemon.</li>
   <li>Managed worktree listing, branch/base metadata, filesystem/Git health, and sidebar entries.</li>
   <li>Dirty state check including untracked files.</li>
-  <li>Clean-only worktree removal, a temporary branch tombstone, and a separately confirmed safe branch-deletion operation that removes the tombstone after durable completion.</li>
+  <li>Structured removal inspection, safe clean removal, a separately typed destructive override within the deterministic allocation boundary, durable quarantine recovery, and separate safe branch deletion.</li>
   <li>Startup/manual reconciliation against <code>git worktree list --porcelain</code>.</li>
   <li>Repair/retry messaging for interrupted <code>creating</code>, <code>removing</code>, and <code>error</code> records.</li>
 </ul>
@@ -36,9 +36,9 @@
 <ul>
   <li>Pi process or PTY startup, terminal controls, and status tracking.</li>
   <li>Import/adoption of worktrees not created by the dashboard.</li>
-  <li>Existing branch checkout, detached worktrees, sparse checkout, submodule initialization policy, or worktree locking.</li>
+  <li>Creating worktrees from existing branches, sparse checkout, or automatic submodule initialization.</li>
   <li>Fetch, remote branch discovery, clone, merge, rebase, push, pull request, or branch force deletion.</li>
-  <li>Automatically deleting dirty files, stashing changes, or resolving Git locks.</li>
+  <li>Automatic stashing or repair of externally changed Git metadata; destructive removal always requires explicit typed confirmation.</li>
   <li>Moving a managed worktree to another location.</li>
 </ul>
 
@@ -51,16 +51,16 @@
   <li><strong>REQ-03-05:</strong> Mutating operations sharing a Git common directory shall be serialized through both daemon-local and OS-visible cross-process locks and return a busy/conflict response rather than overlap.</li>
   <li><strong>REQ-03-06:</strong> A durable <code>creating</code> record shall exist before Git mutation and transition to <code>ready</code> only after postcondition verification.</li>
   <li><strong>REQ-03-07:</strong> Failed creation shall not silently delete an ambiguous external path; compensation is allowed only for the exact app-allocated path and branch known to have been created by the failed operation.</li>
-  <li><strong>REQ-03-08:</strong> Normal removal shall reject any tracked or untracked change with <code>WORKTREE_DIRTY</code> and a non-sensitive summary.</li>
-  <li><strong>REQ-03-09:</strong> The dashboard shall expose no forced dirty-worktree removal path; the user must clean, commit, or stash changes outside the removal operation.</li>
+  <li><strong>REQ-03-08:</strong> Removal preparation shall return a signed, expiring snapshot with exact expected/current path and Git identity, dirty counts, lock reason, mounts, strategy, and branch disposition. Normal removal shall remain available only for an exact clean unlocked worktree.</li>
+  <li><strong>REQ-03-09:</strong> Dirty, locked, branch-changed, detached, or Git-unprovable removal shall require a second destructive review and the exact typed confirmation <code>delete</code>. Mounted content and a recorded path outside the deterministic allocation shall never be overrideable.</li>
   <li><strong>REQ-03-10:</strong> Branch deletion shall be a separate post-removal endpoint and confirmation. Under the common-dir lock it shall verify no worktree uses the branch, prove the recorded tip is merged into the explicit safety target, and atomically execute <code>git update-ref -d &lt;ref&gt; &lt;expected-tip&gt;</code>; moved/unmerged refusal shall not undo removal. After definitive branch absence, one SQLite transaction shall complete the operation receipt and delete the tombstone.</li>
   <li><strong>REQ-03-11:</strong> Removing a workspace with any active managed worktree record shall remain forbidden. Removed tombstones shall not count as active dependents and shall be deleted if workspace metadata is removed.</li>
   <li><strong>REQ-03-12:</strong> Reconciliation shall never adopt or delete an unrecorded worktree automatically.</li>
   <li><strong>REQ-03-13:</strong> Worktree names and branch components shall reject control characters, path separators where inappropriate, empty slugs, reserved Git forms, and collisions.</li>
   <li><strong>REQ-03-14:</strong> Every create/remove/delete-branch mutation shall require a client operation ID (idempotency key); retries with the same request hash shall return the durable prior/in-progress result, while reuse with different input shall be rejected. Operation receipts shall retain the historical worktree ID without a cascading worktree foreign key so remove/delete retries survive tombstone deletion.</li>
-  <li><strong>REQ-03-15:</strong> Removal shall check dirtiness before stopping Pi, then under the shared worktree lifecycle coordinator atomically compare-and-set <code>ready → removing</code> before stop. New terminal starts are rejected from that point; dirtiness is rechecked immediately before normal removal.</li>
-  <li><strong>REQ-03-16:</strong> If post-stop recheck becomes dirty or a failed command proves the exact worktree is intact, lifecycle returns to <code>ready</code> with a warning. Ambiguous partial Git/filesystem state transitions to <code>error</code>; successful removal transitions to <code>removed</code>.</li>
-  <li><strong>REQ-03-17:</strong> A <code>removed</code> row shall exist only while branch cleanup remains available or requires recovery. Successful branch deletion shall remove the card/sidebar entry and release database slug/branch reservations so the slug can be reused.</li>
+  <li><strong>REQ-03-15:</strong> Removal shall revalidate the signed inspection under the shared lifecycle and common-directory locks after stopping Pi. State changes invalidate confirmation and require a fresh review.</li>
+  <li><strong>REQ-03-16:</strong> Proven Git worktrees shall use normal, single-force, or double-force Git removal according to the confirmed state. Unprovable Git identity shall use identity-checked quarantine removal only at the deterministic allocation and shall leave unknown Git metadata untouched.</li>
+  <li><strong>REQ-03-17:</strong> A durable removal journal shall permit crash recovery without touching a replacement at the original path. A <code>removed</code> row exists only while branch cleanup remains; otherwise the row is forgotten and a replayable receipt retains manual-cleanup warnings.</li>
 </ul>
 
 <h2>Non-functional requirements</h2>
@@ -75,7 +75,7 @@
 <h2>Technical design</h2>
 <p><code>WorktreeService</code> owns invariants and calls an injected <code>GitWorktreeManager</code>. When the form opens, the server resolves the ref to <code>baseCommit</code> and signs a short-lived snapshot token binding workspace/ref/commit. Creation verifies that token without re-resolving moved <code>HEAD</code>. The service acquires a daemon mutex plus advisory OS lock under the canonical per-UID Linux namespace <code>/run/user/&lt;uid&gt;/pi-dash-git-locks</code> (secure <code>/tmp/pi-dash-&lt;uid&gt;</code> fallback), independent of configurable XDG/data roots. A DB transaction inserts lifecycle/idempotency records; external Git runs outside long DB transactions.</p>
 <p>Because filesystem/Git mutation cannot share SQLite atomicity, the lifecycle is a saga with conservative compensation. The record stores operation metadata such as expected branch, target path, and base commit. After a failed add, the service re-inspects <code>git worktree list --porcelain</code>, target existence, and branch existence before deciding whether a safe cleanup is possible. Ambiguous cases remain <code>error</code> for user repair.</p>
-<p>Removal first checks dirtiness while leaving any active terminal untouched. If clean, a shared lifecycle coordinator acquires the worktree mutex and atomically changes <code>ready</code> to <code>removing</code>; TerminalManager start uses that same coordinator and can no longer launch. Removal stops Pi, reacquires Git locks, and rechecks. New dirt restores <code>ready</code>; exact intact command failure restores <code>ready</code> with warning; ambiguity becomes <code>error</code>; success becomes <code>removed</code>. The temporary tombstone stores the branch and final tip needed for atomic ref deletion. After Git definitively reports the branch absent, a single SQLite transaction completes the detached operation receipt and deletes the tombstone. Durable delete intent plus definitive absence can finalize after a crash; inspection failure leaves the operation in progress. Unknown worktrees are never adopted.</p>
+<p>Removal preparation produces a signed structured identity snapshot. Exact clean unlocked worktrees use safe removal; mismatches, dirt, and locks require a second review plus typed <code>delete</code>, while mounts and non-deterministic paths remain blocked. After lifecycle claim and runtime stop, the snapshot is revalidated under the Git lock. Proven worktrees use Git normal/single-force/double-force removal. An eligible observed <code>refs/heads/pi-dash/*</code> branch may be adopted while the previous ref remains untouched. Unprovable Git identity uses deterministic quarantine removal and leaves Git metadata manual. A durable phase journal supports restart recovery and either retains a branch tombstone or atomically forgets the row with replayable warnings.</p>
 
 <h2>Interfaces and contracts</h2>
 <pre><code>GET /api/v1/workspaces/:id/refs?query=&amp;limit=50
@@ -98,10 +98,14 @@ Idempotency-Key: &lt;client UUID&gt;
 GET /api/v1/workspaces/:id/worktrees
 200 { "worktrees": WorktreeDto[] }
 
+POST /api/v1/worktrees/:id/remove/prepare
+{}
+200 { "safeRemovalAllowed": false, "issues": [...], "confirmationToken": "..." }
+
 POST /api/v1/worktrees/:id/remove
 Idempotency-Key: &lt;client UUID&gt;
-{}
-200 { "removed": true, "tombstone": { "branchRef": "refs/heads/...", "branchTip": "..." } }
+{ "mode": "force", "confirmationToken": "...", "confirmation": "delete" }
+200 { "removed": true, "outcome": "removed_with_branch_cleanup" | "forgotten", "warnings": [...] }
 
 POST /api/v1/worktrees/:id/delete-branch
 Idempotency-Key: &lt;new client UUID&gt;
@@ -140,7 +144,7 @@ interface GitMutationLock {
   <li>Implement GitWorktreeManager commands for signed ref snapshots, add, list/status parsing, remove, mergedness checks, atomic expected-OID ref deletion, and postcondition inspection.</li>
   <li>Implement Worktree repository/service lifecycle saga, shared lifecycle coordinator/CAS, detached idempotency receipts, transient tombstones, hard-delete finalization, safe rollback/error classification, reconciliation, and future terminal-stop hook.</li>
   <li>Add REST contracts, routes, structured errors, and operation progress representation.</li>
-  <li>Build Svelte create form with exact base commit, derived branch/path preview, sidebar entries, health/error repair affordances, clean-only removal, and separate branch-deletion flow.</li>
+  <li>Build Svelte create form with exact base commit, derived branch/path preview, sidebar entries, structured removal inspection, two-step typed force confirmation, and separate branch-deletion flow.</li>
   <li>Create temporary repository fixtures covering commits, branches, linked worktrees, dirty states, Unicode paths, and external changes.</li>
   <li>Add unit, integration, E2E, crash/reconciliation tests, and Git version capability checks.</li>
   <li>Document lifecycle, managed path layout, deletion guarantees, recovery, and manual Git inspection commands.</li>
@@ -177,10 +181,10 @@ interface GitMutationLock {
   <li>Branch/path appears after validation but before add: Git failure is reconciled and returned as collision or create failure.</li>
   <li>Two workspace records share common Git metadata: common-dir lock serializes mutations.</li>
   <li>Process crashes after Git add but before DB ready update: startup reconciliation verifies branch/path/common-dir and promotes the record if exact.</li>
-  <li>Directory exists but is not the recorded worktree: never force-delete it.</li>
-  <li>Dirty worktree contains only untracked files: normal removal is still blocked.</li>
-  <li>Dirty worktree remains dirty: removal continues to refuse; the user cleans, commits, or stashes outside the dashboard and retries with a new operation ID.</li>
-  <li>Branch was renamed/deleted externally: health shows mismatch; removal avoids deleting an unverified branch.</li>
+  <li>Directory exists but Git identity is unprovable: only the exact deterministic allocation can be quarantined after typed confirmation; Git metadata remains untouched.</li>
+  <li>Dirty worktree contains only untracked files: normal removal is blocked, while forced removal clearly reports and discards them after typed confirmation.</li>
+  <li>Worktree lock exists: show its reason and require typed confirmation before Git double-force removal.</li>
+  <li>Branch was changed externally: show expected/current refs; adopt only an unclaimed <code>refs/heads/pi-dash/*</code> observed branch and leave the prior ref untouched.</li>
   <li>Safe branch deletion refuses an unmerged or moved branch: the tombstone stays removed and offers manual follow-up.</li>
   <li>Daemon stops after durable delete intent: definitive branch absence completes the receipt and deletes the tombstone; an inspection error leaves both intact for later reconciliation.</li>
   <li>Successful branch cleanup releases the old slug and branch reservation, allowing a new managed worktree to reuse them.</li>
@@ -200,7 +204,8 @@ interface GitMutationLock {
   <li>Create from HEAD and named base in temporary repositories; verify exact branch, path, common dir, and database record.</li>
   <li>Concurrent creation under shared common dir serializes; duplicate branch/path returns stable errors.</li>
   <li>Concurrent terminal-start/removal simulation proves <code>ready → removing</code> CAS prevents any new runtime after removal eligibility is claimed and verifies ready/error/removed rollback outcomes.</li>
-  <li>Removal rejects tracked/untracked dirt before stopping Pi and rechecks after stop; separate branch deletion tests worktree use/mergedness, atomically compare-delete the expected tip, persist a replayable receipt, and remove the tombstone.</li>
+  <li>Removal inspection reports tracked/untracked dirt, changed/detached branches, locks, common-dir mismatches, and mounts; signed confirmation is revalidated before safe or forced mutation.</li>
+  <li>Force tests cover Git single/double force, branch adoption, symlink quarantine, filesystem-only forgetting, stale tokens, and crash recovery; branch deletion remains separately mergedness checked.</li>
   <li>Fault injection before/after Git mutation validates startup reconciliation, definitive absence checks, operation replay after row deletion, and inspection-error preservation.</li>
   <li>Remove, delete the merged branch, recreate the same slug, and verify the branch/path database reservations were released.</li>
   <li>External move/remove/branch change updates health without destructive auto-repair.</li>
@@ -208,7 +213,7 @@ interface GitMutationLock {
 <h3>End-to-end</h3>
 <ul>
   <li>Create a worktree from a registered fixture, observe nested sidebar entry, restart daemon, and observe persistence.</li>
-  <li>Dirty the worktree, verify warning/refusal without stopping its terminal hook, clean it, remove it, then separately delete the unchanged branch and verify its card/sidebar entry disappears.</li>
+  <li>Dirty or switch the worktree branch, review expected/current identity, type <code>delete</code>, force-remove it, acknowledge untouched refs, then separately delete the adopted merged branch.</li>
   <li>Simulate branch-not-merged refusal and verify successful worktree removal plus actionable warning.</li>
 </ul>
 

@@ -67,7 +67,7 @@ export interface AllocatedWorktreePath {
   path: string;
 }
 
-export function allocateWorktreePath(
+export function deriveAllocatedWorktreePath(
   managedRoot: string,
   workspaceId: string,
   worktreeId: string,
@@ -79,11 +79,15 @@ export function allocateWorktreePath(
       "Managed worktree root must be absolute",
     );
   }
-  mkdirSync(managedRoot, { recursive: true, mode: 0o700 });
   const canonicalRoot = realpathSync(managedRoot);
   const workspaceDirectory = resolve(canonicalRoot, workspaceId);
-  mkdirSync(workspaceDirectory, { recursive: true, mode: 0o700 });
-  const canonicalWorkspaceRoot = realpathSync(workspaceDirectory);
+  let canonicalWorkspaceRoot: string;
+  try {
+    canonicalWorkspaceRoot = realpathSync(workspaceDirectory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    canonicalWorkspaceRoot = workspaceDirectory;
+  }
   const rootRelative = relative(canonicalRoot, canonicalWorkspaceRoot);
   if (rootRelative.startsWith("..") || isAbsolute(rootRelative)) {
     throw new WorktreeValidationError(
@@ -103,8 +107,39 @@ export function allocateWorktreePath(
       "Managed worktree path escaped its workspace directory",
     );
   }
+  return {
+    managedRoot: canonicalRoot,
+    workspaceRoot: canonicalWorkspaceRoot,
+    path,
+  };
+}
+
+export function allocateWorktreePath(
+  managedRoot: string,
+  workspaceId: string,
+  worktreeId: string,
+  slug: string,
+): AllocatedWorktreePath {
+  if (!isAbsolute(managedRoot)) {
+    throw new WorktreeValidationError(
+      "VALIDATION_ERROR",
+      "Managed worktree root must be absolute",
+    );
+  }
+  mkdirSync(managedRoot, { recursive: true, mode: 0o700 });
+  const canonicalRoot = realpathSync(managedRoot);
+  mkdirSync(resolve(canonicalRoot, workspaceId), {
+    recursive: true,
+    mode: 0o700,
+  });
+  const allocated = deriveAllocatedWorktreePath(
+    canonicalRoot,
+    workspaceId,
+    worktreeId,
+    slug,
+  );
   try {
-    lstatSync(path);
+    lstatSync(allocated.path);
     throw new WorktreeValidationError(
       "PATH_EXISTS",
       "The allocated worktree path already exists",
@@ -112,11 +147,7 @@ export function allocateWorktreePath(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  return {
-    managedRoot: canonicalRoot,
-    workspaceRoot: canonicalWorkspaceRoot,
-    path,
-  };
+  return allocated;
 }
 
 export function assertAllocatedPathAvailable(

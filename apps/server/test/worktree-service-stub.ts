@@ -13,6 +13,7 @@ export function createUnavailableWorktreeService(): WorktreeService {
     diff: async () => unavailable(),
     verifyTerminalStart: async () => unavailable(),
     create: async () => unavailable(),
+    prepareRemoval: async () => unavailable(),
     remove: async () => unavailable(),
     deleteBranch: async () => unavailable(),
     reconcile: async () => undefined,

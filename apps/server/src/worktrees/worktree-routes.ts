@@ -5,6 +5,7 @@ import {
   DeleteWorktreeBranchRequestSchema,
   DeleteWorktreeBranchResponseSchema,
   EmptyObjectSchema,
+  RemoveWorktreeRequestSchema,
   RemoveWorktreeResponseSchema,
   WorkspaceIdParamsSchema,
   WorkspaceRefsQuerySchema,
@@ -13,9 +14,11 @@ import {
   WorktreeDiffSummarySchema,
   WorktreeIdParamsSchema,
   WorktreeListResponseSchema,
+  WorktreeRemovalInspectionSchema,
   WorktreeResponseSchema,
   type CreateWorktreeRequest,
   type DeleteWorktreeBranchRequest,
+  type RemoveWorktreeRequest,
   type WorkspaceIdParams,
   type WorkspaceRefsQuery,
   type WorktreeIdParams,
@@ -221,22 +224,48 @@ export async function registerWorktreeRoutes(
   );
 
   app.post<{ Params: WorktreeIdParams; Body: Record<string, never> }>(
-    "/api/v1/worktrees/:id/remove",
+    "/api/v1/worktrees/:id/remove/prepare",
     {
       schema: {
         params: WorktreeIdParamsSchema,
         body: EmptyObjectSchema,
+        response: {
+          200: WorktreeRemovalInspectionSchema,
+          ...WORKTREE_ERROR_RESPONSES,
+        },
+      },
+    },
+    async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      try {
+        return await withRequestAbort(request, (signal) =>
+          options.worktrees.prepareRemoval(request.params.id, signal),
+        );
+      } catch (error) {
+        serviceError(error);
+      }
+    },
+  );
+
+  app.post<{ Params: WorktreeIdParams; Body: RemoveWorktreeRequest }>(
+    "/api/v1/worktrees/:id/remove",
+    {
+      schema: {
+        params: WorktreeIdParamsSchema,
+        body: RemoveWorktreeRequestSchema,
         response: {
           200: RemoveWorktreeResponseSchema,
           ...WORKTREE_ERROR_RESPONSES,
         },
       },
     },
-    async (request) => {
+    async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
       try {
         return await withRequestAbort(request, (signal) =>
           options.worktrees.remove(
             request.params.id,
+            request.body,
             idempotencyKey(request),
             signal,
           ),

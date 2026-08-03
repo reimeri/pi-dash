@@ -171,3 +171,60 @@ export const worktreeOperations = sqliteTable(
     ),
   ],
 );
+
+export const worktreeRemovalJournal = sqliteTable(
+  "worktree_removal_journal",
+  {
+    operationId: text("operation_id")
+      .primaryKey()
+      .references(() => worktreeOperations.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    worktreeId: text("worktree_id").notNull(),
+    mode: text("mode", { enum: ["safe", "force"] }).notNull(),
+    priorLifecycle: text("prior_lifecycle", {
+      enum: ["ready", "error"],
+    }).notNull(),
+    strategy: text("strategy", {
+      enum: ["git", "filesystem_only"],
+    }).notNull(),
+    phase: text("phase", {
+      enum: [
+        "prepared",
+        "mutation_started",
+        "quarantined",
+        "purged",
+        "finalized",
+      ],
+    }).notNull(),
+    originalPath: text("original_path").notNull(),
+    quarantinePath: text("quarantine_path"),
+    originalDevice: text("original_device"),
+    originalInode: text("original_inode"),
+    originalKind: text("original_kind", {
+      enum: ["directory", "symlink", "other"],
+    }),
+    recordedBranchRef: text("recorded_branch_ref").notNull(),
+    cleanupBranchRef: text("cleanup_branch_ref"),
+    cleanupBranchTip: text("cleanup_branch_tip"),
+    inspectionJson: text("inspection_json").notNull(),
+    warningsJson: text("warnings_json").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("worktree_removal_journal_workspace_idx").on(
+      table.workspaceId,
+      table.phase,
+      table.createdAt,
+      table.operationId,
+    ),
+    index("worktree_removal_journal_worktree_idx").on(
+      table.worktreeId,
+      table.phase,
+      table.createdAt,
+      table.operationId,
+    ),
+  ],
+);

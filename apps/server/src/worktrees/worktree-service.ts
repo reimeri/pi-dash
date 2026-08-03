@@ -6,7 +6,10 @@ import type {
   CreateWorktreeRequest,
   DeleteWorktreeBranchRequest,
   DeleteWorktreeBranchResponse,
+  RemoveWorktreeRequest,
   RemoveWorktreeResponse,
+  WorktreeRemovalInspection,
+  WorktreeRemovalIssue,
   WorkspaceRefsResponse,
   WorktreeDiff,
   WorktreeDiffSummary,
@@ -42,11 +45,19 @@ import {
   allocateWorktreePath,
   assertAllocatedPathAvailable,
   assertCanonicalManagedPath,
+  deriveAllocatedWorktreePath,
   deriveBranchRef,
   normalizeWorktreeName,
   validateWorktreeSlug,
   WorktreeValidationError,
 } from "./worktree-validation.js";
+import {
+  allocatedPathIdentity,
+  mountedPathsWithin,
+  purgeQuarantinedPath,
+  quarantineAllocatedPath,
+} from "./managed-path-removal.js";
+import type { RemovalConfirmationSigner } from "./removal-confirmation.js";
 
 export class WorktreeServiceError extends Error {
   constructor(
@@ -180,8 +191,13 @@ export interface WorktreeService {
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<WorktreeResponse>;
+  prepareRemoval(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<WorktreeRemovalInspection>;
   remove(
     id: string,
+    input: RemoveWorktreeRequest,
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<RemoveWorktreeResponse>;
@@ -202,6 +218,7 @@ export function createWorktreeService(options: {
   lock: GitMutationLock;
   lifecycle: WorktreeLifecycleCoordinator;
   snapshots: BaseSnapshotSigner;
+  removalConfirmations: RemovalConfirmationSigner;
   managedRoot: string;
   stopRuntime?: (worktree: WorktreeDto) => Promise<void>;
   onMembershipChange?: (change: {
@@ -295,6 +312,300 @@ export function createWorktreeService(options: {
       return undefined;
     }
     return entry;
+  };
+
+  type RemovalInspectionCore = Omit<
+    WorktreeRemovalInspection,
+    "checkedAt" | "confirmationToken" | "expiresAt"
+  >;
+
+  const inspectionHash = (inspection: RemovalInspectionCore): string =>
+    createHash("sha256").update(JSON.stringify(inspection)).digest("hex");
+
+  const inspectRemovalCore = async (
+    record: WorktreeRecord,
+    workspace: { repositoryPath: string; gitCommonDir: string },
+    signal?: AbortSignal,
+  ): Promise<RemovalInspectionCore> => {
+    const allocated = deriveAllocatedWorktreePath(
+      options.managedRoot,
+      record.workspaceId,
+      record.id,
+      record.slug,
+    );
+    const issues: WorktreeRemovalIssue[] = [];
+    const warnings: string[] = [];
+    const issue = (
+      code: WorktreeRemovalIssue["code"],
+      summary: string,
+      destructive = false,
+    ) => issues.push({ code, summary, destructive });
+
+    if (record.path !== allocated.path) {
+      issue(
+        "PATH_RECORD_MISMATCH",
+        `Recorded path ${record.path} does not equal the deterministic allocation ${allocated.path}`,
+      );
+    }
+
+    let pathExists = false;
+    let pathKind: WorktreeRemovalInspection["observed"]["pathKind"] = "missing";
+    let canonicalPath: string | null = null;
+    try {
+      const metadata = lstatSync(record.path);
+      pathExists = true;
+      pathKind = metadata.isSymbolicLink()
+        ? "symlink"
+        : metadata.isDirectory()
+          ? "directory"
+          : "other";
+      if (pathKind === "directory") {
+        try {
+          canonicalPath = realpathSync(record.path);
+        } catch {
+          canonicalPath = null;
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        pathKind = "unavailable";
+        issue("INSPECTION_FAILED", "Managed path metadata could not be read");
+      }
+    }
+    if (!pathExists) {
+      issue("PATH_MISSING", `Managed path ${record.path} is missing`);
+    } else if (pathKind !== "directory") {
+      issue(
+        "PATH_TYPE_CHANGED",
+        `Managed path is now a ${pathKind}, not a directory`,
+        true,
+      );
+    } else if (canonicalPath !== record.path) {
+      issue(
+        "PATH_CANONICAL_MISMATCH",
+        `Managed path resolves to ${canonicalPath ?? "an unavailable location"}`,
+        true,
+      );
+    }
+
+    let entry: GitWorktreeListEntry | undefined;
+    try {
+      entry = exactEntry(
+        await options.git.list(workspace.repositoryPath, signal),
+        {
+          ...record,
+          path: allocated.path,
+        },
+      );
+    } catch {
+      issue(
+        "INSPECTION_FAILED",
+        "Git worktree metadata could not be inspected",
+      );
+    }
+    if (!entry) {
+      issue(
+        "GIT_ENTRY_MISSING",
+        `Git does not list a worktree at ${allocated.path}`,
+      );
+    }
+
+    let observedCommonDir: string | null = null;
+    if (pathExists) {
+      try {
+        observedCommonDir = await options.git.commonDir(record.path, signal);
+      } catch {
+        observedCommonDir = null;
+      }
+    }
+    if (entry && observedCommonDir !== workspace.gitCommonDir) {
+      issue(
+        "COMMON_DIR_CHANGED",
+        `Expected Git common directory ${workspace.gitCommonDir}, found ${observedCommonDir ?? "none"}`,
+      );
+    }
+    if (entry?.detached) {
+      issue("DETACHED_HEAD", "The managed worktree is now on detached HEAD");
+    } else if (entry && entry.branchRef !== record.branchRef) {
+      issue(
+        "BRANCH_CHANGED",
+        `Expected branch ${record.branchRef}, found ${entry.branchRef ?? "none"}`,
+      );
+    }
+    if (entry && !entry.head) {
+      issue("HEAD_UNAVAILABLE", "The worktree HEAD commit is unavailable");
+    }
+    if (entry?.locked) {
+      issue(
+        "WORKTREE_LOCKED",
+        entry.lockReason
+          ? `Git locked the worktree: ${entry.lockReason}`
+          : "Git locked the worktree",
+        true,
+      );
+    }
+
+    let dirty: RemovalInspectionCore["dirty"] = {
+      available: false,
+      dirty: null,
+      tracked: null,
+      untracked: null,
+    };
+    if (pathKind === "directory") {
+      try {
+        const status = await options.git.status(record.path, signal);
+        dirty = { available: true, ...status };
+        if (status.dirty) {
+          issue(
+            "WORKTREE_DIRTY",
+            `Worktree contains ${status.tracked} tracked and ${status.untracked} untracked changes`,
+            true,
+          );
+        }
+      } catch {
+        issue("INSPECTION_FAILED", "Worktree changes could not be inspected");
+      }
+    }
+
+    if (pathExists) {
+      const mounts = await mountedPathsWithin(record.path);
+      if (mounts.length > 0) {
+        issue(
+          "MOUNT_PRESENT",
+          `Mounted content blocks removal: ${mounts.join(", ")}`,
+        );
+      }
+    }
+
+    const sameRepositoryEntry = Boolean(
+      entry &&
+      record.path === allocated.path &&
+      pathKind === "directory" &&
+      canonicalPath === record.path &&
+      observedCommonDir === workspace.gitCommonDir,
+    );
+    const removalStrategy = sameRepositoryEntry ? "git" : "filesystem_only";
+    let branchDisposition: RemovalInspectionCore["branchDisposition"];
+    if (
+      sameRepositoryEntry &&
+      entry?.branchRef === record.branchRef &&
+      entry.head
+    ) {
+      branchDisposition = {
+        kind: "recorded",
+        cleanupBranchRef: record.branchRef,
+        untouchedBranchRefs: [],
+      };
+    } else if (
+      sameRepositoryEntry &&
+      entry?.branchRef?.startsWith("refs/heads/pi-dash/") &&
+      entry.head &&
+      !options.repository.branchOwnedByOther(
+        workspace.gitCommonDir,
+        entry.branchRef,
+        record.id,
+      )
+    ) {
+      branchDisposition = {
+        kind: "adopt_observed",
+        cleanupBranchRef: entry.branchRef,
+        untouchedBranchRefs: [record.branchRef],
+      };
+      warnings.push(
+        `The observed branch ${entry.branchRef} will become the managed cleanup branch; ${record.branchRef} will be left untouched`,
+      );
+    } else {
+      const refs = [record.branchRef, entry?.branchRef]
+        .filter((value): value is string => Boolean(value))
+        .filter((value, index, values) => values.indexOf(value) === index);
+      branchDisposition = {
+        kind: "manual",
+        cleanupBranchRef: null,
+        untouchedBranchRefs: refs,
+      };
+      warnings.push(
+        "Pi Dash cannot safely claim a cleanup branch; all Git refs will be left for manual management",
+      );
+    }
+    if (removalStrategy === "filesystem_only") {
+      branchDisposition = {
+        kind: "manual",
+        cleanupBranchRef: null,
+        untouchedBranchRefs: branchDisposition.untouchedBranchRefs,
+      };
+      warnings.push(
+        "Git metadata cannot be proven and will be left untouched after filesystem-only removal",
+      );
+    }
+
+    const hardBlock =
+      record.path !== allocated.path ||
+      issues.some((candidate) => candidate.code === "MOUNT_PRESENT");
+    const exactIdentity = Boolean(
+      sameRepositoryEntry &&
+      pathKind === "directory" &&
+      canonicalPath === record.path &&
+      entry?.branchRef === record.branchRef &&
+      entry.head,
+    );
+    const safeRemovalAllowed = Boolean(
+      record.lifecycle === "ready" &&
+      exactIdentity &&
+      dirty.available &&
+      dirty.dirty === false &&
+      !entry?.locked,
+    );
+    const forceRemovalAllowed =
+      !hardBlock &&
+      (record.lifecycle === "ready" || record.lifecycle === "error");
+
+    return {
+      worktreeId: record.id,
+      safeRemovalAllowed,
+      forceRemovalAllowed,
+      expected: {
+        path: record.path,
+        allocatedPath: allocated.path,
+        branchRef: record.branchRef,
+        gitCommonDir: workspace.gitCommonDir,
+      },
+      observed: {
+        pathExists,
+        pathKind,
+        canonicalPath,
+        branchRef: entry?.branchRef ?? null,
+        head: entry?.head ?? null,
+        gitCommonDir: observedCommonDir,
+        detached: entry?.detached ?? false,
+        locked: entry?.locked ?? false,
+        lockReason: entry?.lockReason ?? null,
+        prunable: entry?.prunable ?? false,
+      },
+      dirty,
+      branchDisposition,
+      removalStrategy,
+      issues,
+      warnings,
+    };
+  };
+
+  const prepareRemovalInspection = async (
+    record: WorktreeRecord,
+    workspace: { repositoryPath: string; gitCommonDir: string },
+    signal?: AbortSignal,
+  ): Promise<WorktreeRemovalInspection> => {
+    const core = await inspectRemovalCore(record, workspace, signal);
+    const confirmation = options.removalConfirmations.sign({
+      worktreeId: record.id,
+      recordUpdatedAt: record.updatedAt,
+      inspectionHash: inspectionHash(core),
+    });
+    return {
+      ...core,
+      checkedAt: now().toISOString(),
+      confirmationToken: confirmation.token,
+      expiresAt: confirmation.expiresAt,
+    };
   };
 
   const inspectDiff = async <T extends GitDiffSummary | GitDiffSnapshot>(
@@ -827,204 +1138,363 @@ export function createWorktreeService(options: {
         return fail(started.operation.id, mapped);
       }
     },
-    async remove(id, idempotencyKey, signal) {
-      const hash = requestHash("remove", { id });
+    async prepareRemoval(id, signal) {
+      const record = requireRecord(id);
+      if (record.lifecycle !== "ready" && record.lifecycle !== "error") {
+        throw new WorktreeServiceError(
+          409,
+          "WORKTREE_NOT_READY",
+          "Only a ready or recoverable managed worktree can be inspected for removal",
+        );
+      }
+      return prepareRemovalInspection(
+        record,
+        requireWorkspace(record.workspaceId),
+        signal,
+      );
+    },
+    async remove(id, input, idempotencyKey, signal) {
+      const hash = requestHash("remove", { id, ...input });
       const replay = replayOperation<RemoveWorktreeResponse>(
         idempotencyKey,
         hash,
       );
       if (replay) return replay;
+      if (input.mode === "force" && input.confirmation !== "delete") {
+        throw new WorktreeServiceError(
+          400,
+          "WORKTREE_REMOVAL_CONFIRMATION_INVALID",
+          'Forced removal requires the exact confirmation "delete"',
+        );
+      }
       const initial = requireRecord(id);
+      const workspace = requireWorkspace(initial.workspaceId);
+      const inspected = await inspectRemovalCore(initial, workspace, signal);
+      const confirmationValid = options.removalConfirmations.verify(
+        input.confirmationToken,
+        {
+          worktreeId: initial.id,
+          recordUpdatedAt: initial.updatedAt,
+          inspectionHash: inspectionHash(inspected),
+        },
+      );
+      if (!confirmationValid) {
+        throw new WorktreeServiceError(
+          409,
+          "WORKTREE_REMOVAL_CHANGED",
+          "Worktree state changed or the removal confirmation expired; review it again",
+          await prepareRemovalInspection(initial, workspace, signal),
+        );
+      }
+      if (input.mode === "safe" && !inspected.safeRemovalAllowed) {
+        throw new WorktreeServiceError(
+          409,
+          inspected.dirty.dirty ? "WORKTREE_DIRTY" : "WORKTREE_REMOVE_FAILED",
+          inspected.issues[0]?.summary ??
+            "Safe removal is no longer allowed for this worktree",
+          await prepareRemovalInspection(initial, workspace, signal),
+        );
+      }
+      if (input.mode === "force" && !inspected.forceRemovalAllowed) {
+        throw new WorktreeServiceError(
+          409,
+          "WORKTREE_FORCE_BLOCKED",
+          inspected.issues[0]?.summary ?? "Forced removal is blocked",
+          await prepareRemovalInspection(initial, workspace, signal),
+        );
+      }
+
       const started = beginOperation<RemoveWorktreeResponse>({
         type: "remove",
         workspaceId: initial.workspaceId,
         worktreeId: id,
         idempotencyKey,
         hash,
-        requestJson: JSON.stringify({ id }),
+        requestJson: JSON.stringify({ id, ...input }),
       });
       if (started.prior) return started.prior;
-      const workspace = requireWorkspace(initial.workspaceId);
+      let claimedByOperation = false;
       try {
-        if (initial.lifecycle !== "ready") {
-          throw new WorktreeServiceError(
-            409,
-            "CONFLICT",
-            "Only a ready managed worktree can be removed",
-          );
-        }
-        if (!(await inspectExactManagedWorktree(initial, workspace, signal))) {
-          throw new WorktreeServiceError(
-            409,
-            "WORKTREE_REMOVE_FAILED",
-            "Recorded worktree no longer has its exact managed path and Git identity",
-          );
-        }
-        const firstStatus = await options.git.status(initial.path, signal);
-        options.repository.updateState(id, {
-          dirty: firstStatus.dirty,
-          updatedAt: now().toISOString(),
+        const timestamp = now().toISOString();
+        const allocated = deriveAllocatedWorktreePath(
+          options.managedRoot,
+          initial.workspaceId,
+          initial.id,
+          initial.slug,
+        );
+        const identity = await allocatedPathIdentity(initial.path);
+        const expectedQuarantinePath = resolve(
+          allocated.workspaceRoot,
+          ".pi-dash-trash",
+          started.operation.id,
+        );
+        options.repository.createRemovalJournal({
+          operationId: started.operation.id,
+          workspaceId: initial.workspaceId,
+          worktreeId: initial.id,
+          mode: input.mode,
+          priorLifecycle: initial.lifecycle === "error" ? "error" : "ready",
+          strategy: inspected.removalStrategy,
+          phase: "prepared",
+          originalPath: initial.path,
+          quarantinePath:
+            inspected.removalStrategy === "filesystem_only" && identity
+              ? expectedQuarantinePath
+              : null,
+          originalDevice: identity?.device ?? null,
+          originalInode: identity?.inode ?? null,
+          originalKind: identity?.kind ?? null,
+          recordedBranchRef: initial.branchRef,
+          cleanupBranchRef: inspected.branchDisposition.cleanupBranchRef,
+          cleanupBranchTip: null,
+          inspectionJson: JSON.stringify(inspected),
+          warningsJson: JSON.stringify(inspected.warnings),
+          createdAt: timestamp,
+          updatedAt: timestamp,
         });
-        if (firstStatus.dirty) {
-          throw new WorktreeServiceError(
-            409,
-            "WORKTREE_DIRTY",
-            "Managed worktree has tracked or untracked changes",
-            { tracked: firstStatus.tracked, untracked: firstStatus.untracked },
-          );
-        }
-        const claimed = options.lifecycle.claimRemoval(id);
+
+        const claimed =
+          initial.lifecycle === "ready"
+            ? options.lifecycle.claimRemoval(id)
+            : options.repository.compareAndSetLifecycle(
+                id,
+                "error",
+                "removing",
+                now().toISOString(),
+              );
         if (!claimed) {
           throw new WorktreeServiceError(
             409,
-            "CONFLICT",
+            "WORKTREE_REMOVAL_CHANGED",
             "Managed worktree lifecycle changed before removal",
           );
         }
+        claimedByOperation = true;
         await stopRuntime(toDto(claimed));
-        const removed = await options.lock.runExclusive(
+
+        const result = await options.lock.runExclusive(
           workspace.gitCommonDir,
-          async () => {
-            const exactBeforeRemoval = await inspectExactManagedWorktree(
-              initial,
-              workspace,
-              signal,
+          async (): Promise<RemoveWorktreeResponse> => {
+            const fresh = await inspectRemovalCore(initial, workspace, signal);
+            const authorizationStillValid = options.removalConfirmations.verify(
+              input.confirmationToken,
+              {
+                worktreeId: initial.id,
+                recordUpdatedAt: initial.updatedAt,
+                inspectionHash: inspectionHash(fresh),
+              },
             );
-            if (!exactBeforeRemoval) {
-              setError(
-                id,
-                "WORKTREE_REMOVE_FAILED",
-                "Recorded worktree changed before removal",
-                "git_mismatch",
-              );
+            if (
+              !authorizationStillValid ||
+              inspectionHash(fresh) !== inspectionHash(inspected)
+            ) {
               throw new WorktreeServiceError(
                 409,
-                "WORKTREE_REMOVE_FAILED",
-                "Recorded worktree changed before removal",
+                "WORKTREE_REMOVAL_CHANGED",
+                "Worktree state changed after confirmation; review it again",
+                await prepareRemovalInspection(initial, workspace, signal),
               );
             }
-            const postStop = await options.git.status(initial.path, signal);
-            if (postStop.dirty) {
-              options.repository.updateState(id, {
-                dirty: true,
-                updatedAt: now().toISOString(),
-              });
-              options.lifecycle.restoreReady(id, {
-                code: "WORKTREE_DIRTY",
-                message:
-                  "Worktree became dirty before removal and was left intact",
-              });
+            if (
+              fresh.issues.some(
+                (candidate) => candidate.code === "MOUNT_PRESENT",
+              )
+            ) {
               throw new WorktreeServiceError(
                 409,
-                "WORKTREE_DIRTY",
-                "Managed worktree became dirty before removal",
-                { tracked: postStop.tracked, untracked: postStop.untracked },
+                "WORKTREE_FORCE_BLOCKED",
+                "Mounted content blocks worktree removal",
               );
             }
-            const tip =
-              (await options.git.branchTip(
+
+            const cleanupRef = fresh.branchDisposition.cleanupBranchRef;
+            let cleanupTip: string | null = null;
+            if (cleanupRef) {
+              cleanupTip = fresh.observed.head;
+              const resolvedTip = await options.git.branchTip(
                 workspace.repositoryPath,
-                initial.branchRef,
+                cleanupRef,
                 signal,
-              )) ?? exactBeforeRemoval.head!;
-            options.repository.updateState(id, {
-              finalBranchTip: tip,
+              );
+              if (!cleanupTip || resolvedTip !== cleanupTip) {
+                throw new WorktreeServiceError(
+                  409,
+                  "WORKTREE_REMOVAL_CHANGED",
+                  `Cleanup branch ${cleanupRef} changed before removal`,
+                );
+              }
+            }
+            options.repository.updateRemovalJournal(started.operation.id, {
+              phase: "mutation_started",
+              cleanupBranchRef: cleanupRef,
+              cleanupBranchTip: cleanupTip,
               updatedAt: now().toISOString(),
             });
-            try {
+
+            if (fresh.removalStrategy === "git") {
+              const force =
+                input.mode === "safe"
+                  ? "none"
+                  : fresh.observed.locked
+                    ? "locked"
+                    : "dirty";
               await options.git.remove(
                 workspace.repositoryPath,
                 initial.path,
-                signal,
+                undefined,
+                force,
               );
-            } catch (error) {
-              const intact = await inspectExactManagedWorktree(
-                initial,
-                workspace,
-                signal,
-              );
-              if (intact) {
-                options.lifecycle.restoreReady(id, {
-                  code: "WORKTREE_REMOVE_FAILED",
-                  message:
-                    "Git left the worktree intact; retry after inspecting it",
-                });
-              } else {
-                setError(
-                  id,
-                  "WORKTREE_REMOVE_FAILED",
-                  "Removal failed with ambiguous Git state; inspect it manually",
-                );
-              }
-              throw error;
+            } else if (identity) {
+              const quarantinePath = await quarantineAllocatedPath({
+                path: initial.path,
+                workspaceRoot: allocated.workspaceRoot,
+                operationId: started.operation.id,
+                expectedIdentity: identity,
+              });
+              options.repository.updateRemovalJournal(started.operation.id, {
+                phase: "quarantined",
+                quarantinePath,
+                updatedAt: now().toISOString(),
+              });
+              await purgeQuarantinedPath({
+                path: quarantinePath,
+                workspaceRoot: allocated.workspaceRoot,
+                operationId: started.operation.id,
+                expectedIdentity: identity,
+              });
+              options.repository.updateRemovalJournal(started.operation.id, {
+                phase: "purged",
+                updatedAt: now().toISOString(),
+              });
             }
-            const after = await options.git.list(
-              workspace.repositoryPath,
-              signal,
-            );
-            if (exactEntry(after, initial) || existsSync(initial.path)) {
-              setError(
-                id,
-                "WORKTREE_REMOVE_FAILED",
-                "Removal postcondition verification failed",
-              );
+
+            if (existsSync(initial.path)) {
               throw new WorktreeServiceError(
                 500,
                 "WORKTREE_REMOVE_FAILED",
-                "Removal postcondition verification failed",
+                "Removal postcondition failed because the allocated path still exists",
               );
             }
-            return options.repository.updateState(id, {
-              lifecycle: "removed",
-              finalBranchTip: tip,
-              health: "missing",
-              dirty: null,
-              lastErrorCode: null,
-              lastErrorMessage: null,
+            if (fresh.removalStrategy === "git") {
+              const after = await options.git.list(workspace.repositoryPath);
+              if (after.some((entry) => entry.path === initial.path)) {
+                throw new WorktreeServiceError(
+                  500,
+                  "WORKTREE_REMOVE_FAILED",
+                  "Git still reports the removed worktree",
+                );
+              }
+            }
+
+            if (cleanupRef && cleanupTip) {
+              const removed = options.repository.updateState(id, {
+                lifecycle: "removed",
+                branchRef: cleanupRef,
+                finalBranchTip: cleanupTip,
+                health: "missing",
+                dirty: null,
+                lastErrorCode: null,
+                lastErrorMessage: null,
+                updatedAt: now().toISOString(),
+              })!;
+              options.repository.updateRemovalJournal(started.operation.id, {
+                phase: "finalized",
+                updatedAt: now().toISOString(),
+              });
+              return {
+                operationId: started.operation.id,
+                removed: true,
+                outcome: "removed_with_branch_cleanup",
+                branchCleanup: {
+                  branchRef: cleanupRef,
+                  branchTip: cleanupTip,
+                },
+                warnings: fresh.warnings,
+                worktree: toDto(removed),
+              };
+            }
+
+            const warnings =
+              fresh.warnings.length > 0
+                ? fresh.warnings
+                : ["Git branches and metadata were left for manual management"];
+            const response: RemoveWorktreeResponse = {
+              operationId: started.operation.id,
+              removed: true,
+              outcome: "forgotten",
+              branchCleanup: null,
+              warnings,
+              worktreeId: initial.id,
+              workspaceId: initial.workspaceId,
+            };
+            options.repository.finalizeForgottenRemoval({
+              operationId: started.operation.id,
+              worktreeId: initial.id,
+              resultJson: JSON.stringify(response),
               updatedAt: now().toISOString(),
-            })!;
+            });
+            activeOperations.delete(started.operation.id);
+            return response;
           },
         );
+
         publishMembership({
-          type: "upsert",
-          worktreeId: removed.id,
-          workspaceId: removed.workspaceId,
+          type: result.outcome === "forgotten" ? "removed" : "upsert",
+          worktreeId: initial.id,
+          workspaceId: initial.workspaceId,
         });
-        const response: RemoveWorktreeResponse = {
-          operationId: started.operation.id,
-          removed: true,
-          tombstone: {
-            branchRef: removed.branchRef,
-            branchTip: removed.finalBranchTip!,
-          },
-          worktree: toDto(removed),
-        };
-        return complete(started.operation.id, 200, response);
+        return result.outcome === "forgotten"
+          ? result
+          : complete(started.operation.id, 200, result);
       } catch (error) {
         const mapped = serviceError(error, "WORKTREE_REMOVE_FAILED");
-        if (options.repository.get(id)?.lifecycle === "removing") {
-          try {
-            if (await inspectExactManagedWorktree(initial, workspace, signal)) {
+        const journal = options.repository.getRemovalJournal(
+          started.operation.id,
+        );
+        const current = options.repository.get(id);
+        if (claimedByOperation && current?.lifecycle === "removing") {
+          if (existsSync(initial.path)) {
+            if (initial.lifecycle === "ready") {
               options.lifecycle.restoreReady(id, {
                 code: mapped.code,
                 message:
-                  "Removal stopped before Git mutation and left the exact worktree intact",
+                  "Removal was stopped and the allocated path remains intact",
               });
             } else {
               setError(
                 id,
-                "WORKTREE_REMOVE_FAILED",
-                "Removal failed with ambiguous Git state; inspect it manually",
+                mapped.code,
+                "Removal was stopped and the recoverable path remains intact",
+                current.health,
               );
             }
-          } catch {
+          } else {
             setError(
               id,
               "WORKTREE_REMOVE_FAILED",
-              "Removal failed and exact Git state could not be proven",
+              "Removal was interrupted after filesystem mutation; reconciliation will resume it",
+              "missing",
             );
           }
         }
+        if (
+          journal &&
+          (journal.phase === "quarantined" ||
+            journal.phase === "purged" ||
+            (journal.phase === "mutation_started" && !existsSync(initial.path)))
+        ) {
+          activeOperations.delete(started.operation.id);
+          throw new WorktreeServiceError(
+            409,
+            "OPERATION_IN_PROGRESS",
+            "Removal reached filesystem mutation and will be finalized by reconciliation",
+            { operationId: started.operation.id, worktreeId: initial.id },
+          );
+        }
+        options.repository.updateRemovalJournal(started.operation.id, {
+          phase: "finalized",
+          updatedAt: now().toISOString(),
+        });
         return fail(started.operation.id, mapped);
       }
     },
@@ -1177,6 +1647,197 @@ export function createWorktreeService(options: {
           await options.lock.runExclusive(workspace.gitCommonDir, async () => {
             const worktrees = options.repository.list(id);
             const operations = options.repository.listInProgress(id);
+            const removalJournals =
+              options.repository.listIncompleteRemovalJournals(id);
+            const recoveredOperationIds = new Set<string>();
+            for (const journal of removalJournals) {
+              if (
+                journal.phase !== "prepared" ||
+                activeOperations.has(journal.operationId)
+              ) {
+                continue;
+              }
+              const record = options.repository.get(journal.worktreeId);
+              if (record?.lifecycle === "removing") {
+                if (journal.priorLifecycle === "ready") {
+                  options.lifecycle.restoreReady(record.id, {
+                    code: "WORKTREE_REMOVE_FAILED",
+                    message:
+                      "Interrupted removal stopped before filesystem mutation; inspect and retry",
+                  });
+                } else {
+                  setError(
+                    record.id,
+                    "WORKTREE_REMOVE_FAILED",
+                    "Interrupted forced removal stopped before filesystem mutation; inspect and retry",
+                    record.health,
+                  );
+                }
+              }
+              options.repository.failOperation(
+                journal.operationId,
+                409,
+                "WORKTREE_REMOVE_FAILED",
+                "Interrupted removal stopped before filesystem mutation",
+                now().toISOString(),
+              );
+              options.repository.updateRemovalJournal(journal.operationId, {
+                phase: "finalized",
+                updatedAt: now().toISOString(),
+              });
+              recoveredOperationIds.add(journal.operationId);
+            }
+            for (const journal of removalJournals) {
+              if (
+                journal.strategy !== "filesystem_only" ||
+                activeOperations.has(journal.operationId) ||
+                journal.phase === "prepared"
+              ) {
+                continue;
+              }
+              const record = options.repository.get(journal.worktreeId);
+              if (!record) continue;
+              try {
+                if (
+                  journal.phase === "mutation_started" &&
+                  existsSync(journal.originalPath) &&
+                  (!journal.quarantinePath ||
+                    !existsSync(journal.quarantinePath))
+                ) {
+                  const allocated = deriveAllocatedWorktreePath(
+                    options.managedRoot,
+                    record.workspaceId,
+                    record.id,
+                    record.slug,
+                  );
+                  const currentIdentity = await allocatedPathIdentity(
+                    journal.originalPath,
+                  );
+                  const originalIsIntact = Boolean(
+                    journal.originalPath === allocated.path &&
+                    currentIdentity &&
+                    journal.originalDevice === currentIdentity.device &&
+                    journal.originalInode === currentIdentity.inode &&
+                    journal.originalKind === currentIdentity.kind,
+                  );
+                  if (!originalIsIntact) {
+                    setError(
+                      record.id,
+                      "WORKTREE_REMOVE_FAILED",
+                      "Interrupted filesystem removal no longer has its confirmed allocation identity",
+                      "git_mismatch",
+                    );
+                    continue;
+                  }
+                  if (journal.priorLifecycle === "ready") {
+                    options.lifecycle.restoreReady(record.id, {
+                      code: "WORKTREE_REMOVE_FAILED",
+                      message:
+                        "Interrupted filesystem removal stopped before quarantine; inspect and retry",
+                    });
+                  } else {
+                    setError(
+                      record.id,
+                      "WORKTREE_REMOVE_FAILED",
+                      "Interrupted filesystem removal stopped before quarantine; inspect and retry",
+                      record.health,
+                    );
+                  }
+                  options.repository.failOperation(
+                    journal.operationId,
+                    409,
+                    "WORKTREE_REMOVE_FAILED",
+                    "Interrupted filesystem removal stopped before quarantine",
+                    now().toISOString(),
+                  );
+                  options.repository.updateRemovalJournal(journal.operationId, {
+                    phase: "finalized",
+                    updatedAt: now().toISOString(),
+                  });
+                  recoveredOperationIds.add(journal.operationId);
+                  continue;
+                }
+                if (
+                  journal.quarantinePath &&
+                  existsSync(journal.quarantinePath)
+                ) {
+                  if (
+                    !journal.originalDevice ||
+                    !journal.originalInode ||
+                    !journal.originalKind
+                  ) {
+                    throw new Error(
+                      "Removal journal has no trusted quarantine identity",
+                    );
+                  }
+                  const allocated = deriveAllocatedWorktreePath(
+                    options.managedRoot,
+                    record.workspaceId,
+                    record.id,
+                    record.slug,
+                  );
+                  await purgeQuarantinedPath({
+                    path: journal.quarantinePath,
+                    workspaceRoot: allocated.workspaceRoot,
+                    operationId: journal.operationId,
+                    expectedIdentity: {
+                      device: journal.originalDevice,
+                      inode: journal.originalInode,
+                      kind: journal.originalKind,
+                    },
+                  });
+                  options.repository.updateRemovalJournal(journal.operationId, {
+                    phase: "purged",
+                    updatedAt: now().toISOString(),
+                  });
+                }
+                if (
+                  !existsSync(journal.originalPath) &&
+                  (!journal.quarantinePath ||
+                    !existsSync(journal.quarantinePath))
+                ) {
+                  let warnings: string[];
+                  try {
+                    warnings = JSON.parse(journal.warningsJson) as string[];
+                  } catch {
+                    warnings = [];
+                  }
+                  if (warnings.length === 0) {
+                    warnings = [
+                      "Git branches and metadata were left for manual management",
+                    ];
+                  }
+                  const response: RemoveWorktreeResponse = {
+                    operationId: journal.operationId,
+                    removed: true,
+                    outcome: "forgotten",
+                    branchCleanup: null,
+                    warnings,
+                    worktreeId: journal.worktreeId,
+                    workspaceId: journal.workspaceId,
+                  };
+                  options.repository.finalizeForgottenRemoval({
+                    operationId: journal.operationId,
+                    worktreeId: journal.worktreeId,
+                    resultJson: JSON.stringify(response),
+                    updatedAt: now().toISOString(),
+                  });
+                  recoveredOperationIds.add(journal.operationId);
+                  publishMembership({
+                    type: "removed",
+                    worktreeId: journal.worktreeId,
+                    workspaceId: journal.workspaceId,
+                  });
+                }
+              } catch {
+                setError(
+                  journal.worktreeId,
+                  "WORKTREE_REMOVE_FAILED",
+                  "Quarantined worktree removal could not be resumed",
+                  "missing",
+                );
+              }
+            }
             const liveWorktreeIds = new Set(
               operations
                 .filter((operation) => activeOperations.has(operation.id))
@@ -1199,10 +1860,144 @@ export function createWorktreeService(options: {
               return;
             }
 
+            for (const journal of removalJournals) {
+              if (
+                journal.strategy !== "git" ||
+                activeOperations.has(journal.operationId) ||
+                journal.phase === "prepared" ||
+                recoveredOperationIds.has(journal.operationId)
+              ) {
+                continue;
+              }
+              const record = options.repository.get(journal.worktreeId);
+              if (!record) continue;
+              const originalExists = existsSync(journal.originalPath);
+              const gitEntryExists = entries.some(
+                (entry) => entry.path === journal.originalPath,
+              );
+              if (originalExists || gitEntryExists) {
+                if (originalExists && gitEntryExists) {
+                  if (journal.priorLifecycle === "ready") {
+                    options.lifecycle.restoreReady(record.id, {
+                      code: "WORKTREE_REMOVE_FAILED",
+                      message:
+                        "Interrupted Git removal left the worktree intact; inspect and retry",
+                    });
+                  } else {
+                    setError(
+                      record.id,
+                      "WORKTREE_REMOVE_FAILED",
+                      "Interrupted forced Git removal left the worktree intact; inspect and retry",
+                      record.health,
+                    );
+                  }
+                  options.repository.failOperation(
+                    journal.operationId,
+                    409,
+                    "WORKTREE_REMOVE_FAILED",
+                    "Interrupted Git removal left the worktree intact",
+                    now().toISOString(),
+                  );
+                  options.repository.updateRemovalJournal(journal.operationId, {
+                    phase: "finalized",
+                    updatedAt: now().toISOString(),
+                  });
+                  recoveredOperationIds.add(journal.operationId);
+                }
+                continue;
+              }
+              if (journal.cleanupBranchRef && journal.cleanupBranchTip) {
+                const removed = options.repository.updateState(record.id, {
+                  lifecycle: "removed",
+                  branchRef: journal.cleanupBranchRef,
+                  finalBranchTip: journal.cleanupBranchTip,
+                  health: "missing",
+                  dirty: null,
+                  lastErrorCode: null,
+                  lastErrorMessage: null,
+                  updatedAt: now().toISOString(),
+                })!;
+                let warnings: string[] = [];
+                try {
+                  warnings = JSON.parse(journal.warningsJson) as string[];
+                } catch {
+                  warnings = [];
+                }
+                const response: RemoveWorktreeResponse = {
+                  operationId: journal.operationId,
+                  removed: true,
+                  outcome: "removed_with_branch_cleanup",
+                  branchCleanup: {
+                    branchRef: journal.cleanupBranchRef,
+                    branchTip: journal.cleanupBranchTip,
+                  },
+                  warnings,
+                  worktree: toDto(removed),
+                };
+                options.repository.completeOperation(
+                  journal.operationId,
+                  200,
+                  JSON.stringify(response),
+                  now().toISOString(),
+                );
+                options.repository.updateRemovalJournal(journal.operationId, {
+                  phase: "finalized",
+                  updatedAt: now().toISOString(),
+                });
+                recoveredOperationIds.add(journal.operationId);
+                publishMembership({
+                  type: "upsert",
+                  worktreeId: removed.id,
+                  workspaceId: removed.workspaceId,
+                });
+              } else {
+                let warnings: string[];
+                try {
+                  warnings = JSON.parse(journal.warningsJson) as string[];
+                } catch {
+                  warnings = [];
+                }
+                if (warnings.length === 0) {
+                  warnings = [
+                    "Git branches and metadata were left for manual management",
+                  ];
+                }
+                const response: RemoveWorktreeResponse = {
+                  operationId: journal.operationId,
+                  removed: true,
+                  outcome: "forgotten",
+                  branchCleanup: null,
+                  warnings,
+                  worktreeId: journal.worktreeId,
+                  workspaceId: journal.workspaceId,
+                };
+                options.repository.finalizeForgottenRemoval({
+                  operationId: journal.operationId,
+                  worktreeId: journal.worktreeId,
+                  resultJson: JSON.stringify(response),
+                  updatedAt: now().toISOString(),
+                });
+                recoveredOperationIds.add(journal.operationId);
+                publishMembership({
+                  type: "removed",
+                  worktreeId: journal.worktreeId,
+                  workspaceId: journal.workspaceId,
+                });
+              }
+            }
+
+            const recoveredWorktreeIds = new Set(
+              removalJournals
+                .filter((journal) =>
+                  recoveredOperationIds.has(journal.operationId),
+                )
+                .map((journal) => journal.worktreeId),
+            );
             for (const record of worktrees) {
               if (
                 record.lifecycle === "removed" ||
-                liveWorktreeIds.has(record.id)
+                liveWorktreeIds.has(record.id) ||
+                recoveredWorktreeIds.has(record.id)
               ) {
                 continue;
               }
@@ -1329,7 +2124,12 @@ export function createWorktreeService(options: {
             }
 
             for (const operation of operations) {
-              if (activeOperations.has(operation.id)) continue;
+              if (
+                activeOperations.has(operation.id) ||
+                recoveredOperationIds.has(operation.id)
+              ) {
+                continue;
+              }
               const record = operation.worktreeId
                 ? options.repository.get(operation.worktreeId)
                 : undefined;
@@ -1370,13 +2170,26 @@ export function createWorktreeService(options: {
                 }
               } else if (operation.operationType === "remove") {
                 if (record.lifecycle === "removed" && record.finalBranchTip) {
+                  const journal = options.repository.getRemovalJournal(
+                    operation.id,
+                  );
+                  let warnings: string[] = [];
+                  try {
+                    warnings = journal
+                      ? (JSON.parse(journal.warningsJson) as string[])
+                      : [];
+                  } catch {
+                    warnings = [];
+                  }
                   const response: RemoveWorktreeResponse = {
                     operationId: operation.id,
                     removed: true,
-                    tombstone: {
+                    outcome: "removed_with_branch_cleanup",
+                    branchCleanup: {
                       branchRef: record.branchRef,
                       branchTip: record.finalBranchTip,
                     },
+                    warnings,
                     worktree: toDto(record),
                   };
                   options.repository.completeOperation(
