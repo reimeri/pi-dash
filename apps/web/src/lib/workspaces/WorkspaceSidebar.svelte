@@ -10,6 +10,7 @@
     Add01Icon,
     ArrowRight01Icon,
     FolderGitIcon,
+    Folder
   } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
   import { onDestroy, onMount } from "svelte";
@@ -473,7 +474,7 @@
                 onclick={(event) => handleWorkspaceClick(event, workspace.id)}
               >
                 <HugeiconsIcon
-                  icon={FolderGitIcon}
+                  icon={Folder}
                   strokeWidth={2}
                   aria-hidden="true"
                 />
