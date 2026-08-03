@@ -30,6 +30,7 @@ async function fixture(
   options: {
     syncer?: GitWorkspaceSynchronizer;
     onRepositoryChange?: (workspace: WorkspaceDto) => void;
+    onOrderChange?: (workspaceIds: string[]) => void;
   } = {},
 ): Promise<{
   root: string;
@@ -49,6 +50,7 @@ async function fixture(
     syncer: options.syncer ?? (await createGitWorkspaceSynchronizer()),
     lock: createGitMutationLock({ root: join(root, "locks") }),
     onRepositoryChange: options.onRepositoryChange,
+    onOrderChange: options.onOrderChange,
     now: () => new Date("2026-02-03T04:05:06.000Z"),
   });
   resources.push({ root, database });
@@ -110,6 +112,112 @@ describe("WorkspaceService", () => {
       "Zebra",
     ]);
     expect(workspaceSlugBase("你好")).toBe("workspace");
+  });
+
+  it("persists top insertion, reordering, and compaction", async () => {
+    const publishedOrders: string[][] = [];
+    const { root, database, service } = await fixture({
+      onOrderChange: (workspaceIds) => publishedOrders.push(workspaceIds),
+    });
+    const first = await service.create({
+      path: createGitRepository(root, "first-order"),
+      name: "First",
+    });
+    const second = await service.create({
+      path: createGitRepository(root, "second-order"),
+      name: "Second",
+    });
+    const third = await service.create({
+      path: createGitRepository(root, "third-order"),
+      name: "Third",
+    });
+
+    expect(service.list().map((workspace) => workspace.id)).toEqual([
+      third.id,
+      second.id,
+      first.id,
+    ]);
+    expect(
+      database.sqlite
+        .prepare("SELECT sort_order FROM workspaces ORDER BY sort_order")
+        .all(),
+    ).toEqual([{ sort_order: 0 }, { sort_order: 1 }, { sort_order: 2 }]);
+
+    expect(
+      service
+        .reorder(
+          [third.id, second.id, first.id],
+          [first.id, third.id, second.id],
+        )
+        .map((workspace) => workspace.id),
+    ).toEqual([first.id, third.id, second.id]);
+    expect(() =>
+      service.reorder(
+        [third.id, second.id, first.id],
+        [second.id, first.id, third.id],
+      ),
+    ).toThrow(expect.objectContaining({ code: "WORKSPACE_ORDER_CHANGED" }));
+
+    service.remove(third.id);
+    expect(service.list().map((workspace) => workspace.id)).toEqual([
+      first.id,
+      second.id,
+    ]);
+    expect(
+      database.sqlite
+        .prepare("SELECT sort_order FROM workspaces ORDER BY sort_order")
+        .all(),
+    ).toEqual([{ sort_order: 0 }, { sort_order: 1 }]);
+    expect(publishedOrders.at(-1)).toEqual([first.id, second.id]);
+  });
+
+  it("rejects malformed workspace orders", async () => {
+    const { root, service } = await fixture();
+    const first = await service.create({
+      path: createGitRepository(root, "first-invalid-order"),
+      name: "First",
+    });
+    const second = await service.create({
+      path: createGitRepository(root, "second-invalid-order"),
+      name: "Second",
+    });
+
+    expect(() =>
+      service.reorder([second.id, first.id], [first.id, first.id]),
+    ).toThrow(expect.objectContaining({ code: "VALIDATION_ERROR" }));
+    expect(() => service.reorder([second.id, first.id], [first.id])).toThrow(
+      expect.objectContaining({ code: "VALIDATION_ERROR" }),
+    );
+  });
+
+  it("enforces the supported workspace capacity before inserting", async () => {
+    const { root, database, service } = await fixture();
+    const insert = database.sqlite.prepare(`
+      INSERT INTO workspaces (
+        id, name, slug, repository_path, git_common_dir, sort_order,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (let index = 0; index < 50; index += 1) {
+      insert.run(
+        `workspace-${index}`,
+        `Workspace ${index}`,
+        `workspace-${index}`,
+        `/repository-${index}`,
+        `/repository-${index}/.git`,
+        index,
+        "2026-02-03T04:05:06.000Z",
+        "2026-02-03T04:05:06.000Z",
+      );
+    }
+
+    await expect(
+      service.create({
+        path: createGitRepository(root, "over-capacity"),
+        name: "Over capacity",
+      }),
+    ).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+    expect(service.list()).toHaveLength(50);
   });
 
   it("refreshes the upstream sync status for healthy repositories", async () => {

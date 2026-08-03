@@ -1,10 +1,7 @@
 import type { WorkspaceDto } from "@pi-dash/contracts";
 import { get } from "svelte/store";
 import { describe, expect, it, vi } from "vitest";
-import {
-  createWorkspaceStore,
-  sortWorkspaces,
-} from "../src/lib/workspaces/store.js";
+import { createWorkspaceStore } from "../src/lib/workspaces/store.js";
 
 function workspace(
   id: string,
@@ -29,17 +26,21 @@ function workspace(
   };
 }
 
+const first = workspace("00000000-0000-4000-8000-000000000001", "First");
+const second = workspace("00000000-0000-4000-8000-000000000002", "Second");
+const third = workspace("00000000-0000-4000-8000-000000000003", "Third");
+
 describe("workspace store", () => {
-  it("orders names deterministically for immediate sidebar updates", () => {
-    const ordered = sortWorkspaces([
-      workspace("00000000-0000-4000-8000-000000000003", "Project 10"),
-      workspace("00000000-0000-4000-8000-000000000001", "alpha"),
-      workspace("00000000-0000-4000-8000-000000000002", "Project 2"),
-    ]);
-    expect(ordered.map((item) => item.name)).toEqual([
-      "alpha",
-      "Project 2",
-      "Project 10",
+  it("preserves authoritative server order", async () => {
+    const store = createWorkspaceStore({
+      workspaces: async () => ({ workspaces: [third, first, second] }),
+      reorderWorkspaces: vi.fn(),
+    });
+    await store.load();
+    expect(get(store).workspaces.map((item) => item.id)).toEqual([
+      third.id,
+      first.id,
+      second.id,
     ]);
   });
 
@@ -50,27 +51,20 @@ describe("workspace store", () => {
         new Promise((_resolve, reject) => {
           rejectLoad = reject;
         }),
+      reorderWorkspaces: vi.fn(),
     });
     const loading = store.load();
-    store.upsert(workspace("00000000-0000-4000-8000-000000000001", "Created"));
+    store.upsert(first);
     rejectLoad(new Error("stale load failed"));
     await loading;
 
     expect(get(store)).toMatchObject({
       status: "ready",
-      workspaces: [{ name: "Created" }],
+      workspaces: [{ name: "First" }],
     });
   });
 
   it("reloads an authoritative list after an upsert races with loading", async () => {
-    const existing = workspace(
-      "00000000-0000-4000-8000-000000000001",
-      "Existing",
-    );
-    const updated = workspace(
-      "00000000-0000-4000-8000-000000000002",
-      "Updated",
-    );
     let firstResolve!: (value: { workspaces: WorkspaceDto[] }) => void;
     let secondResolve!: (value: { workspaces: WorkspaceDto[] }) => void;
     let calls = 0;
@@ -82,32 +76,168 @@ describe("workspace store", () => {
           else secondResolve = resolve;
         });
       },
+      reorderWorkspaces: vi.fn(),
     });
 
-    const firstLoad = store.load();
-    store.upsert(updated);
-    firstResolve({ workspaces: [existing] });
-    await firstLoad;
+    const initialLoad = store.load();
+    store.upsert(second);
+    firstResolve({ workspaces: [first] });
+    await initialLoad;
     await vi.waitFor(() => expect(calls).toBe(2));
-    secondResolve({ workspaces: [existing, updated] });
+    secondResolve({ workspaces: [second, first] });
     await vi.waitFor(() =>
-      expect(get(store).workspaces.map((item) => item.name)).toEqual([
-        "Existing",
-        "Updated",
+      expect(get(store).workspaces.map((item) => item.id)).toEqual([
+        second.id,
+        first.id,
       ]),
     );
   });
 
-  it("upserts health changes and removes workspace records", () => {
-    const store = createWorkspaceStore();
-    const id = "00000000-0000-4000-8000-000000000001";
-    store.upsert(workspace(id, "Project"));
-    store.upsert(workspace(id, "Project", "missing"));
-    expect(get(store)).toMatchObject({
-      status: "ready",
-      workspaces: [{ repository: { health: "missing" } }],
+  it("preserves an existing position and inserts new workspaces at the top", async () => {
+    const store = createWorkspaceStore({
+      workspaces: async () => ({ workspaces: [second, first] }),
+      reorderWorkspaces: vi.fn(),
     });
-    store.remove(id);
-    expect(get(store).workspaces).toEqual([]);
+    await store.load();
+    store.upsert({ ...first, name: "Renamed" });
+    store.upsert(third);
+    expect(get(store).workspaces.map((item) => item.name)).toEqual([
+      "Third",
+      "Second",
+      "Renamed",
+    ]);
+    store.remove(second.id);
+    expect(get(store).workspaces.map((item) => item.id)).toEqual([
+      third.id,
+      first.id,
+    ]);
+  });
+
+  it("optimistically reorders and applies the authoritative response", async () => {
+    let resolveReorder!: (value: { workspaces: WorkspaceDto[] }) => void;
+    const reorderWorkspaces = vi.fn(
+      () =>
+        new Promise<{ workspaces: WorkspaceDto[] }>((resolve) => {
+          resolveReorder = resolve;
+        }),
+    );
+    const store = createWorkspaceStore({
+      workspaces: async () => ({ workspaces: [first, second, third] }),
+      reorderWorkspaces,
+    });
+    await store.load();
+
+    const reordering = store.reorder([third.id, first.id, second.id]);
+    expect(get(store)).toMatchObject({ reordering: true });
+    expect(get(store).workspaces.map((item) => item.id)).toEqual([
+      third.id,
+      first.id,
+      second.id,
+    ]);
+    expect(reorderWorkspaces).toHaveBeenCalledWith({
+      expectedWorkspaceIds: [first.id, second.id, third.id],
+      workspaceIds: [third.id, first.id, second.id],
+    });
+
+    resolveReorder({ workspaces: [third, first, second] });
+    await reordering;
+    expect(get(store)).toMatchObject({ reordering: false, status: "ready" });
+  });
+
+  it("keeps the reorder lock while a load is requested", async () => {
+    let resolveReorder!: (value: { workspaces: WorkspaceDto[] }) => void;
+    let loads = 0;
+    const reorderWorkspaces = vi.fn(
+      () =>
+        new Promise<{ workspaces: WorkspaceDto[] }>((resolve) => {
+          resolveReorder = resolve;
+        }),
+    );
+    const store = createWorkspaceStore({
+      workspaces: async () => {
+        loads += 1;
+        return {
+          workspaces:
+            loads === 1 ? [first, second, third] : [third, first, second],
+        };
+      },
+      reorderWorkspaces,
+    });
+    await store.load();
+
+    const firstReorder = store.reorder([third.id, first.id, second.id]);
+    await store.load();
+    await store.reorder([second.id, third.id, first.id]);
+    expect(loads).toBe(1);
+    expect(reorderWorkspaces).toHaveBeenCalledTimes(1);
+    expect(get(store).reordering).toBe(true);
+
+    resolveReorder({ workspaces: [third, first, second] });
+    await firstReorder;
+    expect(loads).toBe(2);
+    expect(get(store)).toMatchObject({ reordering: false });
+  });
+
+  it("rolls back if both reorder and reconciliation fail", async () => {
+    let loads = 0;
+    const store = createWorkspaceStore({
+      workspaces: async () => {
+        loads += 1;
+        if (loads > 1) throw new Error("Reload failed");
+        return { workspaces: [first, second, third] };
+      },
+      reorderWorkspaces: async () => {
+        throw new Error("Reorder failed");
+      },
+    });
+    await store.load();
+
+    await expect(
+      store.reorder([third.id, first.id, second.id]),
+    ).rejects.toThrow("Reorder failed");
+    expect(get(store).workspaces.map((workspace) => workspace.id)).toEqual([
+      first.id,
+      second.id,
+      third.id,
+    ]);
+    expect(get(store)).toMatchObject({
+      reordering: false,
+      status: "error",
+      message: "Reload failed",
+    });
+  });
+
+  it("applies matching order events and reloads after a conflict", async () => {
+    let loads = 0;
+    const store = createWorkspaceStore({
+      workspaces: async () => {
+        loads += 1;
+        return {
+          workspaces:
+            loads === 1 ? [first, second, third] : [second, third, first],
+        };
+      },
+      reorderWorkspaces: async () => {
+        throw new Error("Workspace order changed");
+      },
+    });
+    await store.load();
+    expect(store.applyOrder([third.id, first.id, second.id])).toBe(true);
+    expect(get(store).workspaces.map((item) => item.id)).toEqual([
+      third.id,
+      first.id,
+      second.id,
+    ]);
+
+    await expect(
+      store.reorder([first.id, third.id, second.id]),
+    ).rejects.toThrow("Workspace order changed");
+    expect(get(store).workspaces.map((item) => item.id)).toEqual([
+      second.id,
+      third.id,
+      first.id,
+    ]);
+    expect(store.applyOrder([first.id])).toBe(false);
+    await vi.waitFor(() => expect(loads).toBe(3));
   });
 });

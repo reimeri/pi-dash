@@ -5,6 +5,7 @@ import {
   HealthResponseSchema,
   RemoveWorktreeRequestSchema,
   RemoveWorktreeResponseSchema,
+  ReorderWorkspacesRequestSchema,
   WorkspaceSchema,
   WorktreeRemovalInspectionSchema,
   WorktreeDiffSchema,
@@ -57,6 +58,23 @@ describe("shared contracts", () => {
         updatedAt: "2026-01-01T00:00:00.000Z",
       }),
     ).toBe(true);
+  });
+
+  it("validates complete bounded workspace reorder requests", () => {
+    const first = "2cb84366-6fb7-4a60-b15e-6726381b190c";
+    const second = "3cb84366-6fb7-4a60-b15e-6726381b190c";
+    expect(
+      Value.Check(ReorderWorkspacesRequestSchema, {
+        expectedWorkspaceIds: [first, second],
+        workspaceIds: [second, first],
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(ReorderWorkspacesRequestSchema, {
+        expectedWorkspaceIds: [],
+        workspaceIds: [],
+      }),
+    ).toBe(false);
   });
 
   it("validates bounded worktree diff responses", () => {

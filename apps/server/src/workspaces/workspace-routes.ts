@@ -4,6 +4,7 @@ import {
   CreateWorkspaceRequestSchema,
   DirectoryDialogResponseSchema,
   RenameWorkspaceRequestSchema,
+  ReorderWorkspacesRequestSchema,
   WorkspaceIdParamsSchema,
   WorkspaceListResponseSchema,
   WorkspacePathRequestSchema,
@@ -11,6 +12,7 @@ import {
   WorkspaceResponseSchema,
   type CreateWorkspaceRequest,
   type RenameWorkspaceRequest,
+  type ReorderWorkspacesRequest,
   type WorkspaceIdParams,
   type WorkspacePathRequest,
 } from "@pi-dash/contracts";
@@ -125,6 +127,32 @@ export async function registerWorkspaceRoutes(
     "/api/v1/workspaces",
     { schema: { response: { 200: WorkspaceListResponseSchema } } },
     async () => ({ workspaces: options.workspaces.list() }),
+  );
+
+  app.post<{ Body: ReorderWorkspacesRequest }>(
+    "/api/v1/workspaces/reorder",
+    {
+      schema: {
+        body: ReorderWorkspacesRequestSchema,
+        response: {
+          200: WorkspaceListResponseSchema,
+          400: ApiErrorEnvelopeSchema,
+          409: ApiErrorEnvelopeSchema,
+        },
+      },
+    },
+    async (request) => {
+      try {
+        return {
+          workspaces: options.workspaces.reorder(
+            request.body.expectedWorkspaceIds,
+            request.body.workspaceIds,
+          ),
+        };
+      } catch (error) {
+        serviceError(error);
+      }
+    },
   );
 
   app.get<{ Params: WorkspaceIdParams }>(

@@ -11,9 +11,12 @@ export interface WorkspaceRecord {
   currentBranch: string | null;
   headCommit: string | null;
   checkedAt: string | null;
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
 }
+
+export type NewWorkspaceRecord = Omit<WorkspaceRecord, "sortOrder">;
 
 interface WorkspaceRow {
   id: string;
@@ -25,6 +28,7 @@ interface WorkspaceRow {
   current_branch: string | null;
   head_commit: string | null;
   checked_at: string | null;
+  sort_order: number;
   created_at: string;
   updated_at: string;
 }
@@ -40,6 +44,7 @@ function fromRow(row: WorkspaceRow): WorkspaceRecord {
     currentBranch: row.current_branch,
     headCommit: row.head_commit,
     checkedAt: row.checked_at,
+    sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -47,14 +52,14 @@ function fromRow(row: WorkspaceRow): WorkspaceRecord {
 
 const SELECT_COLUMNS = `
   id, name, slug, repository_path, git_common_dir, repository_health,
-  current_branch, head_commit, checked_at, created_at, updated_at
+  current_branch, head_commit, checked_at, sort_order, created_at, updated_at
 `;
 
 export interface WorkspaceRepository {
   list(): WorkspaceRecord[];
   get(id: string): WorkspaceRecord | undefined;
   findByRepositoryPath(path: string): WorkspaceRecord | undefined;
-  create(input: WorkspaceRecord): WorkspaceRecord;
+  createFirst(input: NewWorkspaceRecord): WorkspaceRecord;
   slugExists(slug: string): boolean;
   rename(
     id: string,
@@ -68,6 +73,7 @@ export interface WorkspaceRepository {
     headCommit: string | null,
     checkedAt: string,
   ): WorkspaceRecord | undefined;
+  reorder(ids: string[]): void;
   worktreeCount(id: string): number;
   delete(id: string): boolean;
   transaction<T>(operation: () => T): T;
@@ -77,7 +83,7 @@ export function createWorkspaceRepository(
   sqlite: BetterSqlite3.Database,
 ): WorkspaceRepository {
   const listStatement = sqlite.prepare(
-    `SELECT ${SELECT_COLUMNS} FROM workspaces ORDER BY name COLLATE NOCASE, created_at, id`,
+    `SELECT ${SELECT_COLUMNS} FROM workspaces ORDER BY sort_order, id`,
   );
   const getStatement = sqlite.prepare(
     `SELECT ${SELECT_COLUMNS} FROM workspaces WHERE id = ?`,
@@ -88,9 +94,30 @@ export function createWorkspaceRepository(
   const insertStatement = sqlite.prepare(`
     INSERT INTO workspaces (
       id, name, slug, repository_path, git_common_dir, repository_health,
-      current_branch, head_commit, checked_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      current_branch, head_commit, checked_at, sort_order, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
   `);
+  const maximumOrderStatement = sqlite.prepare(
+    "SELECT coalesce(max(sort_order), -1) AS maximum FROM workspaces",
+  );
+  const stageAllOrdersStatement = sqlite.prepare(
+    "UPDATE workspaces SET sort_order = sort_order + ?",
+  );
+  const shiftStagedOrdersStatement = sqlite.prepare(
+    "UPDATE workspaces SET sort_order = sort_order - ? WHERE sort_order >= ?",
+  );
+  const stageOrdersAfterStatement = sqlite.prepare(
+    "UPDATE workspaces SET sort_order = sort_order + ? WHERE sort_order > ?",
+  );
+  const compactStagedOrdersStatement = sqlite.prepare(
+    "UPDATE workspaces SET sort_order = sort_order - ? WHERE sort_order >= ?",
+  );
+  const stageReorderStatement = sqlite.prepare(
+    "UPDATE workspaces SET sort_order = -sort_order - 1",
+  );
+  const setOrderStatement = sqlite.prepare(
+    "UPDATE workspaces SET sort_order = ? WHERE id = ?",
+  );
   const slugStatement = sqlite.prepare(
     "SELECT 1 AS present FROM workspaces WHERE slug = ?",
   );
@@ -107,6 +134,9 @@ export function createWorkspaceRepository(
     "SELECT count(*) AS count FROM worktrees WHERE workspace_id = ? AND lifecycle <> 'removed'",
   );
 
+  const maximumOrder = (): number =>
+    (maximumOrderStatement.get() as { maximum: number }).maximum;
+
   return {
     list() {
       return (listStatement.all() as WorkspaceRow[]).map(fromRow);
@@ -119,7 +149,12 @@ export function createWorkspaceRepository(
       const row = findPathStatement.get(path) as WorkspaceRow | undefined;
       return row ? fromRow(row) : undefined;
     },
-    create(input) {
+    createFirst(input) {
+      const offset = maximumOrder() + 2;
+      if (offset > 1) {
+        stageAllOrdersStatement.run(offset);
+        shiftStagedOrdersStatement.run(offset - 1, offset);
+      }
       insertStatement.run(
         input.id,
         input.name,
@@ -133,7 +168,7 @@ export function createWorkspaceRepository(
         input.createdAt,
         input.updatedAt,
       );
-      return input;
+      return { ...input, sortOrder: 0 };
     },
     slugExists(slug) {
       return Boolean(slugStatement.get(slug));
@@ -159,12 +194,25 @@ export function createWorkspaceRepository(
       const row = getStatement.get(id) as WorkspaceRow;
       return fromRow(row);
     },
+    reorder(ids) {
+      stageReorderStatement.run();
+      ids.forEach((id, index) => setOrderStatement.run(index, id));
+    },
     worktreeCount(id) {
       const result = worktreeCountStatement.get(id) as { count: number };
       return result.count;
     },
     delete(id) {
-      return deleteStatement.run(id).changes > 0;
+      const record = this.get(id);
+      if (!record || deleteStatement.run(id).changes === 0) return false;
+      const maximum = maximumOrder();
+      const offset = maximum + 2;
+      stageOrdersAfterStatement.run(offset, record.sortOrder);
+      compactStagedOrdersStatement.run(
+        offset + 1,
+        offset + record.sortOrder + 1,
+      );
+      return true;
     },
     transaction<T>(operation: () => T): T {
       return sqlite.transaction(operation)();

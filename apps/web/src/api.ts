@@ -23,6 +23,7 @@ import {
   type DeleteWorktreeBranchRequest,
   type RemoveWorktreeRequest,
   type RenameWorkspaceRequest,
+  type ReorderWorkspacesRequest,
   type StatusAcknowledgeRequest,
   type WorkspacePathRequest,
 } from "@pi-dash/contracts";
@@ -148,6 +149,11 @@ export const api = {
       WorkspaceResponseSchema,
       { method: "PATCH", body },
     ),
+  reorderWorkspaces: (body: ReorderWorkspacesRequest) =>
+    requestJson("/api/v1/workspaces/reorder", WorkspaceListResponseSchema, {
+      method: "POST",
+      body,
+    }),
   refreshWorkspace: (id: string) =>
     requestJson(
       `/api/v1/workspaces/${encodeURIComponent(id)}/refresh`,

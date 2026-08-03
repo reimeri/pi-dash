@@ -34,17 +34,14 @@ export const workspaces = sqliteTable(
     currentBranch: text("current_branch"),
     headCommit: text("head_commit"),
     checkedAt: text("checked_at"),
+    sortOrder: integer("sort_order").notNull().default(0),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
     uniqueIndex("workspaces_slug_unique").on(table.slug),
     uniqueIndex("workspaces_repository_path_unique").on(table.repositoryPath),
-    index("workspaces_name_order_idx").on(
-      table.name,
-      table.createdAt,
-      table.id,
-    ),
+    uniqueIndex("workspaces_sort_order_unique").on(table.sortOrder),
     index("workspaces_git_common_dir_idx").on(table.gitCommonDir),
   ],
 );

@@ -59,6 +59,7 @@ describe("application event stream", () => {
     events.publishStatus({ ...status, state: "working", revision: 1 });
     events.publishRuntime({ ...runtime, state: "starting" });
     events.publishWorkspaceUpdated(workspace);
+    events.publishWorkspaceOrderUpdated([workspace.id]);
     events.publishWorktreeRemoved(
       status.worktreeId,
       "22222222-2222-4222-8222-222222222222",
@@ -68,12 +69,17 @@ describe("application event stream", () => {
       "status",
       "runtime",
       "workspaceUpdated",
+      "workspaceOrderUpdated",
       "worktreeRemoved",
     ]);
-    expect(received.map((frame) => frame.v)).toEqual([4, 4, 4, 4, 4]);
+    expect(received.map((frame) => frame.v)).toEqual([5, 5, 5, 5, 5, 5]);
     expect(received.map((frame) => "cursor" in frame && frame.cursor)).toEqual([
-      0, 1, 2, 3, 4,
+      0, 1, 2, 3, 4, 5,
     ]);
+    expect(received[4]).toMatchObject({
+      type: "workspaceOrderUpdated",
+      workspaceIds: [workspace.id],
+    });
   });
 
   it("disconnects a subscriber that exceeds bounded buffering", () => {

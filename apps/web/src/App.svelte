@@ -158,6 +158,8 @@
       statusEvents ??= createStatusEventClient({
         onWorktreeRemoved: removeWorktree,
         onWorkspaceUpdated: (workspace) => workspaceStore.upsert(workspace),
+        onWorkspaceOrderUpdated: (workspaceIds) =>
+          workspaceStore.applyOrder(workspaceIds),
         onSnapshot: () => {
           void workspaceStore.load();
           for (const workspaceId of Object.keys($worktreeStore.byWorkspace)) {
@@ -254,6 +256,18 @@
 
   function trackVisibleDiffWorktrees(ids: string[]): void {
     visibleDiffWorktreeIds = ids;
+  }
+
+  async function reorderWorkspaces(workspaceIds: string[]): Promise<void> {
+    workspaceActionError = "";
+    try {
+      await workspaceStore.reorder(workspaceIds);
+    } catch (error) {
+      workspaceActionError =
+        error instanceof Error
+          ? error.message
+          : "Unable to save workspace order.";
+    }
   }
 
   function openCreateWorktree(workspace: WorkspaceDto) {
@@ -593,6 +607,8 @@
               onSelect={selectWorkspace}
               onExpand={loadWorkspaceWorktrees}
               onVisibleWorktreesChange={trackVisibleDiffWorktrees}
+              reordering={$workspaceStore.reordering}
+              onReorder={reorderWorkspaces}
               onCreateWorktree={openCreateWorktree}
               onSelectWorktree={selectWorktree}
             />
