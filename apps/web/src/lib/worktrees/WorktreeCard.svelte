@@ -3,6 +3,7 @@
   import {
     AlertCircleIcon,
     ArrowReloadHorizontalIcon,
+    ArrowRight01Icon,
     ComputerTerminal01Icon,
     Delete02Icon,
   } from "@hugeicons/core-free-icons";
@@ -12,6 +13,7 @@
   import { Button } from "$lib/components/ui/button";
   import * as Card from "$lib/components/ui/card";
   import * as Collapsible from "$lib/components/ui/collapsible";
+  import { cn } from "$lib/utils.js";
   import HealthBadge from "../workspaces/HealthBadge.svelte";
   import { displayPath } from "../workspaces/display.js";
   import { healthLabel, worktreeHealthIssue } from "../workspaces/health.js";
@@ -51,21 +53,33 @@
             <button
               {...props}
               type="button"
-              class="min-w-0 flex-1 rounded-md text-left outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+              class="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
               aria-expanded={expanded}
               aria-controls={detailsId}
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${worktree.name} details`}
             >
-              <span class="block truncate font-medium">{worktree.name}</span>
-              <span
-                class="mt-0.5 flex min-w-0 items-center gap-2 text-sm text-muted-foreground"
-              >
-                <code class="truncate">{branchLabel}</code>
-                {#if worktree.dirty === true}
-                  <Badge variant="outline" class="shrink-0">Dirty</Badge>
-                {/if}
-                {#if worktree.lifecycle !== "ready"}
-                  <span class="shrink-0 capitalize">{worktree.lifecycle}</span>
-                {/if}
+              <HugeiconsIcon
+                icon={ArrowRight01Icon}
+                strokeWidth={2}
+                class={cn(
+                  "size-4 shrink-0 text-muted-foreground transition-transform",
+                  expanded && "rotate-90",
+                )}
+                aria-hidden="true"
+              />
+              <span class="min-w-0 flex-1">
+                <span class="block truncate font-medium">{worktree.name}</span>
+                <span
+                  class="mt-0.5 flex min-w-0 items-center gap-2 text-sm text-muted-foreground"
+                >
+                  <code class="truncate">{branchLabel}</code>
+                  {#if worktree.dirty === true}
+                    <Badge variant="outline" class="shrink-0">Dirty</Badge>
+                  {/if}
+                  {#if worktree.lifecycle !== "ready"}
+                    <span class="shrink-0 capitalize">{worktree.lifecycle}</span>
+                  {/if}
+                </span>
               </span>
             </button>
           {/snippet}
