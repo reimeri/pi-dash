@@ -2,44 +2,19 @@
   import type { WorkspaceDto, WorktreeDto } from "@pi-dash/contracts";
   import { onDestroy, onMount } from "svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
-  import {
-    Add01Icon,
-    AlertCircleIcon,
-    ArrowReloadHorizontalIcon,
-    Cancel01Icon,
-    CheckmarkCircle02Icon,
-    ComputerTerminal01Icon,
-    Delete02Icon,
-    Edit02Icon,
-    ExternalLinkIcon,
-    FolderGitIcon,
-    GitBranchIcon,
-    PlayIcon,
-    PlusMinus01Icon,
-    RefreshIcon,
-    StopIcon,
-  } from "@hugeicons/core-free-icons";
+  import { AlertCircleIcon } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
   import * as Alert from "$lib/components/ui/alert";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
-  import * as Card from "$lib/components/ui/card";
-  import * as Empty from "$lib/components/ui/empty";
-  import * as Popover from "$lib/components/ui/popover";
   import * as Resizable from "$lib/components/ui/resizable";
-  import { Separator } from "$lib/components/ui/separator";
-  import * as Sheet from "$lib/components/ui/sheet";
   import * as Sidebar from "$lib/components/ui/sidebar";
-  import { Spinner } from "$lib/components/ui/spinner";
-  import { cn } from "$lib/utils";
   import { ApiClientError, api } from "./api.js";
-  import DiffWorkspace from "./lib/diff/DiffWorkspace.svelte";
   import {
     createCoordinatedWorktreeDiffClient,
     createWorktreeDiffStore,
     createWorktreeDiffSummaryStore,
     syncSidebarDiffSummaries,
-    type WorktreeDiffState,
   } from "./lib/diff/store.js";
   import { IsMobile } from "./lib/hooks/is-mobile.svelte.js";
   import {
@@ -47,33 +22,24 @@
     reduceStartupState,
     type StartupState,
   } from "./connection.js";
-  import AddWorkspaceDialog from "./lib/workspaces/AddWorkspaceDialog.svelte";
-  import HealthBadge from "./lib/workspaces/HealthBadge.svelte";
-  import RemoveWorkspaceDialog from "./lib/workspaces/RemoveWorkspaceDialog.svelte";
-  import RenameWorkspaceDialog from "./lib/workspaces/RenameWorkspaceDialog.svelte";
-  import {
-    healthLabel,
-    repositoryHealthIssue,
-    worktreeHealthIssue,
-  } from "./lib/workspaces/health.js";
+  import DashboardDialogs from "./lib/dashboard/DashboardDialogs.svelte";
+  import DashboardHeader from "./lib/dashboard/DashboardHeader.svelte";
+  import DashboardMain from "./lib/dashboard/DashboardMain.svelte";
+  import RightPanelHost from "./lib/dashboard/RightPanelHost.svelte";
+  import StartupEmptyStates from "./lib/dashboard/StartupEmptyStates.svelte";
+  import { getStatusString } from "./lib/dashboard/status-label.js";
+  import NoWorkspaceSelected from "./lib/workspaces/NoWorkspaceSelected.svelte";
+  import WorkspaceDetail from "./lib/workspaces/WorkspaceDetail.svelte";
   import WorkspaceSidebar from "./lib/workspaces/WorkspaceSidebar.svelte";
   import WorkspaceSidebarAddButton from "./lib/workspaces/WorkspaceSidebarAddButton.svelte";
-  import WorkspaceSyncIndicator from "./lib/workspaces/WorkspaceSyncIndicator.svelte";
-  import WorkspaceSyncNotice from "./lib/workspaces/WorkspaceSyncNotice.svelte";
   import { workspaceStore } from "./lib/workspaces/store.js";
-  import { displayPath } from "./lib/workspaces/display.js";
-  import { syncStatusLabel } from "./lib/workspaces/sync.js";
   import type { TerminalControls } from "./lib/terminal/controls.js";
-  import LazyTerminalWorkspace from "./lib/terminal/LazyTerminalWorkspace.svelte";
-  import LazyShellTerminalWorkspace from "./lib/terminal/LazyShellTerminalWorkspace.svelte";
   import {
     createStatusEventClient,
     type StatusEventClient,
   } from "./lib/status/events.js";
   import { workflowStatusStore } from "./lib/status/store.js";
-  import CreateWorktreeDialog from "./lib/worktrees/CreateWorktreeDialog.svelte";
-  import DeleteBranchDialog from "./lib/worktrees/DeleteBranchDialog.svelte";
-  import RemoveWorktreeDialog from "./lib/worktrees/RemoveWorktreeDialog.svelte";
+  import { canOpenTerminal } from "./lib/worktrees/terminal-access.js";
   import { worktreeStore } from "./lib/worktrees/store.js";
 
   let startup: StartupState = initialStartupState;
@@ -309,10 +275,6 @@
     void refreshWorkspaceStatus(workspace.id);
   }
 
-  function canOpenTerminal(worktree: WorktreeDto): boolean {
-    return worktree.lifecycle === "ready" && worktree.health === "healthy";
-  }
-
   function selectWorktree(worktree: WorktreeDto) {
     if (!canOpenTerminal(worktree)) return;
     if (selectedWorktreeId !== worktree.id) setRightPanel("none");
@@ -356,23 +318,6 @@
   function closeShellPanel(): void {
     setRightPanel("none");
     requestAnimationFrame(() => shellTrigger?.focus());
-  }
-
-  function diffButtonLabel(state: WorktreeDiffState): string {
-    if (state.status === "loading" && !state.summary) return "Checking changes";
-    if (state.status === "error" && !state.summary) {
-      return "View changes; the latest change count is unavailable";
-    }
-    const summary = state.summary;
-    if (!summary?.hasChanges) return "View changes: no changes";
-    return `View changes: ${summary.additions} added lines, ${summary.deletions} deleted lines across ${summary.filesChanged} ${summary.filesChanged === 1 ? "file" : "files"}`;
-  }
-
-  function terminalInputStatus(controls: TerminalControls | undefined): string {
-    if (!controls || controls.socketState === "connecting") return "Connecting";
-    if (controls.socketState === "disconnected") return "Disconnected";
-    if (!controls.inputOwnerKnown) return "Negotiating";
-    return controls.inputOwner ? "Interactive" : "Observer only";
   }
 
   function handleTerminalControlsChange(
@@ -429,15 +374,6 @@
     }
   }
 
-  function getStatusString(status: string): string {
-    if (status === "connecting") return "Connecting";
-    if (status === "unauthorized") return "Unauthorized";
-    if (status === "migration-failed") return "Database setup failed";
-    if (status === "disconnected") return "Disconnected";
-    if (status === "ready") return "Connected";
-    return "";
-  }
-
   onMount(() => {
     void connect();
   });
@@ -458,191 +394,21 @@
   Skip to main content
 </a>
 <div class="grid h-dvh min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
-  <header class="flex h-13 items-center justify-between border-b bg-card px-4">
-    <div
-      class="flex items-center gap-2 text-sm font-medium"
-      aria-label="Pi Dash home"
-    >
-      <span
-        class="flex size-7 items-center justify-center rounded-lg border bg-background"
-        aria-hidden="true">π</span
-      >
-    </div>
-    <div class="flex min-w-0 items-center gap-2">
-      {#if diffAvailable}
-        <Button
-          variant={rightPanel === "diff" ? "secondary" : "outline"}
-          size={$diffStore.summary?.hasChanges ? "sm" : "icon-sm"}
-          aria-label={diffButtonLabel($diffStore)}
-          aria-expanded={rightPanel === "diff"}
-          aria-controls="worktree-diff-viewer"
-          title={diffButtonLabel($diffStore)}
-          onclick={() => toggleRightPanel("diff")}
-        >
-          {#if $diffStore.status === "loading" && !$diffStore.summary}
-            <Spinner />
-          {:else if $diffStore.summary?.hasChanges}
-            <span class="text-diff-addition"
-              >+{$diffStore.summary.additions}</span
-            >
-            <span class="text-diff-deletion"
-              >−{$diffStore.summary.deletions}</span
-            >
-          {:else}
-            <HugeiconsIcon icon={PlusMinus01Icon} strokeWidth={2} />
-          {/if}
-        </Button>
-      {/if}
-      {#if terminalOpen}
-        <Button
-          bind:ref={shellTrigger}
-          variant={rightPanel === "shell" ? "secondary" : "outline"}
-          size="icon-sm"
-          class="relative"
-          aria-label={rightPanel === "shell"
-            ? "Close shell terminal"
-            : "Open shell terminal"}
-          aria-expanded={rightPanel === "shell"}
-          aria-controls="worktree-shell-terminal"
-          title={rightPanel === "shell"
-            ? "Close shell terminal"
-            : "Open shell terminal"}
-          onclick={() => toggleRightPanel("shell")}
-        >
-          <HugeiconsIcon
-            icon={ComputerTerminal01Icon}
-            strokeWidth={2}
-            data-icon="inline-start"
-          />
-          {#if shellActivityPending}
-            <span
-              class="absolute top-1 right-1 size-1.5 rounded-full bg-primary"
-              aria-hidden="true"
-            ></span>
-          {/if}
-        </Button>
-        <Popover.Root bind:open={terminalMenuOpen}>
-          <Popover.Trigger>
-            {#snippet child({ props })}
-              <Button
-                {...props}
-                variant="outline"
-                size="sm"
-                aria-label="Terminal"
-              >
-                Status
-              </Button>
-            {/snippet}
-          </Popover.Trigger>
-          <Popover.Content
-            align="end"
-            class="w-80"
-            aria-label="Terminal controls"
-            onCloseAutoFocus={handleTerminalMenuCloseAutoFocus}
-          >
-            <Popover.Header>
-              <Popover.Title>Pi terminal status</Popover.Title>
-            </Popover.Header>
-            <div class="flex flex-col gap-3" aria-live="polite">
-              <div class="grid grid-cols-2 gap-2 text-sm">
-                <span class="text-muted-foreground">Runtime</span>
-                <Badge
-                  variant={terminalControls?.runtimeState === "running"
-                    ? "secondary"
-                    : terminalControls?.runtimeState === "crashed"
-                      ? "destructive"
-                      : "outline"}
-                >
-                  {terminalControls?.runtimeState ?? "starting"}
-                </Badge>
-                <span class="text-muted-foreground">Socket</span>
-                <Badge
-                  variant={terminalControls?.socketState === "connected"
-                    ? "secondary"
-                    : terminalControls?.socketState === "disconnected"
-                      ? "destructive"
-                      : "outline"}
-                >
-                  {terminalControls?.socketState ?? "connecting"}
-                </Badge>
-                <span class="text-muted-foreground">Input</span>
-                <Badge variant="secondary">
-                  {terminalInputStatus(terminalControls)}
-                </Badge>
-                <span class="text-muted-foreground">Workflow</span>
-                <Badge variant="secondary">
-                  {selectedWorkflowStatus?.state ?? "idle"}
-                </Badge>
-              </div>
-              <Separator />
-              <div class="flex flex-wrap gap-2">
-                {#if terminalControls?.runtimeState === "stopped" || terminalControls?.runtimeState === "crashed"}
-                  <Button
-                    size="sm"
-                    disabled={terminalControls.busy}
-                    onclick={() => terminalControls?.start()}
-                  >
-                    {#if terminalControls.busy}<Spinner
-                        data-icon="inline-start"
-                      />{:else}<HugeiconsIcon
-                        icon={PlayIcon}
-                        strokeWidth={2}
-                        data-icon="inline-start"
-                      />{/if}
-                    {terminalControls.busy ? "Starting…" : "Start"}
-                  </Button>
-                {:else}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!terminalControls || terminalControls.busy}
-                    onclick={() => terminalControls?.stop()}
-                  >
-                    {#if terminalControls?.busy}<Spinner
-                        data-icon="inline-start"
-                      />{:else}<HugeiconsIcon
-                        icon={StopIcon}
-                        strokeWidth={2}
-                        data-icon="inline-start"
-                      />{/if}
-                    {terminalControls?.busy ? "Stopping…" : "Stop"}
-                  </Button>
-                {/if}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!terminalControls || terminalControls.busy}
-                  onclick={() => terminalControls?.restart()}
-                >
-                  <HugeiconsIcon
-                    icon={ArrowReloadHorizontalIcon}
-                    strokeWidth={2}
-                    data-icon="inline-start"
-                  />
-                  Restart
-                </Button>
-                {#if selectedWorkflowStatus?.state === "done" && selectedWorktreeId}
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onclick={() =>
-                      acknowledgeWorkflow(selectedWorktreeId!, true)}
-                  >
-                    <HugeiconsIcon
-                      icon={CheckmarkCircle02Icon}
-                      strokeWidth={2}
-                      data-icon="inline-start"
-                    />
-                    Acknowledge done
-                  </Button>
-                {/if}
-              </div>
-            </div>
-          </Popover.Content>
-        </Popover.Root>
-      {/if}
-    </div>
-  </header>
+  <DashboardHeader
+    {diffAvailable}
+    {terminalOpen}
+    {rightPanel}
+    diffState={$diffStore}
+    {terminalControls}
+    {selectedWorkflowStatus}
+    {selectedWorktreeId}
+    {shellActivityPending}
+    bind:terminalMenuOpen
+    bind:shellTrigger
+    onTogglePanel={toggleRightPanel}
+    onAcknowledge={acknowledgeWorkflow}
+    onTerminalMenuCloseAutoFocus={handleTerminalMenuCloseAutoFocus}
+  />
 
   <Sidebar.Provider
     class="min-h-0"
@@ -732,684 +498,120 @@
 
       <Resizable.PaneGroup direction="horizontal" class="min-h-0 flex-1">
         <Resizable.Pane class="flex min-h-0" minSize={30} order={1}>
-          <div
-            id="main-content"
-            bind:this={mainContent}
-            tabindex="-1"
-            data-testid="dashboard-shell"
-            class={cn(
-              "relative min-h-0 min-w-0 flex-1 overflow-y-auto bg-background",
-              terminalOpen ? "overflow-hidden p-0" : "p-6 md:p-10 lg:p-12",
-            )}
+          <DashboardMain
+            {terminalOpen}
+            {selectedWorktree}
+            workspaceName={selectedWorkspace?.name ?? ""}
+            {terminalCacheSize}
+            {terminalMaxFrameBytes}
+            {liveTerminalWorktreeIds}
+            {workspaceActionError}
+            bind:mainContent
+            onControlsChange={handleTerminalControlsChange}
+            onAcknowledge={acknowledgeWorkflow}
+            onDismissError={() => (workspaceActionError = "")}
           >
-            <div class="absolute left-4 top-4 z-10 md:hidden">
-              <Sidebar.Trigger />
-            </div>
-            <LazyTerminalWorkspace
-              selected={terminalOpen ? selectedWorktree : undefined}
-              workspaceName={selectedWorkspace?.name ?? ""}
-              cacheSize={terminalCacheSize}
-              maxFrameBytes={terminalMaxFrameBytes}
-              {liveTerminalWorktreeIds}
-              onControlsChange={handleTerminalControlsChange}
-              onAcknowledge={acknowledgeWorkflow}
-            />
-
-            {#if workspaceActionError}
-              <Alert.Root
-                variant="destructive"
-                class="absolute right-4 top-4 z-10 max-w-md"
-                role="alert"
-              >
-                <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} />
-                <Alert.Title>Unable to complete action</Alert.Title>
-                <Alert.Description>{workspaceActionError}</Alert.Description>
-                <Alert.Action>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Dismiss error"
-                    onclick={() => (workspaceActionError = "")}
-                  >
-                    <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
-                  </Button>
-                </Alert.Action>
-              </Alert.Root>
-            {/if}
-
-            {#if terminalOpen}
-              <!-- The terminal workspace above owns the entire main content area. -->
-            {:else if startup.status === "unauthorized"}
-              <Empty.Root class="mx-auto h-full max-w-lg">
-                <Empty.Header>
-                  <Empty.Media variant="icon"
-                    ><HugeiconsIcon
-                      icon={ExternalLinkIcon}
-                      strokeWidth={2}
-                    /></Empty.Media
-                  >
-                  <Empty.Title role="heading" aria-level={2}
-                    >Open Pi Dash from its launch link</Empty.Title
-                  >
-                  <Empty.Description
-                    >Return to the terminal running Pi Dash and open the
-                    one-time URL it printed.</Empty.Description
-                  >
-                </Empty.Header>
-              </Empty.Root>
-            {:else if startup.status === "connecting"}
-              <Empty.Root class="mx-auto h-full max-w-lg">
-                <Empty.Header>
-                  <Empty.Media variant="icon"><Spinner /></Empty.Media>
-                  <Empty.Title role="heading" aria-level={2}
-                    >Connecting to your local daemon</Empty.Title
-                  >
-                  <Empty.Description
-                    >Pi Dash is checking its database and secure browser
-                    session.</Empty.Description
-                  >
-                </Empty.Header>
-              </Empty.Root>
-            {:else if startup.status === "disconnected" || startup.status === "migration-failed"}
-              <Empty.Root class="mx-auto h-full max-w-lg">
-                <Empty.Header>
-                  <Empty.Media variant="icon"
-                    ><HugeiconsIcon
-                      icon={AlertCircleIcon}
-                      strokeWidth={2}
-                    /></Empty.Media
-                  >
-                  <Empty.Title role="heading" aria-level={2}
-                    >{startup.status === "migration-failed"
-                      ? "Database setup failed"
-                      : "The local daemon is disconnected"}</Empty.Title
-                  >
-                  <Empty.Description
-                    >Use the diagnostic above to recover without changing
-                    repository files.</Empty.Description
-                  >
-                </Empty.Header>
-              </Empty.Root>
+            {#if startup.status === "unauthorized" || startup.status === "connecting" || startup.status === "disconnected" || startup.status === "migration-failed"}
+              <StartupEmptyStates {startup} />
             {:else if selectedWorkspace}
-              {@const repositoryIssue = repositoryHealthIssue(
-                selectedWorkspace.repository.health,
-              )}
-              <section
-                class="mx-auto flex w-full max-w-5xl flex-col gap-6"
-                aria-labelledby="workspace-title"
-              >
-                <header
-                  class="flex flex-col justify-between gap-4 sm:flex-row sm:items-start"
-                >
-                  <div class="min-w-0">
-                    <Badge variant="outline">Workspace</Badge>
-                    <h2
-                      id="workspace-title"
-                      class="mt-3 flex items-center gap-2 text-2xl font-semibold tracking-tight"
-                    >
-                      <span class="min-w-0 truncate"
-                        >{selectedWorkspace.name}</span
-                      >
-                      <WorkspaceSyncIndicator
-                        status={selectedWorkspace.repository.syncStatus}
-                      />
-                      {#if refreshingId === selectedWorkspace.id}
-                        <Spinner
-                          class="size-4 text-muted-foreground"
-                          aria-label="Refreshing sync status"
-                        />
-                      {/if}
-                    </h2>
-                    <p
-                      class="mt-1 break-all font-mono text-sm text-muted-foreground"
-                    >
-                      {displayPath(selectedWorkspace.repositoryPath)}
-                    </p>
-                  </div>
-                  <div class="flex gap-2">
-                    <Button
-                      variant="outline"
-                      onclick={() => (renameTarget = selectedWorkspace)}
-                    >
-                      <HugeiconsIcon
-                        icon={Edit02Icon}
-                        strokeWidth={2}
-                        data-icon="inline-start"
-                      />Rename
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      onclick={() => (removeTarget = selectedWorkspace)}
-                    >
-                      <HugeiconsIcon
-                        icon={Delete02Icon}
-                        strokeWidth={2}
-                        data-icon="inline-start"
-                      />Remove
-                    </Button>
-                  </div>
-                </header>
-
-                {#if selectedWorkspace.repository.health === "healthy"}
-                  <WorkspaceSyncNotice
-                    status={selectedWorkspace.repository.syncStatus}
-                    syncing={syncingIds.has(selectedWorkspace.id)}
-                    onSync={() => syncWorkspace(selectedWorkspace)}
-                  />
-                {/if}
-
-                <Card.Root>
-                  <Card.Header>
-                    <div>
-                      <Card.Title
-                        >{selectedWorkspace.repository.health === "healthy"
-                          ? "Repository ready"
-                          : "Repository needs attention"}</Card.Title
-                      >
-                      <Card.Description
-                        >Repository health and recorded workspace details.</Card.Description
-                      >
-                    </div>
-                    <Card.Action>
-                      <HealthBadge
-                        label={healthLabel(selectedWorkspace.repository.health)}
-                        subject="Repository"
-                        issue={repositoryIssue}
-                        details={[
-                          {
-                            label: "Path",
-                            value: displayPath(
-                              selectedWorkspace.repositoryPath,
-                            ),
-                          },
-                          ...(selectedWorkspace.repository.checkedAt
-                            ? [
-                                {
-                                  label: "Checked",
-                                  value: new Date(
-                                    selectedWorkspace.repository.checkedAt,
-                                  ).toLocaleString(),
-                                },
-                              ]
-                            : []),
-                        ]}
-                      />
-                    </Card.Action>
-                  </Card.Header>
-                  <Card.Content>
-                    <dl class="grid gap-4 sm:grid-cols-2">
-                      <div class="min-w-0">
-                        <dt class="text-sm text-muted-foreground">Branch</dt>
-                        <dd class="truncate text-sm font-medium">
-                          {selectedWorkspace.repository.currentBranch ??
-                            "Detached or unborn HEAD"}
-                        </dd>
-                      </div>
-                      <div class="min-w-0">
-                        <dt class="text-sm text-muted-foreground">HEAD</dt>
-                        <dd class="truncate font-mono text-sm">
-                          {selectedWorkspace.repository.headCommit?.slice(
-                            0,
-                            12,
-                          ) ?? "No commit"}
-                        </dd>
-                      </div>
-                      <div class="min-w-0">
-                        <dt class="text-sm text-muted-foreground">Upstream</dt>
-                        <dd class="truncate text-sm font-medium">
-                          {syncStatusLabel(
-                            selectedWorkspace.repository.syncStatus,
-                          )}
-                        </dd>
-                      </div>
-                      <div class="min-w-0">
-                        <dt class="text-sm text-muted-foreground">Checked</dt>
-                        <dd class="truncate text-sm">
-                          {selectedWorkspace.repository.checkedAt
-                            ? new Date(
-                                selectedWorkspace.repository.checkedAt,
-                              ).toLocaleString()
-                            : "Not checked"}
-                        </dd>
-                      </div>
-                      <div class="min-w-0">
-                        <dt class="text-sm text-muted-foreground">
-                          Workspace slug
-                        </dt>
-                        <dd class="truncate font-mono text-sm">
-                          {selectedWorkspace.slug}
-                        </dd>
-                      </div>
-                    </dl>
-                  </Card.Content>
-                  <Card.Footer
-                    class="flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    {#if selectedWorkspace.repository.health === "healthy"}
-                      <Button
-                        disabled={syncingIds.has(selectedWorkspace.id)}
-                        onclick={() => syncWorkspace(selectedWorkspace)}
-                      >
-                        {#if syncingIds.has(selectedWorkspace.id)}<Spinner
-                            data-icon="inline-start"
-                          />{:else}<HugeiconsIcon
-                            icon={RefreshIcon}
-                            strokeWidth={2}
-                            data-icon="inline-start"
-                          />{/if}
-                        {syncingIds.has(selectedWorkspace.id)
-                          ? "Syncing…"
-                          : "Sync workspace"}
-                      </Button>
-                    {:else}
-                      <p class="text-sm text-muted-foreground">
-                        The record remains registered. Retry after restoring
-                        access, or remove only its Pi Dash metadata.
-                      </p>
-                      <Button
-                        disabled={refreshingId === selectedWorkspace.id}
-                        onclick={() => refresh(selectedWorkspace)}
-                      >
-                        {#if refreshingId === selectedWorkspace.id}<Spinner
-                            data-icon="inline-start"
-                          />{:else}<HugeiconsIcon
-                            icon={RefreshIcon}
-                            strokeWidth={2}
-                            data-icon="inline-start"
-                          />{/if}
-                        {refreshingId === selectedWorkspace.id
-                          ? "Checking…"
-                          : "Retry health check"}
-                      </Button>
-                    {/if}
-                  </Card.Footer>
-                </Card.Root>
-
-                <Separator />
-                <section
-                  class="flex flex-col gap-4"
-                  aria-labelledby="worktree-heading"
-                >
-                  <div
-                    class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"
-                  >
-                    <div>
-                      <h3 id="worktree-heading" class="text-lg font-semibold">
-                        Isolated branches
-                      </h3>
-                      <p class="text-sm text-muted-foreground">
-                        Managed worktrees
-                      </p>
-                    </div>
-                    <div class="flex gap-2">
-                      <Button
-                        variant="outline"
-                        disabled={reconciling}
-                        onclick={reconcileWorktrees}
-                      >
-                        {#if reconciling}<Spinner
-                            data-icon="inline-start"
-                          />{:else}<HugeiconsIcon
-                            icon={ArrowReloadHorizontalIcon}
-                            strokeWidth={2}
-                            data-icon="inline-start"
-                          />{/if}
-                        {reconciling ? "Reconciling…" : "Reconcile"}
-                      </Button>
-                      <Button
-                        disabled={selectedWorkspace.repository.health !==
-                          "healthy"}
-                        onclick={() => openCreateWorktree(selectedWorkspace)}
-                      >
-                        <HugeiconsIcon
-                          icon={Add01Icon}
-                          strokeWidth={2}
-                          data-icon="inline-start"
-                        />Create worktree
-                      </Button>
-                    </div>
-                  </div>
-                  {#if $worktreeStore.loadingByWorkspace[selectedWorkspace.id] && selectedWorktrees.length === 0}
-                    <div
-                      class="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"
-                      role="status"
-                    >
-                      <Spinner aria-hidden="true" />Loading managed worktrees…
-                    </div>
-                  {:else if $worktreeStore.errorsByWorkspace[selectedWorkspace.id]}
-                    <Alert.Root variant="destructive" role="alert"
-                      ><HugeiconsIcon
-                        icon={AlertCircleIcon}
-                        strokeWidth={2}
-                      /><Alert.Description
-                        >{$worktreeStore.errorsByWorkspace[
-                          selectedWorkspace.id
-                        ]}</Alert.Description
-                      ></Alert.Root
-                    >
-                  {:else if selectedWorktrees.length === 0}
-                    <Empty.Root class="border">
-                      <Empty.Header>
-                        <Empty.Media variant="icon"
-                          ><HugeiconsIcon
-                            icon={GitBranchIcon}
-                            strokeWidth={2}
-                          /></Empty.Media
-                        >
-                        <Empty.Title role="heading" aria-level={3}
-                          >No managed worktrees</Empty.Title
-                        >
-                        <Empty.Description
-                          >Create an isolated branch and linked worktree from an
-                          exact local commit.</Empty.Description
-                        >
-                      </Empty.Header>
-                    </Empty.Root>
-                  {:else}
-                    <div class="grid gap-4 md:grid-cols-2">
-                      {#each selectedWorktrees as worktree (worktree.id)}
-                        {@const worktreeIssue = worktreeHealthIssue(
-                          worktree.health,
-                          worktree.lifecycle,
-                        )}
-                        <Card.Root
-                          role="article"
-                          aria-label={worktree.name}
-                          data-testid="worktree-card"
-                          data-worktree-id={worktree.id}
-                        >
-                          <Card.Header>
-                            <div class="min-w-0">
-                              <Card.Title>{worktree.name}</Card.Title>
-                              <Card.Description
-                                >{worktree.lifecycle}</Card.Description
-                              >
-                            </div>
-                            <Card.Action>
-                              <HealthBadge
-                                label={healthLabel(worktree.health)}
-                                subject="Worktree"
-                                issue={worktreeIssue}
-                                details={[
-                                  {
-                                    label: "Path",
-                                    value: displayPath(worktree.path),
-                                  },
-                                  {
-                                    label: "Lifecycle",
-                                    value: worktree.lifecycle,
-                                  },
-                                ]}
-                                lastError={worktree.lastError}
-                              />
-                            </Card.Action>
-                          </Card.Header>
-                          <Card.Content class="flex flex-col gap-3">
-                            <code class="truncate text-sm"
-                              >{worktree.branchRef}</code
-                            >
-                            <p
-                              data-testid="worktree-path"
-                              class="break-all font-mono text-xs text-muted-foreground"
-                            >
-                              {displayPath(worktree.path)}
-                            </p>
-                            <dl class="grid grid-cols-2 gap-3">
-                              <div>
-                                <dt class="text-xs text-muted-foreground">
-                                  Base
-                                </dt>
-                                <dd class="font-mono text-sm">
-                                  {worktree.baseCommit.slice(0, 12)}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt class="text-xs text-muted-foreground">
-                                  Changes
-                                </dt>
-                                <dd class="text-sm">
-                                  {worktree.dirty === true
-                                    ? "Dirty"
-                                    : worktree.dirty === false
-                                      ? "Clean"
-                                      : "Unknown"}
-                                </dd>
-                              </div>
-                            </dl>
-                            {#if worktree.lastError}
-                              <Alert.Root variant="destructive" role="status"
-                                ><HugeiconsIcon
-                                  icon={AlertCircleIcon}
-                                  strokeWidth={2}
-                                /><Alert.Title
-                                  >{worktree.lastError.code}</Alert.Title
-                                ><Alert.Description
-                                  >{worktree.lastError
-                                    .message}</Alert.Description
-                                ></Alert.Root
-                              >
-                            {/if}
-                          </Card.Content>
-                          <Card.Footer class="flex-wrap gap-2">
-                            {#if worktree.lifecycle === "ready"}
-                              <Button
-                                disabled={!canOpenTerminal(worktree)}
-                                title={canOpenTerminal(worktree)
-                                  ? "Open Pi terminal"
-                                  : "Terminal unavailable until this worktree is healthy"}
-                                onclick={() => selectWorktree(worktree)}
-                              >
-                                <HugeiconsIcon
-                                  icon={ComputerTerminal01Icon}
-                                  strokeWidth={2}
-                                  data-icon="inline-start"
-                                />Open Pi
-                              </Button>
-                              <Button
-                                variant="destructive"
-                                class="ml-auto"
-                                onclick={() =>
-                                  (removeWorktreeTarget = worktree)}
-                              >
-                                <HugeiconsIcon
-                                  icon={Delete02Icon}
-                                  strokeWidth={2}
-                                  data-icon="inline-start"
-                                />Remove
-                              </Button>
-                            {:else if worktree.lifecycle === "removed"}
-                              <Button
-                                variant="destructive"
-                                onclick={() => (deleteBranchTarget = worktree)}
-                              >
-                                <HugeiconsIcon
-                                  icon={Delete02Icon}
-                                  strokeWidth={2}
-                                  data-icon="inline-start"
-                                />Delete merged branch
-                              </Button>
-                            {:else}
-                              <Button
-                                variant="outline"
-                                onclick={reconcileWorktrees}
-                              >
-                                <HugeiconsIcon
-                                  icon={ArrowReloadHorizontalIcon}
-                                  strokeWidth={2}
-                                  data-icon="inline-start"
-                                />Inspect and reconcile
-                              </Button>
-                            {/if}
-                          </Card.Footer>
-                        </Card.Root>
-                      {/each}
-                    </div>
-                  {/if}
-                </section>
-              </section>
+              <WorkspaceDetail
+                workspace={selectedWorkspace}
+                worktrees={selectedWorktrees}
+                worktreeLoading={!!$worktreeStore.loadingByWorkspace[
+                  selectedWorkspace.id
+                ]}
+                worktreeError={$worktreeStore.errorsByWorkspace[
+                  selectedWorkspace.id
+                ]}
+                refreshing={refreshingId === selectedWorkspace.id}
+                syncing={syncingIds.has(selectedWorkspace.id)}
+                {reconciling}
+                onRename={() => (renameTarget = selectedWorkspace)}
+                onRemove={() => (removeTarget = selectedWorkspace)}
+                onSync={() => syncWorkspace(selectedWorkspace)}
+                onRefresh={() => refresh(selectedWorkspace)}
+                onReconcile={reconcileWorktrees}
+                onCreateWorktree={() => openCreateWorktree(selectedWorkspace)}
+                onOpenWorktree={selectWorktree}
+                onRemoveWorktree={(worktree) =>
+                  (removeWorktreeTarget = worktree)}
+                onDeleteBranch={(worktree) => (deleteBranchTarget = worktree)}
+              />
             {:else}
-              <Empty.Root class="mx-auto h-full max-w-lg">
-                <Empty.Header>
-                  <Empty.Media variant="icon"
-                    ><HugeiconsIcon
-                      icon={FolderGitIcon}
-                      strokeWidth={2}
-                    /></Empty.Media
-                  >
-                  <Empty.Title role="heading" aria-level={2}
-                    >{$workspaceStore.workspaces.length > 0
-                      ? "Select a workspace"
-                      : "Add a workspace to get started"}</Empty.Title
-                  >
-                  <Empty.Description>
-                    {$workspaceStore.workspaces.length > 0
-                      ? "Choose a workspace for repository details, or expand it to open a managed worktree terminal."
-                      : "Register an existing Git repository. Pi Dash validates it without modifying repository contents."}
-                  </Empty.Description>
-                </Empty.Header>
-                {#if $workspaceStore.workspaces.length === 0}
-                  <Empty.Content
-                    ><Button onclick={() => (showAdd = true)}
-                      ><HugeiconsIcon
-                        icon={Add01Icon}
-                        strokeWidth={2}
-                        data-icon="inline-start"
-                      />Add workspace</Button
-                    ></Empty.Content
-                  >
-                {/if}
-              </Empty.Root>
+              <NoWorkspaceSelected
+                hasWorkspaces={$workspaceStore.workspaces.length > 0}
+                onAdd={() => (showAdd = true)}
+              />
             {/if}
-          </div>
+          </DashboardMain>
         </Resizable.Pane>
-        {#if terminalOpen && rightPanel !== "none" && selectedWorktree && !isMobile.current}
-          <Resizable.Handle withHandle />
-          <Resizable.Pane
-            class="min-h-0"
-            defaultSize={45}
-            minSize={30}
-            maxSize={70}
-            order={2}
-          >
-            {#if rightPanel === "diff"}
-              <DiffWorkspace
-                worktree={selectedWorktree}
-                state={$diffStore}
-                onRefresh={diffStore.refresh}
-                onClose={() => setRightPanel("none")}
-              />
-            {:else}
-              <LazyShellTerminalWorkspace
-                worktree={selectedWorktree}
-                workspaceName={selectedWorkspace?.name ?? ""}
-                maxFrameBytes={terminalMaxFrameBytes}
-                onClose={closeShellPanel}
-              />
-            {/if}
-          </Resizable.Pane>
+        {#if !isMobile.current}
+          <RightPanelHost
+            surface="desktop"
+            {terminalOpen}
+            {rightPanel}
+            {selectedWorktree}
+            workspaceName={selectedWorkspace?.name ?? ""}
+            {terminalMaxFrameBytes}
+            diffState={$diffStore}
+            onRefreshDiff={diffStore.refresh}
+            onCloseDiff={() => setRightPanel("none")}
+            onCloseShell={closeShellPanel}
+            onClosePanel={() => setRightPanel("none")}
+          />
         {/if}
       </Resizable.PaneGroup>
-
-      {#if terminalOpen && selectedWorktree && isMobile.current}
-        <Sheet.Root
-          open={rightPanel !== "none"}
-          onOpenChange={(open) => {
-            if (!open) {
-              if (rightPanel === "shell") closeShellPanel();
-              else setRightPanel("none");
-            }
-          }}
-        >
-          <Sheet.Content
-            side="right"
-            showCloseButton={false}
-            class="w-[calc(100%-1rem)] p-0"
-          >
-            <Sheet.Header class="sr-only">
-              <Sheet.Title>
-                {rightPanel === "diff" ? "Worktree changes" : "Shell terminal"}
-              </Sheet.Title>
-              <Sheet.Description>
-                {rightPanel === "diff"
-                  ? "Unified diff against the selected worktree branch’s newest commit."
-                  : "Interactive shell in the selected managed worktree."}
-              </Sheet.Description>
-            </Sheet.Header>
-            {#if rightPanel === "diff"}
-              <DiffWorkspace
-                worktree={selectedWorktree}
-                state={$diffStore}
-                onRefresh={diffStore.refresh}
-                onClose={() => setRightPanel("none")}
-              />
-            {:else if rightPanel === "shell"}
-              <LazyShellTerminalWorkspace
-                worktree={selectedWorktree}
-                workspaceName={selectedWorkspace?.name ?? ""}
-                maxFrameBytes={terminalMaxFrameBytes}
-                onClose={closeShellPanel}
-              />
-            {/if}
-          </Sheet.Content>
-        </Sheet.Root>
+      {#if isMobile.current}
+        <RightPanelHost
+          surface="mobile"
+          {terminalOpen}
+          {rightPanel}
+          {selectedWorktree}
+          workspaceName={selectedWorkspace?.name ?? ""}
+          {terminalMaxFrameBytes}
+          diffState={$diffStore}
+          onRefreshDiff={diffStore.refresh}
+          onCloseDiff={() => setRightPanel("none")}
+          onCloseShell={closeShellPanel}
+          onClosePanel={() => setRightPanel("none")}
+        />
       {/if}
     </Sidebar.Inset>
   </Sidebar.Provider>
 </div>
 
-{#if showAdd}
-  <AddWorkspaceDialog
-    nativeAvailable={nativeDialogAvailable}
-    onClose={() => (showAdd = false)}
-    onCreated={upsert}
-    onExisting={focusExisting}
-  />
-{/if}
-{#if renameTarget}
-  <RenameWorkspaceDialog
-    workspace={renameTarget}
-    onClose={() => (renameTarget = undefined)}
-    onRenamed={upsert}
-  />
-{/if}
-{#if removeTarget}
-  <RemoveWorkspaceDialog
-    workspace={removeTarget}
-    fallbackFocus={mainContent}
-    onClose={() => (removeTarget = undefined)}
-    onRemoved={removeWorkspace}
-  />
-{/if}
-{#if createWorktreeWorkspace}
-  {@const createTarget = createWorktreeWorkspace}
-  <CreateWorktreeDialog
-    workspace={createTarget}
-    syncing={syncingIds.has(createTarget.id)}
-    onSync={() => syncWorkspace(createTarget)}
-    onClose={() => (createWorktreeWorkspaceId = undefined)}
-    onCreated={upsertWorktree}
-  />
-{/if}
-{#if removeWorktreeTarget}
-  <RemoveWorktreeDialog
-    worktree={removeWorktreeTarget}
-    fallbackFocus={mainContent}
-    onClose={() => (removeWorktreeTarget = undefined)}
-    onRemoved={(result) => {
-      if (result.outcome === "removed_with_branch_cleanup") {
-        upsertWorktree(result.worktree);
-      } else {
-        removeWorktree(result.workspaceId, result.worktreeId);
-      }
-    }}
-  />
-{/if}
-{#if deleteBranchTarget && selectedWorkspace}
-  <DeleteBranchDialog
-    workspace={selectedWorkspace}
-    worktree={deleteBranchTarget}
-    fallbackFocus={mainContent}
-    onClose={() => (deleteBranchTarget = undefined)}
-    onDeleted={removeWorktree}
-  />
-{/if}
+<DashboardDialogs
+  {showAdd}
+  {nativeDialogAvailable}
+  {renameTarget}
+  {removeTarget}
+  {createWorktreeWorkspace}
+  createWorktreeSyncing={!!createWorktreeWorkspace &&
+    syncingIds.has(createWorktreeWorkspace.id)}
+  {removeWorktreeTarget}
+  {deleteBranchTarget}
+  {selectedWorkspace}
+  {mainContent}
+  onCloseAdd={() => (showAdd = false)}
+  onCreatedWorkspace={upsert}
+  onExistingWorkspace={focusExisting}
+  onCloseRename={() => (renameTarget = undefined)}
+  onRenamedWorkspace={upsert}
+  onCloseRemove={() => (removeTarget = undefined)}
+  onRemovedWorkspace={removeWorkspace}
+  onCloseCreateWorktree={() => (createWorktreeWorkspaceId = undefined)}
+  onSyncCreateWorktree={() => {
+    if (createWorktreeWorkspace) void syncWorkspace(createWorktreeWorkspace);
+  }}
+  onCreatedWorktree={upsertWorktree}
+  onCloseRemoveWorktree={() => (removeWorktreeTarget = undefined)}
+  onRemovedWorktree={(result) => {
+    if (result.outcome === "removed_with_branch_cleanup") {
+      upsertWorktree(result.worktree);
+    } else {
+      removeWorktree(result.workspaceId, result.worktreeId);
+    }
+  }}
+  onCloseDeleteBranch={() => (deleteBranchTarget = undefined)}
+  onDeletedBranch={removeWorktree}
+/>
