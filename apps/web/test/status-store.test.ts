@@ -21,7 +21,7 @@ const status: WorkflowStatusDto = {
 
 function snapshot(): ApplicationEventsServerFrame {
   return {
-    v: 5,
+    v: 6,
     type: "snapshot",
     cursor: 4,
     statuses: [status],
@@ -37,6 +37,7 @@ function snapshot(): ApplicationEventsServerFrame {
         attachedClients: 0,
       },
     ],
+    shellActivities: [],
     workspaceAttention: [],
   };
 }
@@ -62,7 +63,7 @@ describe("workflow status store", () => {
       snapshot(),
     ).state;
     const working = reduceWorkflowStatusState(initialized, {
-      v: 5,
+      v: 6,
       type: "status",
       cursor: 5,
       status: { ...status, state: "working", reason: "agent", revision: 1 },
@@ -71,7 +72,7 @@ describe("workflow status store", () => {
     expect(working.state.byWorktree[status.worktreeId]?.state).toBe("working");
     expect(
       reduceWorkflowStatusState(working.state, {
-        v: 5,
+        v: 6,
         type: "status",
         cursor: 7,
         status: { ...status, state: "done", reason: "settled", revision: 2 },
@@ -80,13 +81,33 @@ describe("workflow status store", () => {
     ).toBe(true);
   });
 
+  it("tracks shell foreground activity from ordered events", () => {
+    const initialized = reduceWorkflowStatusState(
+      initialWorkflowStatusState,
+      snapshot(),
+    ).state;
+    const activity = {
+      worktreeId: status.worktreeId,
+      runtimeId: "33333333-3333-4333-8333-333333333333",
+      foregroundCommandActive: true,
+      changedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    const active = reduceWorkflowStatusState(initialized, {
+      v: 6,
+      type: "shellActivity",
+      cursor: 5,
+      activity,
+    });
+    expect(active.state.shellActivities[status.worktreeId]).toEqual(activity);
+  });
+
   it("evicts deleted worktree status and runtime state", () => {
     const initialized = reduceWorkflowStatusState(
       initialWorkflowStatusState,
       snapshot(),
     ).state;
     const removed = reduceWorkflowStatusState(initialized, {
-      v: 5,
+      v: 6,
       type: "worktreeRemoved",
       cursor: 5,
       worktreeId: status.worktreeId,
@@ -112,7 +133,7 @@ describe("workflow status store", () => {
     ).state;
     const workspaceId = "22222222-2222-4222-8222-222222222222";
     const next = reduceWorkflowStatusState(initialized, {
-      v: 5,
+      v: 6,
       type: "status",
       cursor: 5,
       status: {

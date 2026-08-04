@@ -264,4 +264,27 @@ export const api = {
       RestartRuntimeResponseSchema,
       { method: "POST", body: {}, idempotencyKey },
     ),
+  shellTerminal: (worktreeId: string) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/shell-terminal`,
+      RuntimeResponseSchema,
+    ),
+  startShellTerminal: (worktreeId: string) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/shell-terminal/start`,
+      RuntimeResponseSchema,
+      { method: "POST", body: {} },
+    ),
+  stopShellTerminal: (worktreeId: string) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/shell-terminal/stop`,
+      RuntimeResponseSchema,
+      { method: "POST", body: {} },
+    ),
+  restartShellTerminal: (worktreeId: string, idempotencyKey: string) =>
+    requestJson(
+      `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/shell-terminal/restart`,
+      RestartRuntimeResponseSchema,
+      { method: "POST", body: {}, idempotencyKey },
+    ),
 };

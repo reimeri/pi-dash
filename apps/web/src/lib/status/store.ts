@@ -1,6 +1,7 @@
 import type {
   ApplicationEventsServerFrame,
   RuntimeDto,
+  ShellActivityDto,
   WorkflowStatusDto,
   WorkspaceAttentionDto,
 } from "@pi-dash/contracts";
@@ -14,6 +15,7 @@ export interface WorkflowStatusState {
   channel: StatusChannelState;
   byWorktree: Record<string, WorkflowStatusDto>;
   runtimes: Record<string, RuntimeDto>;
+  shellActivities: Record<string, ShellActivityDto>;
   workspaceAttention: WorkspaceAttentionDto[];
 }
 
@@ -23,6 +25,7 @@ export const initialWorkflowStatusState: WorkflowStatusState = {
   channel: "connecting",
   byWorktree: {},
   runtimes: {},
+  shellActivities: {},
   workspaceAttention: [],
 };
 
@@ -46,12 +49,43 @@ export function reduceWorkflowStatusState(
         runtimes: Object.fromEntries(
           frame.runtimes.map((runtime) => [runtime.worktreeId, runtime]),
         ),
+        shellActivities: Object.fromEntries(
+          frame.shellActivities.map((activity) => [
+            activity.worktreeId,
+            activity,
+          ]),
+        ),
         workspaceAttention: frame.workspaceAttention,
       },
     };
   }
   if (!state.snapshotReceived || frame.cursor !== state.cursor + 1) {
     return { state, resyncRequired: true };
+  }
+  if (frame.type === "shellActivity") {
+    const current = state.shellActivities[frame.activity.worktreeId];
+    if (
+      current?.runtimeId &&
+      frame.activity.runtimeId &&
+      current.runtimeId !== frame.activity.runtimeId &&
+      current.changedAt > frame.activity.changedAt
+    ) {
+      return {
+        resyncRequired: false,
+        state: { ...state, cursor: frame.cursor },
+      };
+    }
+    return {
+      resyncRequired: false,
+      state: {
+        ...state,
+        cursor: frame.cursor,
+        shellActivities: {
+          ...state.shellActivities,
+          [frame.activity.worktreeId]: frame.activity,
+        },
+      },
+    };
   }
   if (frame.type === "status") {
     return {
@@ -79,8 +113,10 @@ export function reduceWorkflowStatusState(
   if (frame.type === "worktreeRemoved") {
     const byWorktree = { ...state.byWorktree };
     const runtimes = { ...state.runtimes };
+    const shellActivities = { ...state.shellActivities };
     delete byWorktree[frame.worktreeId];
     delete runtimes[frame.worktreeId];
+    delete shellActivities[frame.worktreeId];
     return {
       resyncRequired: false,
       state: {
@@ -88,6 +124,7 @@ export function reduceWorkflowStatusState(
         cursor: frame.cursor,
         byWorktree,
         runtimes,
+        shellActivities,
         workspaceAttention: frame.workspaceAttention,
       },
     };
@@ -134,6 +171,11 @@ export function createWorkflowStatusStore() {
         ),
         runtimes: Object.fromEntries(
           Object.entries(state.runtimes).filter(
+            ([worktreeId]) => !removed.has(worktreeId),
+          ),
+        ),
+        shellActivities: Object.fromEntries(
+          Object.entries(state.shellActivities).filter(
             ([worktreeId]) => !removed.has(worktreeId),
           ),
         ),

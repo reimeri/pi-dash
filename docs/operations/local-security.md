@@ -12,6 +12,8 @@ Pi Dash is a single-user local application, not a remote service.
 - Data ownership is protected by a kernel `flock`; stale lock metadata is ignored only after the process acquires the OS lock.
 - The Electron renderer is sandboxed without Node integration or DevTools. Navigation and new windows are denied outside the authenticated loopback origin; only clipboard writes from the main frame are permitted.
 - Electron spawns the daemon with the system Node.js executable, consumes the bootstrap URL without logging it, and sends SIGTERM on application shutdown.
+- The shell terminal is an intentional arbitrary-command surface for the local authenticated user. Its API selects only the managed worktree; the executable comes from the daemon user's validated `$SHELL` with `/bin/sh` fallback, and no API accepts command strings, executable paths, arguments, working directories, or environment overrides.
+- Shell environments remove every inherited `PI_DASH_*` credential. Foreground-command indicators use Linux process metadata and expose no command text, arguments, PID, or terminal content.
 
 The optional bootstrap output file contains a live secret. It is mode `0600`, should be used only by launch/test automation, and is removed during graceful shutdown. Anyone with the same Unix-account privileges can inspect this process and its files; Unix account isolation remains the outer trust boundary.
 

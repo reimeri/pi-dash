@@ -35,6 +35,7 @@ function fixture(
     childTree?: boolean;
     orphan?: boolean;
     statusFails?: boolean;
+    shell?: boolean;
   } = {},
 ) {
   chmodSync(fakePi, 0o755);
@@ -78,13 +79,21 @@ function fixture(
       return records.get(id)?.lifecycle === "ready" && !claims.has(id);
     },
   };
+  const pi = createPiResolver({
+    executable: fakePi,
+    minimumVersion: "0.83.0",
+    extensionPath,
+  });
+  const inheritedEnv = {
+    ...process.env,
+    PI_DASH_BOOTSTRAP_TOKEN: "must-not-leak",
+    ...(options.childChurn ? { FAKE_PI_CHILD_CHURN: "1" } : {}),
+    ...(options.childTree ? { FAKE_PI_CHILD_TREE: "1" } : {}),
+    ...(options.orphan ? { FAKE_PI_ORPHAN: "1" } : {}),
+  };
   const manager = createTerminalManager({
+    runtimeKind: options.shell ? "shell" : "pi",
     lifecycle,
-    pi: createPiResolver({
-      executable: fakePi,
-      minimumVersion: "0.83.0",
-      extensionPath,
-    }),
     getWorktree(id) {
       const record = records.get(id);
       if (!record) throw new Error("missing worktree");
@@ -96,19 +105,41 @@ function fixture(
         throw new Error("worktree not ready");
       return record;
     },
-    inheritedEnv: {
-      ...process.env,
-      PI_DASH_BOOTSTRAP_TOKEN: "must-not-leak",
-      ...(options.childChurn ? { FAKE_PI_CHILD_CHURN: "1" } : {}),
-      ...(options.childTree ? { FAKE_PI_CHILD_TREE: "1" } : {}),
-      ...(options.orphan ? { FAKE_PI_ORPHAN: "1" } : {}),
+    resolveLaunch: async ({ worktreeId, runtimeId, statusToken }) => {
+      const env = Object.fromEntries(
+        Object.entries(inheritedEnv).filter(
+          ([key, value]) => value !== undefined && !key.startsWith("PI_DASH_"),
+        ),
+      ) as Record<string, string>;
+      if (options.shell) {
+        return { executable: "/bin/sh", args: [], env };
+      }
+      const resolved = await pi.probe();
+      return {
+        executable: resolved.executable,
+        args: ["--extension", resolved.extensionPath],
+        env: {
+          ...env,
+          PI_DASH_STATUS_SOCKET: join(cwd, "status.sock"),
+          PI_DASH_RUNTIME_ID: runtimeId,
+          PI_DASH_WORKTREE_ID: worktreeId,
+          PI_DASH_STATUS_TOKEN: statusToken,
+        },
+      };
     },
-    runtimeDirectory: cwd,
+    processScope: options.shell ? "session" : "process-group",
     initialCols: 80,
     initialRows: 24,
     outputBufferBytes: 64 * 1024,
     maxSocketBufferedBytes: 1024 * 1024,
     stopGraceMs: 1_000,
+    ...(options.shell
+      ? {
+          onShellActivity() {
+            // The current value is exposed through manager.activities().
+          },
+        }
+      : {}),
     ...(options.statusFails
       ? {
           status: {
@@ -269,6 +300,40 @@ describe("terminal manager integration", () => {
     await new Promise((resolve) => setTimeout(resolve, 2_000));
     expect(manager.get(worktreeId).state).toBe("running");
     await manager.shutdown();
+  });
+
+  it("tracks foreground shell commands and keeps the shell alive without clients", async () => {
+    const { manager, records } = fixture({ shell: true });
+    const worktreeId = "11111111-1111-4111-8111-111111111111";
+    await manager.start(worktreeId);
+    const client = transport();
+    const detach = manager.attach(worktreeId, "owner", 0, client.socket);
+    const output = () =>
+      client.frames
+        .filter((frame) => frame.type === "output")
+        .map((frame) => frame.data)
+        .join("");
+
+    manager.input(worktreeId, "owner", "pwd\n");
+    await waitFor(() => output().includes(records.get(worktreeId)!.path));
+    manager.input(worktreeId, "owner", "sleep 30 & echo SHELL_BG:$!\n");
+    await waitFor(() => /SHELL_BG:\d+/.test(output()));
+    const backgroundPid = Number(output().match(/SHELL_BG:(\d+)/)![1]);
+    expect(existsSync(`/proc/${backgroundPid}`)).toBe(true);
+    expect(manager.activities()[0]?.foregroundCommandActive).toBe(false);
+
+    manager.input(worktreeId, "owner", "sleep 1\n");
+    await waitFor(
+      () => manager.activities()[0]?.foregroundCommandActive === true,
+    );
+    detach();
+    expect(manager.get(worktreeId).state).toBe("running");
+    await waitFor(
+      () => manager.activities()[0]?.foregroundCommandActive === false,
+      3_000,
+    );
+    await manager.shutdown();
+    await waitFor(() => !existsSync(`/proc/${backgroundPid}`));
   });
 
   it("keeps terminal startup and shutdown fail-open when status observers throw", async () => {

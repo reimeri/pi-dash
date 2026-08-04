@@ -77,10 +77,13 @@ export async function registerTerminalRoutes(
     worktrees: WorktreeService;
     auth: AuthService;
     maxFrameBytes: number;
+    routeSegment?: "terminal" | "shell-terminal";
   },
 ): Promise<void> {
+  const basePath = `/api/v1/worktrees/:id/${options.routeSegment ?? "terminal"}`;
+
   app.get<{ Params: WorktreeIdParams }>(
-    "/api/v1/worktrees/:id/terminal",
+    basePath,
     {
       schema: {
         params: WorktreeIdParamsSchema,
@@ -97,7 +100,7 @@ export async function registerTerminalRoutes(
   );
 
   app.post<{ Params: WorktreeIdParams; Body: Record<string, never> }>(
-    "/api/v1/worktrees/:id/terminal/start",
+    `${basePath}/start`,
     {
       schema: {
         params: WorktreeIdParamsSchema,
@@ -115,7 +118,7 @@ export async function registerTerminalRoutes(
   );
 
   app.post<{ Params: WorktreeIdParams; Body: Record<string, never> }>(
-    "/api/v1/worktrees/:id/terminal/stop",
+    `${basePath}/stop`,
     {
       schema: {
         params: WorktreeIdParamsSchema,
@@ -133,7 +136,7 @@ export async function registerTerminalRoutes(
   );
 
   app.post<{ Params: WorktreeIdParams; Body: Record<string, never> }>(
-    "/api/v1/worktrees/:id/terminal/restart",
+    `${basePath}/restart`,
     {
       schema: {
         params: WorktreeIdParamsSchema,
@@ -157,7 +160,7 @@ export async function registerTerminalRoutes(
   );
 
   app.get<{ Params: WorktreeIdParams }>(
-    "/api/v1/worktrees/:id/terminal/socket",
+    `${basePath}/socket`,
     {
       websocket: true,
       schema: { params: WorktreeIdParamsSchema },

@@ -4,8 +4,12 @@ import type { IPty } from "node-pty";
 export interface ProcessIdentity {
   pid: number;
   processGroup: number;
+  session: number;
+  foregroundProcessGroup: number;
   startTime: string;
 }
+
+export type ProcessScope = "process-group" | "session";
 
 export async function readProcessIdentity(
   pid: number,
@@ -18,16 +22,42 @@ export async function readProcessIdentity(
       .trim()
       .split(/\s+/);
     const processGroup = Number(fields[2]);
+    const session = Number(fields[3]);
+    const foregroundProcessGroup = Number(fields[5]);
     const startTime = fields[19];
-    if (!Number.isInteger(processGroup) || !startTime) return undefined;
-    return { pid, processGroup, startTime };
+    if (
+      !Number.isInteger(processGroup) ||
+      !Number.isInteger(session) ||
+      !Number.isInteger(foregroundProcessGroup) ||
+      !startTime
+    ) {
+      return undefined;
+    }
+    return {
+      pid,
+      processGroup,
+      session,
+      foregroundProcessGroup,
+      startTime,
+    };
   } catch {
     return undefined;
   }
 }
 
-async function scanProcessGroup(
-  processGroup: number,
+function inScope(
+  identity: ProcessIdentity,
+  leader: ProcessIdentity,
+  scope: ProcessScope,
+): boolean {
+  return scope === "session"
+    ? identity.session === leader.session
+    : identity.processGroup === leader.processGroup;
+}
+
+async function scanScope(
+  leader: ProcessIdentity,
+  scope: ProcessScope,
 ): Promise<ProcessIdentity[]> {
   if (process.platform !== "linux") return [];
   let entries: string[];
@@ -45,7 +75,7 @@ async function scanProcessGroup(
   );
   return identities.filter(
     (identity): identity is ProcessIdentity =>
-      identity !== undefined && identity.processGroup === processGroup,
+      identity !== undefined && inScope(identity, leader, scope),
   );
 }
 
@@ -79,6 +109,7 @@ async function readChildPids(pid: number): Promise<number[]> {
 async function scanTrackedDescendants(
   leader: ProcessIdentity,
   tracked: Map<number, ProcessIdentity>,
+  scope: ProcessScope,
 ): Promise<ProcessIdentity[]> {
   const roots = [leader.pid];
   for (const [pid, identity] of tracked) {
@@ -98,7 +129,7 @@ async function scanTrackedDescendants(
     ].filter((pid) => !visited.has(pid));
     const identities = await Promise.all(childPids.map(readProcessIdentity));
     for (const identity of identities) {
-      if (!identity || identity.processGroup !== leader.processGroup) continue;
+      if (!identity || !inScope(identity, leader, scope)) continue;
       found.push(identity);
       pending.push(identity.pid);
     }
@@ -110,7 +141,8 @@ async function identityIsAlive(identity: ProcessIdentity): Promise<boolean> {
   const current = await readProcessIdentity(identity.pid);
   return (
     current?.startTime === identity.startTime &&
-    current.processGroup === identity.processGroup
+    current.processGroup === identity.processGroup &&
+    current.session === identity.session
   );
 }
 
@@ -127,7 +159,8 @@ async function signalIdentity(
 }
 
 async function captureWithWitnesses(
-  processGroup: number,
+  leader: ProcessIdentity,
+  scope: ProcessScope,
   witnesses: readonly ProcessIdentity[],
   tracked: Map<number, ProcessIdentity>,
 ): Promise<boolean> {
@@ -138,37 +171,40 @@ async function captureWithWitnesses(
     return false;
   };
   if (!(await hasLivingWitness())) return false;
-  const members = await scanProcessGroup(processGroup);
+  const members = await scanScope(leader, scope);
   if (!(await hasLivingWitness())) return false;
   for (const identity of members) tracked.set(identity.pid, identity);
   return true;
 }
 
-export function captureOwnedProcessGroupMembers(
+export function captureOwnedProcessMembers(
   leader: ProcessIdentity,
   tracked: Map<number, ProcessIdentity>,
+  scope: ProcessScope = "process-group",
 ): Promise<boolean> {
-  return captureWithWitnesses(leader.processGroup, [leader], tracked);
+  return captureWithWitnesses(leader, scope, [leader], tracked);
 }
 
-export async function captureOwnedProcessGroupDescendants(
+export async function captureOwnedProcessDescendants(
   leader: ProcessIdentity,
   tracked: Map<number, ProcessIdentity>,
+  scope: ProcessScope = "process-group",
 ): Promise<boolean> {
   if (!(await identityIsAlive(leader))) return false;
-  const descendants = await scanTrackedDescendants(leader, tracked);
+  const descendants = await scanTrackedDescendants(leader, tracked, scope);
   if (!(await identityIsAlive(leader))) return false;
   for (const identity of descendants) tracked.set(identity.pid, identity);
   return true;
 }
 
-export async function stopOwnedProcessGroup(options: {
+export async function stopOwnedProcesses(options: {
   pty?: IPty;
   leader?: ProcessIdentity;
   tracked: Map<number, ProcessIdentity>;
   timeoutMs: number;
+  scope?: ProcessScope;
 }): Promise<boolean> {
-  const { pty, leader, tracked, timeoutMs } = options;
+  const { pty, leader, tracked, timeoutMs, scope = "process-group" } = options;
   if (process.platform !== "linux" || !leader) {
     if (!pty) return true;
     try {
@@ -198,9 +234,15 @@ export async function stopOwnedProcessGroup(options: {
     signal: NodeJS.Signals,
   ): Promise<ProcessIdentity[]> => {
     const witnesses = [...tracked.values()];
-    await captureWithWitnesses(leader.processGroup, witnesses, tracked);
+    await captureWithWitnesses(leader, scope, witnesses, tracked);
     const living = await livingMembers();
-    for (const identity of living) await signalIdentity(identity, signal);
+    // Signal children before the session/group leader so it remains a witness
+    // while all owned jobs are captured.
+    for (const identity of living.filter(({ pid }) => pid !== leader.pid)) {
+      await signalIdentity(identity, signal);
+    }
+    const currentLeader = living.find(({ pid }) => pid === leader.pid);
+    if (currentLeader) await signalIdentity(currentLeader, signal);
     return living;
   };
 
@@ -219,3 +261,9 @@ export async function stopOwnedProcessGroup(options: {
   await refreshAndSignal("SIGKILL");
   return (await livingMembers()).length === 0;
 }
+
+// Preserve focused names for existing process-group tests and callers.
+export const captureOwnedProcessGroupMembers = captureOwnedProcessMembers;
+export const captureOwnedProcessGroupDescendants =
+  captureOwnedProcessDescendants;
+export const stopOwnedProcessGroup = stopOwnedProcesses;

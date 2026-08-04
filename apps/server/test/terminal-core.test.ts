@@ -1,6 +1,20 @@
+import {
+  chmod,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createTerminalEnvironment } from "../src/terminal/environment.js";
+import {
+  createShellTerminalEnvironment,
+  createTerminalEnvironment,
+} from "../src/terminal/environment.js";
 import { OutputRing } from "../src/terminal/output-ring.js";
+import { resolveUserShell } from "../src/terminal/shell-resolver.js";
 import { parseTerminalClientFrame } from "../src/terminal/terminal-protocol.js";
 
 describe("terminal core contracts", () => {
@@ -52,6 +66,7 @@ describe("terminal core contracts", () => {
       },
       runtimeDirectory: "/run/user/1000/pi-dash",
       runtimeId: "runtime-id",
+      worktreeId: "worktree-id",
       statusToken: "new-token",
     });
     expect(env).toMatchObject({
@@ -73,5 +88,49 @@ describe("terminal core contracts", () => {
       "PI_DASH_STATUS_TOKEN",
       "PI_DASH_WORKTREE_ID",
     ]);
+  });
+
+  it("resolves a canonical executable shell and safely falls back", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-dash-shell-resolver-"));
+    try {
+      const executable = join(root, "shell");
+      const link = join(root, "shell-link");
+      const nonExecutable = join(root, "not-executable");
+      const missing = join(root, "missing");
+      await writeFile(executable, "#!/bin/sh\n", "utf8");
+      await chmod(executable, 0o755);
+      await symlink(executable, link);
+      await writeFile(nonExecutable, "#!/bin/sh\n", "utf8");
+      await chmod(nonExecutable, 0o644);
+
+      await expect(resolveUserShell({ SHELL: link }, missing)).resolves.toBe(
+        await realpath(executable),
+      );
+      await expect(
+        resolveUserShell({ SHELL: "relative-shell" }, executable),
+      ).resolves.toBe(await realpath(executable));
+      await expect(
+        resolveUserShell({ SHELL: nonExecutable }, executable),
+      ).resolves.toBe(await realpath(executable));
+      await expect(resolveUserShell({ SHELL: root }, missing)).rejects.toThrow(
+        /No executable user shell/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never exposes dashboard credentials to shell terminals", () => {
+    const env = createShellTerminalEnvironment({
+      HOME: "/home/test",
+      PATH: "/bin",
+      PI_DASH_STATUS_TOKEN: "secret",
+      PI_DASH_BOOTSTRAP_TOKEN: "secret",
+    });
+    expect(env.HOME).toBe("/home/test");
+    expect(env.PATH).toBe("/bin");
+    expect(Object.keys(env).some((key) => key.startsWith("PI_DASH_"))).toBe(
+      false,
+    );
   });
 });
