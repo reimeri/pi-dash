@@ -2,7 +2,6 @@
   import type { WorktreeDto } from "@pi-dash/contracts";
   import {
     AlertCircleIcon,
-    Cancel01Icon,
     FileEditIcon,
     RefreshIcon,
   } from "@hugeicons/core-free-icons";

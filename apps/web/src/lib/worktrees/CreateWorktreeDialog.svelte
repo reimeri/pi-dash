@@ -6,7 +6,7 @@
   } from "@pi-dash/contracts";
   import { GitBranchIcon } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
-  import { onMount, tick } from "svelte";
+  import { afterUpdate, onMount, tick } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import * as Alert from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
@@ -41,15 +41,13 @@
     (ref) => `${ref.fullName}:${ref.commit}` === selectedKey,
   );
   $: branch = slug ? `pi-dash/${slug}` : "pi-dash/…";
-  $: if (
-    !loading &&
-    !saving &&
-    !syncing &&
-    workspace.repository.headCommit !== loadedHeadCommit
-  ) {
-    loadedHeadCommit = workspace.repository.headCommit;
+
+  afterUpdate(() => {
+    const headCommit = workspace.repository.headCommit;
+    if (loading || saving || syncing || headCommit === loadedHeadCommit) return;
+    loadedHeadCommit = headCommit;
     void loadRefs();
-  }
+  });
 
   function restoreFocus(): void {
     requestAnimationFrame(
@@ -99,7 +97,6 @@
         return true;
       });
       selectedKey = refs[0] ? `${refs[0].fullName}:${refs[0].commit}` : "";
-      loadedHeadCommit = workspace.repository.headCommit;
       if (!selectedKey)
         error = "Repository has no commit that can be used as a base.";
     } catch (caught) {

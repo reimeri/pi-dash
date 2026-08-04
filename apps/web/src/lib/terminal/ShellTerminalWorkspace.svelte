@@ -2,7 +2,6 @@
   import type { WorktreeDto } from "@pi-dash/contracts";
   import {
     ArrowReloadHorizontalIcon,
-    Cancel01Icon,
     PlayIcon,
   } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
