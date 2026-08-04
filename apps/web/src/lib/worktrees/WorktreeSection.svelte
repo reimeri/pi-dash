@@ -83,7 +83,7 @@
       </Empty.Header>
     </Empty.Root>
   {:else}
-    <div class="grid gap-4 md:grid-cols-2">
+    <div class="flex flex-col gap-2">
       {#each worktrees as worktree (worktree.id)}
         <WorktreeCard
           {worktree}
