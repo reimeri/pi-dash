@@ -88,12 +88,16 @@
         class="relative"
         aria-label={rightPanel === "shell"
           ? "Close shell terminal"
-          : "Open shell terminal"}
+          : shellActivityPending
+            ? "Open shell terminal, command running"
+            : "Open shell terminal"}
         aria-expanded={rightPanel === "shell"}
         aria-controls="worktree-shell-terminal"
         title={rightPanel === "shell"
           ? "Close shell terminal"
-          : "Open shell terminal"}
+          : shellActivityPending
+            ? "Open shell terminal, command running"
+            : "Open shell terminal"}
         onclick={() => onTogglePanel("shell")}
       >
         <HugeiconsIcon

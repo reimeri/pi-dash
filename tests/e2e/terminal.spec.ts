@@ -120,7 +120,7 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     });
   });
   await page.routeWebSocket(/\/terminal\/socket$/, async (socketRoute) => {
-    const screen = page.locator(".xterm-screen");
+    const screen = page.locator(".terminal-pane:not(.hidden) .xterm-screen");
     await screen.waitFor({ state: "attached" });
     await expect
       .poll(async () => (await screen.boundingBox())?.width ?? 0)
@@ -166,16 +166,18 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
       `Create dialog remained visible. Page errors: ${pageErrors.join("\n")}`,
     );
   }
-  const card = page.getByRole("article", { name: "Terminal work" });
-  await expect(card).toBeVisible();
   await page.getByRole("button", { name: "Expand Terminal E2E" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Terminal E2E" }),
-  ).toBeVisible();
   const workspaceSelect = page
     .getByRole("navigation", { name: "Workspaces" })
     .getByRole("button", { name: "Terminal E2E", exact: true });
   const workspaceActivity = workspaceSelect.getByRole("img");
+  await workspaceSelect.click();
+  await expect(
+    page.getByRole("heading", { name: "Terminal E2E" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("article", { name: "Terminal work" }),
+  ).toBeVisible();
   const sidebarWorktree = page
     .getByRole("navigation", { name: "Workspaces" })
     .getByRole("button", { name: "Terminal work", exact: true });
@@ -364,7 +366,7 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
   await expect(
     page.getByRole("button", { name: "Close shell terminal" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Close terminal" }).click();
+  await page.getByRole("button", { name: "Close shell terminal" }).click();
   await expect(terminal).toBeVisible();
   await expect
     .poll(async () =>
@@ -382,7 +384,7 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
   );
   await page.keyboard.press("Enter");
   await expect(shell).toContainText("__SHELL_REOPEN__:persisted");
-  await page.getByRole("button", { name: "Close terminal" }).click();
+  await page.getByRole("button", { name: "Close shell terminal" }).click();
 
   const cookieHeader = (await page.context().cookies())
     .map((cookie) => `${cookie.name}=${cookie.value}`)
@@ -474,4 +476,62 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
   await terminal.click();
   await page.keyboard.type("after-restart");
   await expect(terminal).toContainText("after-restart");
+
+  await page.keyboard.type("__FIRST_WORKTREE_TERMINAL__");
+  await page
+    .getByRole("navigation", { name: "Workspaces" })
+    .getByRole("button", { name: "New worktree in Terminal E2E" })
+    .click();
+  const secondCreateDialog = page.getByRole("dialog", {
+    name: "Create managed worktree",
+  });
+  await secondCreateDialog.getByLabel("Name").fill("Second terminal");
+  await secondCreateDialog
+    .getByRole("button", { name: "Create worktree" })
+    .click();
+
+  const secondSidebarWorktree = page
+    .getByRole("navigation", { name: "Workspaces" })
+    .getByRole("button", { name: "Second terminal", exact: true });
+  const secondTerminal = page.getByRole("application", {
+    name: "Terminal E2E Second terminal interactive Pi terminal",
+  });
+  await expect(secondTerminal).toContainText("FAKE_PI_READY");
+  await secondTerminal.click();
+  await page.keyboard.type("__SECOND_WORKTREE_TERMINAL__");
+  await expect(secondTerminal).toContainText("__SECOND_WORKTREE_TERMINAL__");
+
+  const firstPane = page.getByTestId("terminal-pane").filter({
+    has: page.locator(
+      '[aria-label="Terminal E2E Terminal work interactive Pi terminal"]',
+    ),
+  });
+  const secondPane = page.getByTestId("terminal-pane").filter({
+    has: page.locator(
+      '[aria-label="Terminal E2E Second terminal interactive Pi terminal"]',
+    ),
+  });
+  async function expectActiveTerminal(
+    activePane: typeof firstPane,
+    inactivePane: typeof firstPane,
+  ): Promise<void> {
+    await expect(page.getByTestId("terminal-pane")).toHaveCount(2);
+    await expect(activePane).toBeVisible();
+    await expect(activePane).toHaveClass(/(^|\s)flex(\s|$)/);
+    await expect(activePane).not.toHaveClass(/(^|\s)hidden(\s|$)/);
+    await expect(inactivePane).toBeHidden();
+    await expect(inactivePane).toHaveClass(/(^|\s)hidden(\s|$)/);
+    await expect(inactivePane).not.toHaveClass(/(^|\s)flex(\s|$)/);
+  }
+
+  await expectActiveTerminal(secondPane, firstPane);
+  await sidebarWorktree.click();
+  await expectActiveTerminal(firstPane, secondPane);
+  await expect(terminal).toContainText("__FIRST_WORKTREE_TERMINAL__");
+  await expect(terminal).not.toContainText("__SECOND_WORKTREE_TERMINAL__");
+
+  await secondSidebarWorktree.click();
+  await expectActiveTerminal(secondPane, firstPane);
+  await expect(secondTerminal).toContainText("__SECOND_WORKTREE_TERMINAL__");
+  await expect(secondTerminal).not.toContainText("__FIRST_WORKTREE_TERMINAL__");
 });

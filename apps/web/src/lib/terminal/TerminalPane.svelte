@@ -509,9 +509,10 @@
 </script>
 
 <section
+  class:flex={visible}
   class:hidden={!visible}
   data-testid="terminal-pane"
-  class="terminal-pane flex size-full min-h-0 flex-col overflow-hidden bg-background"
+  class="terminal-pane size-full min-h-0 flex-col overflow-hidden bg-background"
 >
   {#if errorMessage}
     <Alert.Root
