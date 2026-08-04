@@ -7,6 +7,7 @@ export interface WorkspaceRecord {
   slug: string;
   repositoryPath: string;
   gitCommonDir: string;
+  privateEnvironmentPath: string | null;
   repositoryHealth: RepositoryHealth;
   currentBranch: string | null;
   headCommit: string | null;
@@ -24,6 +25,7 @@ interface WorkspaceRow {
   slug: string;
   repository_path: string;
   git_common_dir: string;
+  private_environment_path: string | null;
   repository_health: RepositoryHealth;
   current_branch: string | null;
   head_commit: string | null;
@@ -40,6 +42,7 @@ function fromRow(row: WorkspaceRow): WorkspaceRecord {
     slug: row.slug,
     repositoryPath: row.repository_path,
     gitCommonDir: row.git_common_dir,
+    privateEnvironmentPath: row.private_environment_path,
     repositoryHealth: row.repository_health,
     currentBranch: row.current_branch,
     headCommit: row.head_commit,
@@ -51,8 +54,9 @@ function fromRow(row: WorkspaceRow): WorkspaceRecord {
 }
 
 const SELECT_COLUMNS = `
-  id, name, slug, repository_path, git_common_dir, repository_health,
-  current_branch, head_commit, checked_at, sort_order, created_at, updated_at
+  id, name, slug, repository_path, git_common_dir, private_environment_path,
+  repository_health, current_branch, head_commit, checked_at, sort_order,
+  created_at, updated_at
 `;
 
 export interface WorkspaceRepository {
@@ -64,6 +68,11 @@ export interface WorkspaceRepository {
   rename(
     id: string,
     name: string,
+    updatedAt: string,
+  ): WorkspaceRecord | undefined;
+  updatePrivateEnvironmentPath(
+    id: string,
+    path: string | null,
     updatedAt: string,
   ): WorkspaceRecord | undefined;
   updateHealth(
@@ -93,9 +102,10 @@ export function createWorkspaceRepository(
   );
   const insertStatement = sqlite.prepare(`
     INSERT INTO workspaces (
-      id, name, slug, repository_path, git_common_dir, repository_health,
-      current_branch, head_commit, checked_at, sort_order, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+      id, name, slug, repository_path, git_common_dir,
+      private_environment_path, repository_health, current_branch, head_commit,
+      checked_at, sort_order, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
   `);
   const maximumOrderStatement = sqlite.prepare(
     "SELECT coalesce(max(sort_order), -1) AS maximum FROM workspaces",
@@ -124,6 +134,11 @@ export function createWorkspaceRepository(
   const renameStatement = sqlite.prepare(
     "UPDATE workspaces SET name = ?, updated_at = ? WHERE id = ?",
   );
+  const updatePrivateEnvironmentPathStatement = sqlite.prepare(`
+    UPDATE workspaces
+    SET private_environment_path = ?, updated_at = ?
+    WHERE id = ?
+  `);
   const updateHealthStatement = sqlite.prepare(`
     UPDATE workspaces
     SET repository_health = ?, current_branch = ?, head_commit = ?, checked_at = ?
@@ -161,6 +176,7 @@ export function createWorkspaceRepository(
         input.slug,
         input.repositoryPath,
         input.gitCommonDir,
+        input.privateEnvironmentPath,
         input.repositoryHealth,
         input.currentBranch,
         input.headCommit,
@@ -176,6 +192,16 @@ export function createWorkspaceRepository(
     rename(id, name, updatedAt) {
       if (renameStatement.run(name, updatedAt, id).changes === 0)
         return undefined;
+      const row = getStatement.get(id) as WorkspaceRow;
+      return fromRow(row);
+    },
+    updatePrivateEnvironmentPath(id, path, updatedAt) {
+      if (
+        updatePrivateEnvironmentPathStatement.run(path, updatedAt, id)
+          .changes === 0
+      ) {
+        return undefined;
+      }
       const row = getStatement.get(id) as WorkspaceRow;
       return fromRow(row);
     },

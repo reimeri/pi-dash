@@ -20,6 +20,7 @@ export function createStatusEventClient(
     onWorktreeRemoved?: (workspaceId: string, worktreeId: string) => void;
     onWorkspaceUpdated?: (workspace: WorkspaceDto) => void;
     onWorkspaceOrderUpdated?: (workspaceIds: string[]) => void;
+    onWorkspaceEnvironmentChanged?: (workspaceId: string) => void;
     onSnapshot?: () => void;
   } = {},
 ): StatusEventClient {
@@ -76,6 +77,8 @@ export function createStatusEventClient(
         options.onWorkspaceUpdated?.(frame.workspace);
       } else if (frame.type === "workspaceOrderUpdated") {
         options.onWorkspaceOrderUpdated?.(frame.workspaceIds);
+      } else if (frame.type === "workspaceEnvironmentChanged") {
+        options.onWorkspaceEnvironmentChanged?.(frame.workspaceId);
       } else if (frame.type === "snapshot") {
         options.onSnapshot?.();
       }

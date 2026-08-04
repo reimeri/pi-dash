@@ -5,6 +5,8 @@ import {
   DirectoryDialogResponseSchema,
   RenameWorkspaceRequestSchema,
   ReorderWorkspacesRequestSchema,
+  UpdateWorkspaceEnvironmentRequestSchema,
+  WorkspaceEnvironmentResponseSchema,
   WorkspaceIdParamsSchema,
   WorkspaceListResponseSchema,
   WorkspacePathRequestSchema,
@@ -13,6 +15,7 @@ import {
   type CreateWorkspaceRequest,
   type RenameWorkspaceRequest,
   type ReorderWorkspacesRequest,
+  type UpdateWorkspaceEnvironmentRequest,
   type WorkspaceIdParams,
   type WorkspacePathRequest,
 } from "@pi-dash/contracts";
@@ -28,6 +31,10 @@ import {
   type NativeDirectoryDialogService,
 } from "../platform/native-directory-dialog.js";
 import { ProcessExecutionError } from "../process/safe-process.js";
+import {
+  WorkspaceEnvironmentError,
+  type WorkspaceEnvironmentService,
+} from "./workspace-environment.js";
 import {
   WorkspaceServiceError,
   type WorkspaceService,
@@ -70,11 +77,13 @@ export async function registerWorkspaceRoutes(
   >,
   options: {
     workspaces: WorkspaceService;
+    environments: WorkspaceEnvironmentService;
     dialogs: NativeDirectoryDialogService;
   },
 ): Promise<void> {
   app.addHook("onClose", async () => {
     options.workspaces.close();
+    options.environments.close();
     options.dialogs.close();
   });
 
@@ -170,6 +179,67 @@ export async function registerWorkspaceRoutes(
       try {
         return { workspace: options.workspaces.get(request.params.id) };
       } catch (error) {
+        serviceError(error);
+      }
+    },
+  );
+
+  app.get<{ Params: WorkspaceIdParams }>(
+    "/api/v1/workspaces/:id/environment",
+    {
+      schema: {
+        params: WorkspaceIdParamsSchema,
+        response: {
+          200: WorkspaceEnvironmentResponseSchema,
+          404: ApiErrorEnvelopeSchema,
+          422: ApiErrorEnvelopeSchema,
+        },
+      },
+    },
+    async (request) => {
+      try {
+        options.workspaces.get(request.params.id);
+        return {
+          environment: options.environments.get(request.params.id),
+        };
+      } catch (error) {
+        if (error instanceof WorkspaceEnvironmentError) {
+          throw new ApiHttpError(422, error.code, error.message);
+        }
+        serviceError(error);
+      }
+    },
+  );
+
+  app.patch<{
+    Params: WorkspaceIdParams;
+    Body: UpdateWorkspaceEnvironmentRequest;
+  }>(
+    "/api/v1/workspaces/:id/environment",
+    {
+      schema: {
+        params: WorkspaceIdParamsSchema,
+        body: UpdateWorkspaceEnvironmentRequestSchema,
+        response: {
+          200: WorkspaceEnvironmentResponseSchema,
+          404: ApiErrorEnvelopeSchema,
+          422: ApiErrorEnvelopeSchema,
+        },
+      },
+    },
+    async (request) => {
+      try {
+        options.workspaces.get(request.params.id);
+        return {
+          environment: options.environments.updatePrivateFile(
+            request.params.id,
+            request.body.privateFilePath,
+          ),
+        };
+      } catch (error) {
+        if (error instanceof WorkspaceEnvironmentError) {
+          throw new ApiHttpError(422, error.code, error.message);
+        }
         serviceError(error);
       }
     },

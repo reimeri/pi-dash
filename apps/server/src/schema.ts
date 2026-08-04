@@ -26,6 +26,7 @@ export const workspaces = sqliteTable(
     slug: text("slug").notNull(),
     repositoryPath: text("repository_path").notNull(),
     gitCommonDir: text("git_common_dir").notNull(),
+    privateEnvironmentPath: text("private_environment_path"),
     repositoryHealth: text("repository_health", {
       enum: ["healthy", "missing", "inaccessible", "not_git", "changed"],
     })

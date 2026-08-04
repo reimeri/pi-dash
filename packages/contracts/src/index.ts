@@ -8,7 +8,7 @@ export * from "./worktrees.js";
 
 export const APP_VERSION = "0.1.0";
 export const API_VERSION = 1;
-export const CURRENT_SCHEMA_VERSION = 7;
+export const CURRENT_SCHEMA_VERSION = 8;
 
 export const CapabilityStateSchema = Type.Union([
   Type.Literal("available"),
@@ -128,6 +128,7 @@ export const ApiErrorCodes = {
   STATUS_AUTH_FAILED: "STATUS_AUTH_FAILED",
   STATUS_EVENT_INVALID: "STATUS_EVENT_INVALID",
   STATUS_REVISION_CHANGED: "STATUS_REVISION_CHANGED",
+  ENVIRONMENT_SOURCE_INVALID: "ENVIRONMENT_SOURCE_INVALID",
 } as const;
 export type ApiErrorCode = (typeof ApiErrorCodes)[keyof typeof ApiErrorCodes];
 

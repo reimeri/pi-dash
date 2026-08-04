@@ -264,6 +264,7 @@ export function createWorkspaceService(options: {
             slug,
             repositoryPath: inspection.repositoryPath,
             gitCommonDir: inspection.gitCommonDir,
+            privateEnvironmentPath: null,
             repositoryHealth: "healthy",
             currentBranch: inspection.currentBranch,
             headCommit: inspection.headCommit,

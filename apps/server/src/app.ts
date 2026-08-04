@@ -26,6 +26,7 @@ import type { TerminalManager } from "./terminal/terminal-manager.js";
 import { registerTerminalRoutes } from "./terminal/terminal-routes.js";
 import { registerStatusRoutes } from "./status/status-routes.js";
 import type { StatusService } from "./status/status-service.js";
+import type { WorkspaceEnvironmentService } from "./workspaces/workspace-environment.js";
 import type { WorkspaceService } from "./workspaces/workspace-service.js";
 import { registerWorkspaceRoutes } from "./workspaces/workspace-routes.js";
 import type { WorktreeService } from "./worktrees/worktree-service.js";
@@ -57,6 +58,7 @@ export interface HttpServerOptions {
   staticDirectory: string;
   dialogs: NativeDirectoryDialogService;
   workspaces: WorkspaceService;
+  environments: WorkspaceEnvironmentService;
   worktrees: WorktreeService;
   terminals: TerminalManager;
   shellTerminals: TerminalManager;
@@ -232,6 +234,7 @@ export async function buildHttpServer(options: HttpServerOptions) {
 
   await registerWorkspaceRoutes(app, {
     workspaces: options.workspaces,
+    environments: options.environments,
     dialogs: options.dialogs,
   });
   await registerWorktreeRoutes(app, { worktrees: options.worktrees });

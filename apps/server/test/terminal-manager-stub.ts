@@ -26,6 +26,7 @@ export function createUnavailableTerminalManager(): TerminalManager {
     async restart(worktreeId) {
       return {
         operationId: "00000000-0000-4000-8000-000000000000",
+        restarted: false,
         runtime: stopped(worktreeId),
       };
     },
@@ -37,6 +38,9 @@ export function createUnavailableTerminalManager(): TerminalManager {
     async dispose() {},
     async shutdown() {},
     activities() {
+      return [];
+    },
+    runtimes() {
       return [];
     },
     diagnostics() {

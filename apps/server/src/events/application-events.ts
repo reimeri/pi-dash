@@ -5,6 +5,7 @@ import {
   type ShellActivityDto,
   type WorkflowStatusDto,
   type WorkspaceAttentionDto,
+  type WorkspaceEnvironmentChangeDto,
   type WorkspaceDto,
 } from "@pi-dash/contracts";
 
@@ -26,6 +27,7 @@ export interface ApplicationEvents {
   publishShellActivity(activity: ShellActivityDto): void;
   publishWorkspaceUpdated(workspace: WorkspaceDto): void;
   publishWorkspaceOrderUpdated(workspaceIds: string[]): void;
+  publishWorkspaceEnvironmentChanged(workspaceId: string): void;
   publishWorktreeRemoved(worktreeId: string, workspaceId: string): void;
   subscribe(transport: ApplicationEventTransport): () => void;
   close(): void;
@@ -36,6 +38,7 @@ export function createApplicationEvents(options: {
   runtimes: () => RuntimeDto[];
   shellActivities: () => ShellActivityDto[];
   workspaceAttention: () => WorkspaceAttentionDto[];
+  environmentChanges: () => WorkspaceEnvironmentChangeDto[];
   maxBufferedBytes?: number;
 }): ApplicationEvents {
   const maxBufferedBytes = options.maxBufferedBytes ?? 1024 * 1024;
@@ -120,6 +123,16 @@ export function createApplicationEvents(options: {
         workspaceIds,
       });
     },
+    publishWorkspaceEnvironmentChanged(workspaceId) {
+      cursor += 1;
+      append({
+        v: APPLICATION_EVENTS_PROTOCOL_VERSION,
+        type: "workspaceEnvironmentChanged",
+        cursor,
+        workspaceId,
+        environmentChanges: options.environmentChanges(),
+      });
+    },
     publishWorktreeRemoved(worktreeId, workspaceId) {
       cursor += 1;
       append({
@@ -143,6 +156,7 @@ export function createApplicationEvents(options: {
         runtimes: options.runtimes(),
         shellActivities: options.shellActivities(),
         workspaceAttention: options.workspaceAttention(),
+        environmentChanges: options.environmentChanges(),
       });
       subscriber.snapshotSent = true;
       return () => subscribers.delete(subscriber);

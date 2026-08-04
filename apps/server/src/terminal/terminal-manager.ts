@@ -291,6 +291,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
     restart(
       worktreeId: string,
       idempotencyKey: string,
+      expectedRuntimeId: string | null,
     ): Promise<RestartRuntimeResponse> {
       const hash = createHash("sha256")
         .update(
@@ -298,6 +299,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
             operation: "terminal-restart",
             runtimeKind: options.runtimeKind,
             worktreeId,
+            expectedRuntimeId,
           }),
         )
         .digest("hex");
@@ -321,9 +323,13 @@ export function createTerminalManager(options: TerminalManagerOptions) {
       }
       const operationId = createId();
       const promise = exclusive(worktreeId, async () => {
+        const current = runtimeDto(worktreeId);
+        if (current.runtimeId !== expectedRuntimeId) {
+          return { operationId, restarted: false, runtime: current };
+        }
         await stopLocked(worktreeId);
         const runtime = await startLocked(worktreeId);
-        return { operationId, runtime };
+        return { operationId, restarted: true, runtime };
       });
       restartOperations.set(idempotencyKey, { hash, promise });
       return promise;
@@ -422,6 +428,10 @@ export function createTerminalManager(options: TerminalManagerOptions) {
 
     activities(): ShellActivityDto[] {
       return [...shellActivities.values()].map((activity) => ({ ...activity }));
+    },
+
+    runtimes(): RuntimeDto[] {
+      return [...runtimes.values()].map((runtime) => ({ ...runtime.dto }));
     },
 
     diagnostics() {

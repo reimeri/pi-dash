@@ -17,6 +17,7 @@ import { createOriginPolicy } from "../src/security.js";
 import { createGitInspector } from "../src/git/git-inspector.js";
 import { createGitWorkspaceSynchronizer } from "../src/git/git-workspace-sync.js";
 import { createNativeDirectoryDialog } from "../src/platform/native-directory-dialog.js";
+import { createWorkspaceEnvironmentService } from "../src/workspaces/workspace-environment.js";
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
 import { createWorkspaceService } from "../src/workspaces/workspace-service.js";
 import { createGitMutationLock } from "../src/worktrees/git-mutation-lock.js";
@@ -60,11 +61,16 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
   const auth = createAuthService({ policy });
   const git = await createGitInspector();
   const dialogs = await createNativeDirectoryDialog({ mode: "disabled" });
+  const workspaceRepository = createWorkspaceRepository(database.sqlite);
   const workspaces = createWorkspaceService({
-    repository: createWorkspaceRepository(database.sqlite),
+    repository: workspaceRepository,
     git,
     syncer: await createGitWorkspaceSynchronizer(),
     lock: createGitMutationLock({ root: join(root, "locks") }),
+  });
+  const environments = createWorkspaceEnvironmentService({
+    repository: workspaceRepository,
+    liveRuntimes: () => [],
   });
   const status = createStatusTestServices(database.sqlite);
   const app = await buildHttpServer({
@@ -76,6 +82,7 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
     staticDirectory: join(root, "unused"),
     dialogs,
     workspaces,
+    environments,
     worktrees: createUnavailableWorktreeService(),
     terminals: createUnavailableTerminalManager(),
     shellTerminals: createUnavailableTerminalManager(),
@@ -118,7 +125,7 @@ describe("Fastify foundation API", () => {
     expect(response.json()).toEqual({
       status: "ready",
       version: "0.1.0",
-      schemaVersion: 7,
+      schemaVersion: 8,
       capabilities: {
         git: "available",
         pi: "unavailable",

@@ -4,6 +4,7 @@ import type {
   ShellActivityDto,
   WorkflowStatusDto,
   WorkspaceAttentionDto,
+  WorkspaceEnvironmentChangeDto,
 } from "@pi-dash/contracts";
 import { writable } from "svelte/store";
 
@@ -17,6 +18,7 @@ export interface WorkflowStatusState {
   runtimes: Record<string, RuntimeDto>;
   shellActivities: Record<string, ShellActivityDto>;
   workspaceAttention: WorkspaceAttentionDto[];
+  environmentChanges: WorkspaceEnvironmentChangeDto[];
 }
 
 export const initialWorkflowStatusState: WorkflowStatusState = {
@@ -27,6 +29,7 @@ export const initialWorkflowStatusState: WorkflowStatusState = {
   runtimes: {},
   shellActivities: {},
   workspaceAttention: [],
+  environmentChanges: [],
 };
 
 export function reduceWorkflowStatusState(
@@ -56,6 +59,7 @@ export function reduceWorkflowStatusState(
           ]),
         ),
         workspaceAttention: frame.workspaceAttention,
+        environmentChanges: frame.environmentChanges,
       },
     };
   }
@@ -101,6 +105,16 @@ export function reduceWorkflowStatusState(
       },
     };
   }
+  if (frame.type === "workspaceEnvironmentChanged") {
+    return {
+      resyncRequired: false,
+      state: {
+        ...state,
+        cursor: frame.cursor,
+        environmentChanges: frame.environmentChanges,
+      },
+    };
+  }
   if (
     frame.type === "workspaceUpdated" ||
     frame.type === "workspaceOrderUpdated"
@@ -117,6 +131,14 @@ export function reduceWorkflowStatusState(
     delete byWorktree[frame.worktreeId];
     delete runtimes[frame.worktreeId];
     delete shellActivities[frame.worktreeId];
+    const environmentChanges = state.environmentChanges
+      .map((change) => ({
+        ...change,
+        affectedRuntimes: change.affectedRuntimes.filter(
+          (runtime) => runtime.worktreeId !== frame.worktreeId,
+        ),
+      }))
+      .filter((change) => change.affectedRuntimes.length > 0);
     return {
       resyncRequired: false,
       state: {
@@ -126,6 +148,7 @@ export function reduceWorkflowStatusState(
         runtimes,
         shellActivities,
         workspaceAttention: frame.workspaceAttention,
+        environmentChanges,
       },
     };
   }
@@ -179,6 +202,14 @@ export function createWorkflowStatusStore() {
             ([worktreeId]) => !removed.has(worktreeId),
           ),
         ),
+        environmentChanges: state.environmentChanges
+          .map((change) => ({
+            ...change,
+            affectedRuntimes: change.affectedRuntimes.filter(
+              (runtime) => !removed.has(runtime.worktreeId),
+            ),
+          }))
+          .filter((change) => change.affectedRuntimes.length > 0),
       }));
     },
     reset() {

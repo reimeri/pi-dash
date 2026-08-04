@@ -21,7 +21,7 @@ const status: WorkflowStatusDto = {
 
 function snapshot(): ApplicationEventsServerFrame {
   return {
-    v: 6,
+    v: 7,
     type: "snapshot",
     cursor: 4,
     statuses: [status],
@@ -39,6 +39,7 @@ function snapshot(): ApplicationEventsServerFrame {
     ],
     shellActivities: [],
     workspaceAttention: [],
+    environmentChanges: [],
   };
 }
 
@@ -63,7 +64,7 @@ describe("workflow status store", () => {
       snapshot(),
     ).state;
     const working = reduceWorkflowStatusState(initialized, {
-      v: 6,
+      v: 7,
       type: "status",
       cursor: 5,
       status: { ...status, state: "working", reason: "agent", revision: 1 },
@@ -72,7 +73,7 @@ describe("workflow status store", () => {
     expect(working.state.byWorktree[status.worktreeId]?.state).toBe("working");
     expect(
       reduceWorkflowStatusState(working.state, {
-        v: 6,
+        v: 7,
         type: "status",
         cursor: 7,
         status: { ...status, state: "done", reason: "settled", revision: 2 },
@@ -93,12 +94,50 @@ describe("workflow status store", () => {
       changedAt: "2026-01-01T00:00:01.000Z",
     } as const;
     const active = reduceWorkflowStatusState(initialized, {
-      v: 6,
+      v: 7,
       type: "shellActivity",
       cursor: 5,
       activity,
     });
     expect(active.state.shellActivities[status.worktreeId]).toEqual(activity);
+  });
+
+  it("tracks persistent environment restart requirements", () => {
+    const initialized = reduceWorkflowStatusState(
+      initialWorkflowStatusState,
+      snapshot(),
+    ).state;
+    const workspaceId = "22222222-2222-4222-8222-222222222222";
+    const changed = reduceWorkflowStatusState(initialized, {
+      v: 7,
+      type: "workspaceEnvironmentChanged",
+      cursor: 5,
+      workspaceId,
+      environmentChanges: [
+        {
+          workspaceId,
+          affectedRuntimes: [
+            {
+              worktreeId: status.worktreeId,
+              runtimeId: "33333333-3333-4333-8333-333333333333",
+              kind: "shell",
+            },
+          ],
+        },
+      ],
+    });
+    expect(changed.state.environmentChanges).toEqual([
+      {
+        workspaceId,
+        affectedRuntimes: [
+          {
+            worktreeId: status.worktreeId,
+            runtimeId: "33333333-3333-4333-8333-333333333333",
+            kind: "shell",
+          },
+        ],
+      },
+    ]);
   });
 
   it("evicts deleted worktree status and runtime state", () => {
@@ -107,7 +146,7 @@ describe("workflow status store", () => {
       snapshot(),
     ).state;
     const removed = reduceWorkflowStatusState(initialized, {
-      v: 6,
+      v: 7,
       type: "worktreeRemoved",
       cursor: 5,
       worktreeId: status.worktreeId,
@@ -133,7 +172,7 @@ describe("workflow status store", () => {
     ).state;
     const workspaceId = "22222222-2222-4222-8222-222222222222";
     const next = reduceWorkflowStatusState(initialized, {
-      v: 6,
+      v: 7,
       type: "status",
       cursor: 5,
       status: {

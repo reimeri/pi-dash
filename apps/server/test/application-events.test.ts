@@ -51,6 +51,7 @@ describe("application event stream", () => {
       runtimes: () => [runtime],
       shellActivities: () => [],
       workspaceAttention: () => [],
+      environmentChanges: () => [],
     });
     events.subscribe({
       bufferedAmount: 0,
@@ -67,6 +68,7 @@ describe("application event stream", () => {
     });
     events.publishWorkspaceUpdated(workspace);
     events.publishWorkspaceOrderUpdated([workspace.id]);
+    events.publishWorkspaceEnvironmentChanged(workspace.id);
     events.publishWorktreeRemoved(
       status.worktreeId,
       "22222222-2222-4222-8222-222222222222",
@@ -78,11 +80,12 @@ describe("application event stream", () => {
       "shellActivity",
       "workspaceUpdated",
       "workspaceOrderUpdated",
+      "workspaceEnvironmentChanged",
       "worktreeRemoved",
     ]);
-    expect(received.map((frame) => frame.v)).toEqual([6, 6, 6, 6, 6, 6, 6]);
+    expect(received.map((frame) => frame.v)).toEqual([7, 7, 7, 7, 7, 7, 7, 7]);
     expect(received.map((frame) => "cursor" in frame && frame.cursor)).toEqual([
-      0, 1, 2, 3, 4, 5, 6,
+      0, 1, 2, 3, 4, 5, 6, 7,
     ]);
     expect(received[5]).toMatchObject({
       type: "workspaceOrderUpdated",
@@ -97,6 +100,7 @@ describe("application event stream", () => {
       runtimes: () => [runtime],
       shellActivities: () => [],
       workspaceAttention: () => [],
+      environmentChanges: () => [],
       maxBufferedBytes: 1,
     });
     events.subscribe({

@@ -359,12 +359,22 @@ describe("terminal manager integration", () => {
     expect(manager.get(worktreeId).exitCode).toBe(7);
 
     const key = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const restarted = await manager.restart(worktreeId, key);
-    const replay = await manager.restart(worktreeId, key);
+    const crashedRuntimeId = manager.get(worktreeId).runtimeId;
+    const restarted = await manager.restart(worktreeId, key, crashedRuntimeId);
+    const replay = await manager.restart(worktreeId, key, crashedRuntimeId);
     expect(replay).toEqual(restarted);
+    expect(restarted.restarted).toBe(true);
     expect(restarted.runtime.state).toBe("running");
+
+    const stale = await manager.restart(
+      worktreeId,
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      crashedRuntimeId,
+    );
+    expect(stale.restarted).toBe(false);
+    expect(stale.runtime.runtimeId).toBe(restarted.runtime.runtimeId);
     expect(() =>
-      manager.restart("22222222-2222-4222-8222-222222222222", key),
+      manager.restart("22222222-2222-4222-8222-222222222222", key, null),
     ).toThrowError(/different input/);
     await manager.shutdown();
   });

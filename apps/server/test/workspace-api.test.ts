@@ -15,6 +15,7 @@ import { createGitInspector } from "../src/git/git-inspector.js";
 import { createGitWorkspaceSynchronizer } from "../src/git/git-workspace-sync.js";
 import type { NativeDirectoryDialogService } from "../src/platform/native-directory-dialog.js";
 import { createOriginPolicy } from "../src/security.js";
+import { createWorkspaceEnvironmentService } from "../src/workspaces/workspace-environment.js";
 import { createWorkspaceRepository } from "../src/workspaces/workspace-repository.js";
 import { createWorkspaceService } from "../src/workspaces/workspace-service.js";
 import { createGitMutationLock } from "../src/worktrees/git-mutation-lock.js";
@@ -74,11 +75,16 @@ async function fixture() {
     },
     close() {},
   };
+  const workspaceRepository = createWorkspaceRepository(database.sqlite);
   const workspaces = createWorkspaceService({
-    repository: createWorkspaceRepository(database.sqlite),
+    repository: workspaceRepository,
     git: await createGitInspector(),
     syncer: await createGitWorkspaceSynchronizer(),
     lock: createGitMutationLock({ root: join(root, "locks") }),
+  });
+  const environments = createWorkspaceEnvironmentService({
+    repository: workspaceRepository,
+    liveRuntimes: () => [],
   });
   const status = createStatusTestServices(database.sqlite);
   const app = await buildHttpServer({
@@ -90,6 +96,7 @@ async function fixture() {
     staticDirectory: join(root, "unused"),
     dialogs,
     workspaces,
+    environments,
     worktrees: createUnavailableWorktreeService(),
     terminals: createUnavailableTerminalManager(),
     shellTerminals: createUnavailableTerminalManager(),
@@ -239,6 +246,66 @@ describe("workspace API", () => {
     });
     expect(removed.statusCode).toBe(204);
     expect(repository).toBeTruthy();
+  });
+
+  it("loads canonical environment metadata and configures a private override", async () => {
+    const { root, app, authHeaders } = await fixture();
+    const repository = createGitRepository(root, "environment-project");
+    writeFileSync(
+      join(repository, ".env"),
+      "PUBLIC_VALUE=repo-secret-marker\n",
+    );
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/workspaces",
+      headers: authHeaders,
+      payload: { path: repository, name: "Environment Project" },
+    });
+    const workspace = created.json().workspace;
+
+    const automatic = await app.inject({
+      method: "GET",
+      url: `/api/v1/workspaces/${workspace.id}/environment`,
+      headers: baseHeaders({ cookie: authHeaders.cookie }),
+    });
+    expect(automatic.statusCode).toBe(200);
+    expect(automatic.json().environment).toMatchObject({
+      workspaceId: workspace.id,
+      repositoryFile: { path: join(repository, ".env"), present: true },
+      privateFilePath: null,
+      status: "ready",
+      variableCount: 1,
+      error: null,
+    });
+    expect(JSON.stringify(automatic.json())).not.toContain(
+      "repo-secret-marker",
+    );
+
+    const privateFile = join(root, "private.env");
+    writeFileSync(privateFile, "PUBLIC_VALUE=override\nSECRET_VALUE=hidden\n");
+    const configured = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/workspaces/${workspace.id}/environment`,
+      headers: authHeaders,
+      payload: { privateFilePath: privateFile },
+    });
+    expect(configured.statusCode).toBe(200);
+    expect(configured.json().environment).toMatchObject({
+      privateFilePath: privateFile,
+      status: "ready",
+      variableCount: 2,
+    });
+    expect(JSON.stringify(configured.json())).not.toContain("hidden");
+    expect(JSON.stringify(configured.json())).not.toContain("override");
+
+    const invalid = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/workspaces/${workspace.id}/environment`,
+      headers: authHeaders,
+      payload: { privateFilePath: join(root, "missing.env") },
+    });
+    expect(invalid.statusCode).toBe(422);
+    expect(invalid.json().error.code).toBe("ENVIRONMENT_SOURCE_INVALID");
   });
 
   it("reorders workspaces with stale-order protection", async () => {
