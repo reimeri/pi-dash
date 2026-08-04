@@ -198,7 +198,7 @@
               id="private-environment-file"
               value={privateFilePath}
               oninput={(event) => (privateFilePath = event.currentTarget.value)}
-              placeholder="/home/user/.config/project.env"
+              placeholder="/path/to/project.env"
               autocomplete="off"
               spellcheck={false}
               disabled={saving}
