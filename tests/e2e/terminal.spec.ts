@@ -354,7 +354,9 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
       name: "Open shell terminal, command running",
     }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Open shell terminal, command running" }).click();
+  await page
+    .getByRole("button", { name: "Open shell terminal, command running" })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Changes", exact: true }),
   ).toHaveCount(0);

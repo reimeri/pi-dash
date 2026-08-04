@@ -17,7 +17,6 @@
   export let worktree: WorktreeDto;
   export let state: WorktreeDiffState;
   export let onRefresh: () => void;
-  export let onClose: () => void;
 
   let rendererError = "";
 

@@ -77,7 +77,8 @@
                     <Badge variant="outline" class="shrink-0">Dirty</Badge>
                   {/if}
                   {#if worktree.lifecycle !== "ready"}
-                    <span class="shrink-0 capitalize">{worktree.lifecycle}</span>
+                    <span class="shrink-0 capitalize">{worktree.lifecycle}</span
+                    >
                   {/if}
                 </span>
               </span>
@@ -142,10 +143,7 @@
               title="Inspect and reconcile"
               onclick={onReconcile}
             >
-              <HugeiconsIcon
-                icon={ArrowReloadHorizontalIcon}
-                strokeWidth={2}
-              />
+              <HugeiconsIcon icon={ArrowReloadHorizontalIcon} strokeWidth={2} />
             </Button>
           {/if}
         </div>
@@ -164,9 +162,9 @@
           <dl class="grid grid-cols-2 gap-3">
             <div>
               <dt class="text-xs text-muted-foreground">Base</dt>
-              <dd class="font-mono text-sm"
-                >{worktree.baseCommit.slice(0, 12)}</dd
-              >
+              <dd class="font-mono text-sm">
+                {worktree.baseCommit.slice(0, 12)}
+              </dd>
             </div>
             <div>
               <dt class="text-xs text-muted-foreground">Changes</dt>

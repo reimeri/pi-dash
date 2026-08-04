@@ -611,7 +611,6 @@
             {terminalMaxFrameBytes}
             diffState={$diffStore}
             onRefreshDiff={diffStore.refresh}
-            onCloseDiff={() => setRightPanel("none")}
             onCloseShell={closeShellPanel}
             onClosePanel={() => setRightPanel("none")}
           />
@@ -627,7 +626,6 @@
           {terminalMaxFrameBytes}
           diffState={$diffStore}
           onRefreshDiff={diffStore.refresh}
-          onCloseDiff={() => setRightPanel("none")}
           onCloseShell={closeShellPanel}
           onClosePanel={() => setRightPanel("none")}
         />

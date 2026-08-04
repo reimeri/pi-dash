@@ -35,7 +35,9 @@
     </div>
     <div class="flex gap-2">
       <Button variant="outline" disabled={reconciling} onclick={onReconcile}>
-        {#if reconciling}<Spinner data-icon="inline-start" />{:else}<HugeiconsIcon
+        {#if reconciling}<Spinner
+            data-icon="inline-start"
+          />{:else}<HugeiconsIcon
             icon={ArrowReloadHorizontalIcon}
             strokeWidth={2}
             data-icon="inline-start"
@@ -63,9 +65,10 @@
     </div>
   {:else if error}
     <Alert.Root variant="destructive" role="alert"
-      ><HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} /><Alert.Description
-        >{error}</Alert.Description
-      ></Alert.Root
+      ><HugeiconsIcon
+        icon={AlertCircleIcon}
+        strokeWidth={2}
+      /><Alert.Description>{error}</Alert.Description></Alert.Root
     >
   {:else if worktrees.length === 0}
     <Empty.Root class="border">

@@ -7,7 +7,6 @@
   export let worktree: WorktreeDto;
   export let workspaceName: string;
   export let maxFrameBytes: number;
-  export let onClose: () => void;
 
   let WorkspaceComponent:
     typeof import("./ShellTerminalWorkspace.svelte").default | undefined;
@@ -36,7 +35,7 @@
 </script>
 
 {#if WorkspaceComponent}
-  <WorkspaceComponent {worktree} {workspaceName} {maxFrameBytes} {onClose} />
+  <WorkspaceComponent {worktree} {workspaceName} {maxFrameBytes} />
 {:else if loadError}
   <Alert.Root variant="destructive" class="m-4" role="alert">
     <Alert.Title>Unable to open terminal</Alert.Title>

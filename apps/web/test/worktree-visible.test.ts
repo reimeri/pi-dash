@@ -37,9 +37,9 @@ const ordered = Array.from({ length: 25 }, (_, index) =>
 
 describe("visibleWorktrees", () => {
   it("shows the default window of 5", () => {
-    expect(visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, undefined)).toEqual(
-      ordered.slice(0, 5),
-    );
+    expect(
+      visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, undefined),
+    ).toEqual(ordered.slice(0, 5));
   });
 
   it("pins a selected worktree outside the window as the last row", () => {
@@ -116,11 +116,11 @@ describe("nextVisibleLimit", () => {
   });
 
   it("keeps the floor at INITIAL when total is smaller than INITIAL", () => {
-    expect(nextVisibleLimit(WORKTREE_VISIBLE_INITIAL, 3, -WORKTREE_VISIBLE_STEP)).toBe(
-      WORKTREE_VISIBLE_INITIAL,
-    );
-    expect(nextVisibleLimit(WORKTREE_VISIBLE_INITIAL, 3, WORKTREE_VISIBLE_STEP)).toBe(
-      WORKTREE_VISIBLE_INITIAL,
-    );
+    expect(
+      nextVisibleLimit(WORKTREE_VISIBLE_INITIAL, 3, -WORKTREE_VISIBLE_STEP),
+    ).toBe(WORKTREE_VISIBLE_INITIAL);
+    expect(
+      nextVisibleLimit(WORKTREE_VISIBLE_INITIAL, 3, WORKTREE_VISIBLE_STEP),
+    ).toBe(WORKTREE_VISIBLE_INITIAL);
   });
 });

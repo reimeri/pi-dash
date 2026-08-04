@@ -14,7 +14,6 @@
   export let terminalMaxFrameBytes: number;
   export let diffState: WorktreeDiffState;
   export let onRefreshDiff: () => void;
-  export let onCloseDiff: () => void;
   export let onCloseShell: () => void;
   export let onClosePanel: () => void;
 
@@ -40,14 +39,12 @@
         worktree={selectedWorktree}
         state={diffState}
         onRefresh={onRefreshDiff}
-        onClose={onCloseDiff}
       />
     {:else}
       <LazyShellTerminalWorkspace
         worktree={selectedWorktree}
         {workspaceName}
         maxFrameBytes={terminalMaxFrameBytes}
-        onClose={onCloseShell}
       />
     {/if}
   </Resizable.Pane>
@@ -81,14 +78,12 @@
           worktree={selectedWorktree}
           state={diffState}
           onRefresh={onRefreshDiff}
-          onClose={onCloseDiff}
         />
       {:else if rightPanel === "shell"}
         <LazyShellTerminalWorkspace
           worktree={selectedWorktree}
           {workspaceName}
           maxFrameBytes={terminalMaxFrameBytes}
-          onClose={onCloseShell}
         />
       {/if}
     </Sheet.Content>

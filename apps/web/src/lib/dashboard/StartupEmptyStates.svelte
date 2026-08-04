@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { AlertCircleIcon, ExternalLinkIcon } from "@hugeicons/core-free-icons";
+  import {
+    AlertCircleIcon,
+    ExternalLinkIcon,
+  } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
   import * as Empty from "$lib/components/ui/empty";
   import { Spinner } from "$lib/components/ui/spinner";
@@ -31,8 +34,7 @@
         >Connecting to your local daemon</Empty.Title
       >
       <Empty.Description
-        >Pi Dash is checking its database and secure browser
-        session.</Empty.Description
+        >Pi Dash is checking its database and secure browser session.</Empty.Description
       >
     </Empty.Header>
   </Empty.Root>
@@ -48,8 +50,7 @@
           : "The local daemon is disconnected"}</Empty.Title
       >
       <Empty.Description
-        >Use the diagnostic above to recover without changing repository
-        files.</Empty.Description
+        >Use the diagnostic above to recover without changing repository files.</Empty.Description
       >
     </Empty.Header>
   </Empty.Root>

@@ -73,9 +73,7 @@
 </script>
 
 <Badge
-  variant={state === "blocked"
-    ? "secondary"
-    : "ghost"}
+  variant={state === "blocked" ? "secondary" : "ghost"}
   class={cn("shrink-0", integration !== "connected" && "opacity-50")}
   title={detail}
   aria-label={detail}

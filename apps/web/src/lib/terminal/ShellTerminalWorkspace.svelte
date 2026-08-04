@@ -13,7 +13,6 @@
   export let worktree: WorktreeDto;
   export let workspaceName: string;
   export let maxFrameBytes: number;
-  export let onClose: () => void;
 
   let controls: TerminalControls | undefined;
 

@@ -9,10 +9,7 @@ export function nextVisibleLimit(
   delta: number,
 ): number {
   const upper = Math.max(WORKTREE_VISIBLE_INITIAL, total);
-  return Math.min(
-    upper,
-    Math.max(WORKTREE_VISIBLE_INITIAL, current + delta),
-  );
+  return Math.min(upper, Math.max(WORKTREE_VISIBLE_INITIAL, current + delta));
 }
 
 export function visibleWorktrees(

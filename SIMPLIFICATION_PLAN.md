@@ -28,16 +28,16 @@ Accessibility redesign and public multi-user hosting are out of scope. Do **not*
 
 ## 3. Invariants (must still work after every phase)
 
-| Capability | Critical path |
-|---|---|
+| Capability                                       | Critical path                                                                                                        |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
 | Workspace add / list / remove / rename / reorder | `workspace-routes.ts` → `WorkspaceService` → SQLite + `git-inspector` + native directory dialog → `WorkspaceSidebar` |
-| Managed worktree create / remove | routes → `WorktreeService` → `git-worktree-manager.ts` → SQLite → create/remove dialogs |
-| Branch cleanup after remove | Minimal tombstone row + `DeleteBranchDialog` + mergedness check |
-| Pi PTY terminal | `terminal-manager.ts` → `terminal-runtime.ts` → WS routes → `TerminalPane.svelte` |
-| Status badge (simpler OK) | Pi extension → status.sock → StatusService → snapshot WS → UI indicator |
-| Loopback-only daemon | bind `127.0.0.1` / `::1` only |
-| Desktop interactive use | Electron host can spawn daemon and load UI |
-| Browser/dev path | `npm run dev` can authenticate and use the API |
+| Managed worktree create / remove                 | routes → `WorktreeService` → `git-worktree-manager.ts` → SQLite → create/remove dialogs                              |
+| Branch cleanup after remove                      | Minimal tombstone row + `DeleteBranchDialog` + mergedness check                                                      |
+| Pi PTY terminal                                  | `terminal-manager.ts` → `terminal-runtime.ts` → WS routes → `TerminalPane.svelte`                                    |
+| Status badge (simpler OK)                        | Pi extension → status.sock → StatusService → snapshot WS → UI indicator                                              |
+| Loopback-only daemon                             | bind `127.0.0.1` / `::1` only                                                                                        |
+| Desktop interactive use                          | Electron host can spawn daemon and load UI                                                                           |
+| Browser/dev path                                 | `npm run dev` can authenticate and use the API                                                                       |
 
 **Always keep:**
 
@@ -54,19 +54,19 @@ Accessibility redesign and public multi-user hosting are out of scope. Do **not*
 
 These decisions are part of the plan. Do not re-litigate mid-flight unless blocked.
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| Delivery | Keep **Electron as primary** interactive product. Keep a **slim browser/dev daemon** path for `npm run dev` / automation. | README: browser cannot support every Pi keybinding; deleting desktop loses the product. Deleting browser hurts local web development. |
-| Auth | Loopback bind + short-lived bootstrap (or desktop cookie handoff). **Drop CSRF.** **Retain** exact Host validation, allowed Origin checks for mutations/WS, HttpOnly cookies, SameSite=Strict. Keep `apps/server/src/security.ts` (it is small and not over-engineering). | Loopback bind alone does not stop DNS rebinding; the server still sees a loopback connection. CSRF is the dispensable part. |
-| Worktrees | Remove idempotency ledger, HMAC snapshot/confirmation tokens, quarantine **journal**, and crash-recovery reconcile. **Retain** lifecycle states, removal preflights (including mount checks), in-process `gitCommonDir` lock, and a **minimal tombstone** for branch cleanup. | Local tool does not need durable ops journals; it does need not to delete the wrong tree or leave invisible orphans. |
-| Branch cleanup | **Retain** current UX: after successful worktree remove, keep a minimal tombstone so the user can “Delete merged branch”. Require tip-OID equality **and** mergedness against an explicit safety target. | Tip-OID alone prevents deleting a moved branch but not unmerged work. E2E covers this (`tests/e2e/worktrees.spec.ts`). |
-| Status | Keep Pi extension + unix status socket + badge. **Application events = snapshot WebSocket** (locked; not polling). Drop cursor gap protocol and acknowledge-by-revision API. Retain runtime ID, extension instance ID, and sequence handling to reject stale/out-of-order frames. Define dismiss-`done` with a monotonic completion generation so an old dismissal cannot clear a newer completion. | Badge value is `idle \| working \| blocked \| done`. |
-| Sync | Thin the sync **state taxonomy**. **Retain** fixed non-interactive environment, disabled hooks/submodules, protocol restrictions, and protection from executable local Git configuration in `git-workspace-sync.ts`. | `git fetch`/`pull` can invoke credential helpers, SSH, proxies, hooks, and unsafe protocols from repo config. |
-| Data | Prefer schema squash over migration compatibility. Drop Drizzle. **Never** instruct operators to delete the whole data directory. Use a **DB-only reset** that preserves `worktrees/` (see Phase 5). | `paths.ts` colocates `pi-dash.sqlite` and managed worktrees; wiping data dir can destroy dirty uncommitted user files. |
-| Contracts | Shared **TypeScript types**; server validates untrusted inputs; client may drop fail-closed response `Value.Check` in production (optional dev asserts). Keep validation for all untrusted boundaries listed under invariants. | Server and web ship together; untrusted boundaries still need runtime checks. |
-| Errors | Smaller `ApiErrorCodes` catalog. **Every UI-branching condition keeps a stable discriminant.** Messages are presentation only — never branch UI on message text. | Message text is unstable and localization/copy-hostile. |
-| Multi-root | Explicitly unsupported: two Pi Dash data roots managing the same repository. | Consequence of dropping cross-process flock while keeping in-process `gitCommonDir` locks. |
-| Compatibility | Break APIs freely between phases. Bump or remove protocol version constants rather than supporting old clients. | Local app; Electron/web rebuilt together. |
+| Decision       | Choice                                                                                                                                                                                                                                                                                                                                                                                              | Rationale                                                                                                                             |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Delivery       | Keep **Electron as primary** interactive product. Keep a **slim browser/dev daemon** path for `npm run dev` / automation.                                                                                                                                                                                                                                                                           | README: browser cannot support every Pi keybinding; deleting desktop loses the product. Deleting browser hurts local web development. |
+| Auth           | Loopback bind + short-lived bootstrap (or desktop cookie handoff). **Drop CSRF.** **Retain** exact Host validation, allowed Origin checks for mutations/WS, HttpOnly cookies, SameSite=Strict. Keep `apps/server/src/security.ts` (it is small and not over-engineering).                                                                                                                           | Loopback bind alone does not stop DNS rebinding; the server still sees a loopback connection. CSRF is the dispensable part.           |
+| Worktrees      | Remove idempotency ledger, HMAC snapshot/confirmation tokens, quarantine **journal**, and crash-recovery reconcile. **Retain** lifecycle states, removal preflights (including mount checks), in-process `gitCommonDir` lock, and a **minimal tombstone** for branch cleanup.                                                                                                                       | Local tool does not need durable ops journals; it does need not to delete the wrong tree or leave invisible orphans.                  |
+| Branch cleanup | **Retain** current UX: after successful worktree remove, keep a minimal tombstone so the user can “Delete merged branch”. Require tip-OID equality **and** mergedness against an explicit safety target.                                                                                                                                                                                            | Tip-OID alone prevents deleting a moved branch but not unmerged work. E2E covers this (`tests/e2e/worktrees.spec.ts`).                |
+| Status         | Keep Pi extension + unix status socket + badge. **Application events = snapshot WebSocket** (locked; not polling). Drop cursor gap protocol and acknowledge-by-revision API. Retain runtime ID, extension instance ID, and sequence handling to reject stale/out-of-order frames. Define dismiss-`done` with a monotonic completion generation so an old dismissal cannot clear a newer completion. | Badge value is `idle \| working \| blocked \| done`.                                                                                  |
+| Sync           | Thin the sync **state taxonomy**. **Retain** fixed non-interactive environment, disabled hooks/submodules, protocol restrictions, and protection from executable local Git configuration in `git-workspace-sync.ts`.                                                                                                                                                                                | `git fetch`/`pull` can invoke credential helpers, SSH, proxies, hooks, and unsafe protocols from repo config.                         |
+| Data           | Prefer schema squash over migration compatibility. Drop Drizzle. **Never** instruct operators to delete the whole data directory. Use a **DB-only reset** that preserves `worktrees/` (see Phase 5).                                                                                                                                                                                                | `paths.ts` colocates `pi-dash.sqlite` and managed worktrees; wiping data dir can destroy dirty uncommitted user files.                |
+| Contracts      | Shared **TypeScript types**; server validates untrusted inputs; client may drop fail-closed response `Value.Check` in production (optional dev asserts). Keep validation for all untrusted boundaries listed under invariants.                                                                                                                                                                      | Server and web ship together; untrusted boundaries still need runtime checks.                                                         |
+| Errors         | Smaller `ApiErrorCodes` catalog. **Every UI-branching condition keeps a stable discriminant.** Messages are presentation only — never branch UI on message text.                                                                                                                                                                                                                                    | Message text is unstable and localization/copy-hostile.                                                                               |
+| Multi-root     | Explicitly unsupported: two Pi Dash data roots managing the same repository.                                                                                                                                                                                                                                                                                                                        | Consequence of dropping cross-process flock while keeping in-process `gitCommonDir` locks.                                            |
+| Compatibility  | Break APIs freely between phases. Bump or remove protocol version constants rather than supporting old clients.                                                                                                                                                                                                                                                                                     | Local app; Electron/web rebuilt together.                                                                                             |
 
 ## 5. Current architecture (baseline)
 
@@ -128,18 +128,18 @@ Phase 2 must include automated fault injection at each Git/DB boundary (create a
 
 ## 7. Phase overview
 
-| Phase | Name | Primary outcome | Depends on |
-|---|---|---|---|
-| 0 | Delete process leftovers | Smaller repo, no runtime risk | — |
-| 1 | Independent easy wins | Diff scheduler + sync taxonomy + config slimmed | 0 |
-| 2 | Worktree de-hardening | No HMAC/idempotency/journal; safety + lifecycle retained | 0 |
-| 3 | Status protocol thin | Snapshot WS badge without cursors/ack | 0 |
-| 4 | Auth & delivery slim | Drop CSRF; keep Host/Origin/cookie flags | 0 (best after 1–3) |
-| 5 | Database & DI cleanup | No Drizzle; DB-only reset; flatter wiring | 2, 3 |
-| 4b / 5+ | Desktop log sink slim | Plain log sink **after** bootstrap secrets are redesigned | 4 |
-| 6 | Contracts & error codes | Types-first contracts; small stable UI error catalog | 2, 3, 4, 5 |
-| 7 | UI understanding | Split `App.svelte` into feature shells | 6 preferred |
-| 8 | Docs & final gate | Docs match reality; full regression | all |
+| Phase   | Name                     | Primary outcome                                           | Depends on         |
+| ------- | ------------------------ | --------------------------------------------------------- | ------------------ |
+| 0       | Delete process leftovers | Smaller repo, no runtime risk                             | —                  |
+| 1       | Independent easy wins    | Diff scheduler + sync taxonomy + config slimmed           | 0                  |
+| 2       | Worktree de-hardening    | No HMAC/idempotency/journal; safety + lifecycle retained  | 0                  |
+| 3       | Status protocol thin     | Snapshot WS badge without cursors/ack                     | 0                  |
+| 4       | Auth & delivery slim     | Drop CSRF; keep Host/Origin/cookie flags                  | 0 (best after 1–3) |
+| 5       | Database & DI cleanup    | No Drizzle; DB-only reset; flatter wiring                 | 2, 3               |
+| 4b / 5+ | Desktop log sink slim    | Plain log sink **after** bootstrap secrets are redesigned | 4                  |
+| 6       | Contracts & error codes  | Types-first contracts; small stable UI error catalog      | 2, 3, 4, 5         |
+| 7       | UI understanding         | Split `App.svelte` into feature shells                    | 6 preferred        |
+| 8       | Docs & final gate        | Docs match reality; full regression                       | all                |
 
 Phase 1 items can run in parallel with early Phase 2/3 prep. Do **not** start Phase 6 until worktree and status API surfaces have stopped changing. Do **not** slim desktop log redaction until Phase 4 has removed or contained bootstrap-token log emission.
 
@@ -306,7 +306,7 @@ Bounded smoke: daemon boots under `npm run dev` and desktop spawn args still acc
 Remove durable-ops machinery while keeping local FS/Git safety and visible lifecycle:
 
 **Create** = insert `creating` → validate → `git worktree add` → verify → transition `ready`  
-**Remove** = inspect → confirm in UI → claim `removing` → stop PTY → safety preflight → `git worktree remove` → verify absence → write **tombstone** (or `error`)  
+**Remove** = inspect → confirm in UI → claim `removing` → stop PTY → safety preflight → `git worktree remove` → verify absence → write **tombstone** (or `error`)
 
 Approximate impact: `worktree-service.ts` should fall from ~2280 LOC toward a much smaller service; delete HMAC/idempotency/journal modules; **retain** mount/identity helpers (possibly relocated out of quarantine flow).
 
@@ -328,7 +328,7 @@ Keep REST shape close enough that UI churn stays local, but simplify bodies.
 **Create**
 
 `POST /api/v1/workspaces/:id/worktrees`  
-Body: `{ name, slug, baseRef, baseCommit }`  
+Body: `{ name, slug, baseRef, baseCommit }`
 
 Server must:
 
@@ -348,7 +348,7 @@ Server must:
 **Remove**
 
 `POST /api/v1/worktrees/:id/remove`  
-Body: `{ force?: boolean }` or `{ confirmation?: "delete" }` for dirty force only.  
+Body: `{ force?: boolean }` or `{ confirmation?: "delete" }` for dirty force only.
 
 Server under `gitCommonDir` lock:
 
@@ -398,34 +398,34 @@ Mount/identity helpers currently living in `managed-path-removal.ts` may be **re
 
 ### Lifecycle states (required)
 
-| State | Meaning |
-|---|---|
-| `creating` | DB record exists; Git add in progress or incomplete |
-| `ready` | Usable worktree |
-| `removing` | Remove claimed; Git/FS mutation in progress or incomplete |
-| `removed` (tombstone) | Directory gone; optional branch cleanup pending |
-| `error` / unhealthy | Operator-visible failure; no silent orphan |
+| State                 | Meaning                                                   |
+| --------------------- | --------------------------------------------------------- |
+| `creating`            | DB record exists; Git add in progress or incomplete       |
+| `ready`               | Usable worktree                                           |
+| `removing`            | Remove claimed; Git/FS mutation in progress or incomplete |
+| `removed` (tombstone) | Directory gone; optional branch cleanup pending           |
+| `error` / unhealthy   | Operator-visible failure; no silent orphan                |
 
 Startup health refresh must list non-`ready` / non-final tombstone states.
 
 ### Files to change
 
-| Action | Path |
-|---|---|
-| Rewrite | `apps/server/src/worktrees/worktree-service.ts` |
-| Simplify | `apps/server/src/worktrees/worktree-repository.ts` (drop ops/journal tables; keep tombstone fields) |
-| Simplify | `apps/server/src/worktrees/worktree-routes.ts` |
-| Keep / extend | `apps/server/src/worktrees/worktree-validation.ts` (containment + preflight helpers) |
-| Keep thin | `apps/server/src/worktrees/worktree-lifecycle.ts` |
-| Relocate then delete quarantine flow | `managed-path-removal.ts` → keep mount/symlink/identity checks; delete quarantine rename/purge |
-| Delete | `removal-confirmation.ts`, `base-snapshot.ts` |
-| Shrink | `git-mutation-lock.ts` → in-process mutex keyed by `gitCommonDir` (still shared with `WorkspaceService`) |
-| Update wiring | `apps/server/src/daemon.ts` |
-| Update contracts | `packages/contracts/src/worktrees.ts` |
-| Update UI | `CreateWorktreeDialog.svelte`, `RemoveWorktreeDialog.svelte`, `DeleteBranchDialog.svelte` |
-| Update client | `apps/web/src/api.ts`, `apps/web/src/lib/worktrees/store.ts` |
-| Schema | stop using `worktree_operations` / `worktree_removal_journal`; keep tombstone representation |
-| Docs | rewrite `docs/architecture/worktree-lifecycle.md`; delete or rewrite `docs/operations/worktree-recovery.md` as “health refresh / manual cleanup” |
+| Action                               | Path                                                                                                                                             |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Rewrite                              | `apps/server/src/worktrees/worktree-service.ts`                                                                                                  |
+| Simplify                             | `apps/server/src/worktrees/worktree-repository.ts` (drop ops/journal tables; keep tombstone fields)                                              |
+| Simplify                             | `apps/server/src/worktrees/worktree-routes.ts`                                                                                                   |
+| Keep / extend                        | `apps/server/src/worktrees/worktree-validation.ts` (containment + preflight helpers)                                                             |
+| Keep thin                            | `apps/server/src/worktrees/worktree-lifecycle.ts`                                                                                                |
+| Relocate then delete quarantine flow | `managed-path-removal.ts` → keep mount/symlink/identity checks; delete quarantine rename/purge                                                   |
+| Delete                               | `removal-confirmation.ts`, `base-snapshot.ts`                                                                                                    |
+| Shrink                               | `git-mutation-lock.ts` → in-process mutex keyed by `gitCommonDir` (still shared with `WorkspaceService`)                                         |
+| Update wiring                        | `apps/server/src/daemon.ts`                                                                                                                      |
+| Update contracts                     | `packages/contracts/src/worktrees.ts`                                                                                                            |
+| Update UI                            | `CreateWorktreeDialog.svelte`, `RemoveWorktreeDialog.svelte`, `DeleteBranchDialog.svelte`                                                        |
+| Update client                        | `apps/web/src/api.ts`, `apps/web/src/lib/worktrees/store.ts`                                                                                     |
+| Schema                               | stop using `worktree_operations` / `worktree_removal_journal`; keep tombstone representation                                                     |
+| Docs                                 | rewrite `docs/architecture/worktree-lifecycle.md`; delete or rewrite `docs/operations/worktree-recovery.md` as “health refresh / manual cleanup” |
 
 ### Keep
 
@@ -547,16 +547,16 @@ Reconnect = new snapshot. No ack. No gap detection.
 
 ### Files
 
-| Area | Paths |
-|---|---|
-| Server status | `status/status-service.ts`, `status-socket-server.ts`, `workflow-reducer.ts`, `status-repository.ts`, `status-routes.ts` |
-| Events | `events/application-events.ts` |
-| Terminal hookup | `terminal/terminal-manager.ts`, `terminal/environment.ts` |
-| Extension | `packages/pi-extension/src/runtime.ts` |
-| Web | `apps/web/src/lib/status/events.ts`, `store.ts`, `WorkflowStatusIndicator.svelte`, `App.svelte` |
-| Contracts | `packages/contracts/src/status.ts` |
-| Tests | `status.test.ts`, `status-socket-server.test.ts`, `application-events.test.ts`, `apps/web/test/status-store.test.ts` |
-| Docs | `docs/architecture/status-protocol.md`, `docs/operations/status-troubleshooting.md`, `docs/integrations/ask-user-status.md` |
+| Area            | Paths                                                                                                                       |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Server status   | `status/status-service.ts`, `status-socket-server.ts`, `workflow-reducer.ts`, `status-repository.ts`, `status-routes.ts`    |
+| Events          | `events/application-events.ts`                                                                                              |
+| Terminal hookup | `terminal/terminal-manager.ts`, `terminal/environment.ts`                                                                   |
+| Extension       | `packages/pi-extension/src/runtime.ts`                                                                                      |
+| Web             | `apps/web/src/lib/status/events.ts`, `store.ts`, `WorkflowStatusIndicator.svelte`, `App.svelte`                             |
+| Contracts       | `packages/contracts/src/status.ts`                                                                                          |
+| Tests           | `status.test.ts`, `status-socket-server.test.ts`, `application-events.test.ts`, `apps/web/test/status-store.test.ts`        |
+| Docs            | `docs/architecture/status-protocol.md`, `docs/operations/status-troubleshooting.md`, `docs/integrations/ask-user-status.md` |
 
 ### Tasks
 
@@ -951,20 +951,20 @@ Do not amend pushed commits; do not skip hooks.
 
 ## 9. Risk register
 
-| Risk | Mitigation |
-|---|---|
-| Worktree remove deletes wrong path | Full preflight list; refuse when Git identity unproven; prefer `git worktree remove`; verify absence before tombstone |
-| Invisible orphans after crash | `creating`/`removing` rows + startup health refresh; required fault-injection tests |
-| Branch cleanup UX lost | Explicit tombstone + mergedness check retained |
-| Sync executes untrusted repo config | Keep env/hooks/protocol/config guards while thinning taxonomy |
-| DNS rebinding | Keep Host/Origin validation; dropping CSRF only |
-| Operator deletes dirty worktrees via “reset” | DB-only reset procedure; never delete data dir |
-| Terminal/remove race | Keep lifecycle claims |
-| Status dismiss races | completionId dismiss semantics |
-| Multi-data-root races | Unsupported; document after dropping cross-process flock |
-| Auth slim breaks Vite | Test `PI_DASH_UI_ORIGIN=http://127.0.0.1:5173` after Phase 4 |
-| Secrets in desktop logs | Phase 4b only after bootstrap redesign; keep scrubbers until then |
-| Huge Phase 2 PR | Split create vs remove PRs only if HMAC is fully gone in each merge |
+| Risk                                         | Mitigation                                                                                                            |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Worktree remove deletes wrong path           | Full preflight list; refuse when Git identity unproven; prefer `git worktree remove`; verify absence before tombstone |
+| Invisible orphans after crash                | `creating`/`removing` rows + startup health refresh; required fault-injection tests                                   |
+| Branch cleanup UX lost                       | Explicit tombstone + mergedness check retained                                                                        |
+| Sync executes untrusted repo config          | Keep env/hooks/protocol/config guards while thinning taxonomy                                                         |
+| DNS rebinding                                | Keep Host/Origin validation; dropping CSRF only                                                                       |
+| Operator deletes dirty worktrees via “reset” | DB-only reset procedure; never delete data dir                                                                        |
+| Terminal/remove race                         | Keep lifecycle claims                                                                                                 |
+| Status dismiss races                         | completionId dismiss semantics                                                                                        |
+| Multi-data-root races                        | Unsupported; document after dropping cross-process flock                                                              |
+| Auth slim breaks Vite                        | Test `PI_DASH_UI_ORIGIN=http://127.0.0.1:5173` after Phase 4                                                          |
+| Secrets in desktop logs                      | Phase 4b only after bootstrap redesign; keep scrubbers until then                                                     |
+| Huge Phase 2 PR                              | Split create vs remove PRs only if HMAC is fully gone in each merge                                                   |
 
 ## 10. Out-of-scope follow-ups (optional later)
 

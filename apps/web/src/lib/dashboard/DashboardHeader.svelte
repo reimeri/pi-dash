@@ -111,7 +111,12 @@
       <Popover.Root bind:open={terminalMenuOpen}>
         <Popover.Trigger>
           {#snippet child({ props })}
-            <Button {...props} variant="outline" size="sm" aria-label="Terminal">
+            <Button
+              {...props}
+              variant="outline"
+              size="sm"
+              aria-label="Terminal"
+            >
               Status
             </Button>
           {/snippet}
