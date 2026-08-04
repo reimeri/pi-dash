@@ -593,7 +593,7 @@
                                 <HugeiconsIcon
                                   icon={ComputerTerminal01Icon}
                                   strokeWidth={2}
-                                  data-icon="inline-start"
+                                  class="size-3.5"
                                 />
                               </span>
                             {/if}
