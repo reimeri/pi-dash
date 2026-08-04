@@ -178,6 +178,9 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
   await createDialog.getByLabel("Name").fill("Feature work");
   await expect(createDialog.getByLabel("Slug")).toHaveValue("feature-work");
   await createDialog.getByRole("button", { name: "Create worktree" }).click();
+  await expect(
+    page.getByRole("button", { name: "Open shell terminal" }),
+  ).toBeVisible();
   await page
     .getByRole("navigation", { name: "Workspaces" })
     .getByRole("button", { name: "Worktree E2E", exact: true })

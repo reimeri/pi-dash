@@ -345,6 +345,11 @@
     void workspaceStore.load();
   }
 
+  function openCreatedWorktree(worktree: WorktreeDto): void {
+    upsertWorktree(worktree);
+    selectWorktree(worktree);
+  }
+
   function removeWorktree(workspaceId: string, worktreeId: string) {
     worktreeStore.remove(workspaceId, worktreeId);
     workflowStatusStore.removeWorktrees([worktreeId]);
@@ -603,7 +608,7 @@
   onSyncCreateWorktree={() => {
     if (createWorktreeWorkspace) void syncWorkspace(createWorktreeWorkspace);
   }}
-  onCreatedWorktree={upsertWorktree}
+  onCreatedWorktree={openCreatedWorktree}
   onCloseRemoveWorktree={() => (removeWorktreeTarget = undefined)}
   onRemovedWorktree={(result) => {
     if (result.outcome === "removed_with_branch_cleanup") {
