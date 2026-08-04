@@ -68,14 +68,6 @@
     >
       <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
     </Button>
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      aria-label="Close changes"
-      onclick={onClose}
-    >
-      <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
-    </Button>
   </header>
 
   <div class="flex min-h-0 flex-1 flex-col">

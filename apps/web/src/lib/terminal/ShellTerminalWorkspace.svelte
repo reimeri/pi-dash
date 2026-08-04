@@ -46,9 +46,6 @@
   <header class="flex items-start gap-3 border-b p-4 pr-3">
     <div class="min-w-0 flex-1">
       <h2 id="shell-terminal-title" class="truncate font-semibold">Terminal</h2>
-      <p class="mt-1 truncate text-xs text-muted-foreground">
-        {workspaceName} · {worktree.name}
-      </p>
     </div>
     <Button
       variant="ghost"
@@ -79,18 +76,6 @@
           data-icon="inline-start"
         />
       {/if}
-    </Button>
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      aria-label="Close terminal"
-      onclick={onClose}
-    >
-      <HugeiconsIcon
-        icon={Cancel01Icon}
-        strokeWidth={2}
-        data-icon="inline-start"
-      />
     </Button>
   </header>
 

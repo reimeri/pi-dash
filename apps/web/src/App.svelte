@@ -518,11 +518,6 @@
                 size="sm"
                 aria-label="Terminal"
               >
-                <HugeiconsIcon
-                  icon={ComputerTerminal01Icon}
-                  strokeWidth={2}
-                  data-icon="inline-start"
-                />
                 Status
               </Button>
             {/snippet}
