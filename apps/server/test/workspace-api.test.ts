@@ -92,6 +92,7 @@ async function fixture() {
     workspaces,
     worktrees: createUnavailableWorktreeService(),
     terminals: createUnavailableTerminalManager(),
+    shellTerminals: createUnavailableTerminalManager(),
     statuses: status.statuses,
     events: status.events,
     capabilities: {

@@ -36,8 +36,16 @@ export function createUnavailableTerminalManager(): TerminalManager {
     resize() {},
     async dispose() {},
     async shutdown() {},
+    activities() {
+      return [];
+    },
     diagnostics() {
-      return { runtimes: 0, attachedClients: 0, bufferedBytes: 0 };
+      return {
+        runtimes: 0,
+        attachedClients: 0,
+        bufferedBytes: 0,
+        foregroundCommands: 0,
+      };
     },
   };
 }

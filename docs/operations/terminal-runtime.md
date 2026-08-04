@@ -1,6 +1,6 @@
 # Terminal runtime operations
 
-Selecting a ready, healthy managed worktree lazily starts Pi directly under a `node-pty` pseudoterminal with that worktree as its exact working directory. There is no browser-controlled executable, argument, shell, or generic terminal endpoint. One daemon owns at most one live runtime per worktree.
+Selecting a ready, healthy managed worktree lazily starts Pi directly under a `node-pty` pseudoterminal with that worktree as its exact working directory. The top-bar terminal button also opens a separate shell runtime in a right sidebar. The shell executable is fixed from the daemon user's absolute, executable `$SHELL` path with `/bin/sh` as a validated fallback; browser requests cannot choose an executable, arguments, environment, or working directory. One daemon owns at most one Pi runtime and one shell runtime per worktree.
 
 ## Requirements
 
@@ -28,15 +28,17 @@ Linux desktop or compositor-level global shortcuts remain outside application co
 Runtime states are `stopped`, `starting`, `running`, `stopping`, and `crashed`. A clean `/quit` is stopped; an unexpected nonzero exit is crashed. Exit code and signal remain visible until a start/restart replaces the runtime.
 
 - **Start** is resource-idempotent; concurrent requests return the sole runtime.
-- **Stop** is idempotent. Linux stop captures the owned process-group identities, sends SIGTERM, waits for the configured grace interval, then safely escalates exact surviving identities to SIGKILL.
+- **Stop** is idempotent. Linux stop captures owned process identities, sends SIGTERM, waits for the configured grace interval, then safely escalates exact surviving identities to SIGKILL. Pi is tracked by process group; interactive shell jobs are tracked across the shell's PTY session because foreground jobs use separate process groups.
 - **Restart** requires a UUID `Idempotency-Key`; daemon-lifetime retries return the original operation and changed-input reuse fails.
-- Hiding, switching away, evicting a browser pane, or refreshing does not stop Pi.
-- Worktree removal first claims `removing`, awaits terminal stop, then performs Git removal.
+- Hiding, switching away, evicting a browser pane, or refreshing does not stop Pi or the shell. Selecting another worktree closes the shell sidebar without terminating its session.
+- Diff and shell right panels are mutually exclusive on desktop and mobile.
+- Worktree removal first claims `removing`, awaits disposal of both terminal kinds, then performs Git removal.
 - Daemon shutdown drains every runtime. Runtime processes do not survive daemon restart.
+- The sidebar worktree row shows a terminal indicator only while the shell PTY has a foreground job. Detection uses Linux terminal process-group metadata and never parses or reports command text.
 
 ## Environment
 
-Pi inherits the user's ordinary environment, including HOME, PATH, SHELL, locale, XDG locations, SSH agent, Pi configuration, and provider credentials. Every inherited `PI_DASH_*` value is removed. Only these per-runtime status placeholders are introduced:
+Pi and the shell inherit the user's ordinary environment, including HOME, PATH, SHELL, locale, XDG locations, SSH agent, and provider credentials. Every inherited `PI_DASH_*` value is removed. Only Pi receives these per-runtime status values:
 
 - `PI_DASH_STATUS_SOCKET`
 - `PI_DASH_RUNTIME_ID`
@@ -60,4 +62,4 @@ The token and terminal bytes are never logged.
 
 ## Limitations
 
-Runtimes are local and daemon-lifetime only. There is no tmux persistence, remote/SSH/container runtime, arbitrary shell, durable terminal history, semantic parsing of Pi output, or guaranteed browser image protocol. Linux/Chromium is the validated baseline; default xterm rendering does not require WebGL.
+Runtimes are local and daemon-lifetime only. There is no tmux persistence, remote/SSH/container runtime, browser-selected executable, durable terminal history, semantic parsing of terminal output, or guaranteed browser image protocol. Background jobs do not activate the foreground-command indicator. Linux/Chromium is the validated baseline; default xterm rendering does not require WebGL.

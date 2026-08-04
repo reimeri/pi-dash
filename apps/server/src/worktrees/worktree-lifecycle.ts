@@ -19,10 +19,10 @@ export function createWorktreeLifecycleCoordinator(options: {
   now?: () => Date;
 }): WorktreeLifecycleCoordinator {
   const now = options.now ?? (() => new Date());
-  const terminalStarts = new Set<string>();
+  const terminalStarts = new Map<string, number>();
   return {
     claimRemoval(id) {
-      if (terminalStarts.has(id)) return undefined;
+      if ((terminalStarts.get(id) ?? 0) > 0) return undefined;
       return options.repository.compareAndSetLifecycle(
         id,
         "ready",
@@ -45,20 +45,18 @@ export function createWorktreeLifecycleCoordinator(options: {
       });
     },
     claimTerminalStart(id) {
-      if (terminalStarts.has(id)) return undefined;
       const record = options.repository.get(id);
       if (record?.lifecycle !== "ready") return undefined;
-      terminalStarts.add(id);
+      terminalStarts.set(id, (terminalStarts.get(id) ?? 0) + 1);
       return record;
     },
     releaseTerminalStart(id) {
-      terminalStarts.delete(id);
+      const count = terminalStarts.get(id) ?? 0;
+      if (count <= 1) terminalStarts.delete(id);
+      else terminalStarts.set(id, count - 1);
     },
     canStartTerminal(id) {
-      return (
-        !terminalStarts.has(id) &&
-        options.repository.get(id)?.lifecycle === "ready"
-      );
+      return options.repository.get(id)?.lifecycle === "ready";
     },
   };
 }

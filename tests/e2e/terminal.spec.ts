@@ -319,13 +319,70 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     ),
   ).toBeLessThan(32);
 
+  await page.getByRole("button", { name: "Open shell terminal" }).click();
+  const shell = page.getByRole("application", {
+    name: "Terminal E2E Terminal work interactive shell terminal",
+  });
+  await expect(shell).toBeVisible();
+  await expect
+    .poll(async () => ((await shell.textContent()) ?? "").trim().length)
+    .toBeGreaterThan(0);
+  await shell.click();
+  await page.keyboard.type("export PI_DASH_SHELL_TEST=persisted");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type(
+    "printf '__SHELL_READY__:%s\\n' \"$PI_DASH_SHELL_TEST\"",
+  );
+  await page.keyboard.press("Enter");
+  await expect(shell).toContainText("__SHELL_READY__:persisted");
+  await page.keyboard.type("sleep 3");
+  await page.keyboard.press("Enter");
+  const activeShellWorktree = page
+    .getByRole("navigation", { name: "Workspaces" })
+    .getByRole("button", {
+      name: /Terminal work, terminal command running/,
+    });
+  await expect(activeShellWorktree).toBeVisible();
+  await page.getByRole("button", { name: /View changes/ }).click();
+  await expect(shell).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Changes", exact: true }),
+  ).toBeVisible();
+  await expect(activeShellWorktree).toBeVisible();
+  await page.getByRole("button", { name: "Open shell terminal" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Changes", exact: true }),
+  ).toHaveCount(0);
+  await expect(shell).toBeVisible();
+  await page.getByRole("button", { name: "Close terminal" }).click();
+  await expect(terminal).toBeVisible();
+  await expect
+    .poll(async () =>
+      page
+        .getByRole("navigation", { name: "Workspaces" })
+        .getByRole("button", { name: "Terminal work", exact: true })
+        .count(),
+    )
+    .toBe(1);
+  await page.getByRole("button", { name: "Open shell terminal" }).click();
+  await expect(shell).toContainText("__SHELL_READY__:persisted");
+  await shell.click();
+  await page.keyboard.type(
+    "printf '__SHELL_REOPEN__:%s\\n' \"$PI_DASH_SHELL_TEST\"",
+  );
+  await page.keyboard.press("Enter");
+  await expect(shell).toContainText("__SHELL_REOPEN__:persisted");
+  await page.getByRole("button", { name: "Close terminal" }).click();
+
   const cookieHeader = (await page.context().cookies())
     .map((cookie) => `${cookie.name}=${cookie.value}`)
     .join("; ");
-  const wrongOriginStatus = await new Promise<number>(
-    (resolveStatus, reject) => {
+  async function wrongOriginStatus(
+    route: "terminal" | "shell-terminal",
+  ): Promise<number> {
+    return new Promise<number>((resolveStatus, reject) => {
       const rejected = new WebSocket(
-        `ws://127.0.0.1:${port}/api/v1/worktrees/${createdWorktree.id}/terminal/socket`,
+        `ws://127.0.0.1:${port}/api/v1/worktrees/${createdWorktree.id}/${route}/socket`,
         {
           headers: {
             Cookie: cookieHeader,
@@ -341,9 +398,10 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
         reject(new Error("Wrong-origin socket opened")),
       );
       rejected.once("error", () => undefined);
-    },
-  );
-  expect(wrongOriginStatus).toBe(403);
+    });
+  }
+  await expect(wrongOriginStatus("terminal")).resolves.toBe(403);
+  await expect(wrongOriginStatus("shell-terminal")).resolves.toBe(403);
 
   const protocolError = await new Promise<string>((resolveCode, reject) => {
     const candidate = new WebSocket(
@@ -380,6 +438,9 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
   await expect(terminalControls).toContainText("running");
   await expect(terminalControls).toContainText("connected");
   await expect(terminalControls).toContainText("Interactive");
+  await page.keyboard.press("Escape");
+  await expect(terminalControls).not.toBeVisible();
+  await terminal.click();
   await page.keyboard.type("echo-terminal");
   await expect(terminal).toContainText("echo-terminal");
 
@@ -398,6 +459,9 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     .getByRole("button", { name: "Start", exact: true })
     .click();
   await expect(terminalControls).toContainText("running");
+  await page.keyboard.press("Escape");
+  await expect(terminalControls).not.toBeVisible();
+  await terminal.click();
   await page.keyboard.type("after-restart");
   await expect(terminal).toContainText("after-restart");
 });

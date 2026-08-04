@@ -1,6 +1,7 @@
 <script lang="ts">
   import type {
     WorkflowStatusDto,
+    ShellActivityDto,
     WorktreeDiffSummary,
     WorkspaceAttentionDto,
     WorkspaceDto,
@@ -9,8 +10,9 @@
   import {
     Add01Icon,
     ArrowRight01Icon,
+    ComputerTerminal01Icon,
     FolderGitIcon,
-    Folder
+    Folder,
   } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
   import { onDestroy, onMount } from "svelte";
@@ -35,6 +37,7 @@
   export let worktreeLoadingByWorkspace: Record<string, boolean>;
   export let worktreeErrorsByWorkspace: Record<string, string | undefined>;
   export let workflowStatuses: Record<string, WorkflowStatusDto>;
+  export let shellActivities: Record<string, ShellActivityDto>;
   export let diffSummaries: Record<string, WorktreeDiffSummary>;
   export let workspaceAttentionStatuses: WorkspaceAttentionDto[];
   export let statusChannel: "connecting" | "connected" | "disconnected";
@@ -74,9 +77,7 @@
     const sourceIndex = items.findIndex(
       (workspace) => workspace.id === sourceId,
     );
-    let targetIndex = items.findIndex(
-      (workspace) => workspace.id === targetId,
-    );
+    let targetIndex = items.findIndex((workspace) => workspace.id === targetId);
     if (
       sourceIndex === -1 ||
       targetIndex === -1 ||
@@ -182,8 +183,7 @@
     if (!targetId) return;
 
     const targetRect = targetElement.getBoundingClientRect();
-    const insertAfter =
-      event.clientY >= targetRect.top + targetRect.height / 2;
+    const insertAfter = event.clientY >= targetRect.top + targetRect.height / 2;
     const nextWorkspaces = moveWorkspace(
       renderedWorkspaces,
       candidate.workspaceId,
@@ -296,9 +296,19 @@
   }
 
   function worktreeLabel(worktree: WorktreeDto): string {
+    const details: string[] = [];
     const summary = diffSummaries[worktree.id];
-    if (!summary?.hasChanges) return worktree.name;
-    return `${worktree.name}, ${summary.additions} added lines, ${summary.deletions} deleted lines`;
+    if (summary?.hasChanges) {
+      details.push(
+        `${summary.additions} added lines, ${summary.deletions} deleted lines`,
+      );
+    }
+    if (shellActivities[worktree.id]?.foregroundCommandActive) {
+      details.push("terminal command running");
+    }
+    return details.length > 0
+      ? `${worktree.name}, ${details.join(", ")}`
+      : worktree.name;
   }
 
   function workspaceLabel(workspace: WorkspaceDto): string {
@@ -534,6 +544,9 @@
                 {:else if orderedWorktrees.length > 0}
                   {#each orderedWorktrees as worktree (worktree.id)}
                     {@const diffSummary = diffSummaries[worktree.id]}
+                    {@const shellActive =
+                      shellActivities[worktree.id]?.foregroundCommandActive ===
+                      true}
                     <Sidebar.MenuSubItem>
                       <Button
                         class="w-full min-w-0 justify-start"
@@ -553,22 +566,37 @@
                           labelPrefix={`${worktree.name} workflow`}
                           channel={statusChannel}
                         />
-                        <span class={cn("min-w-0 flex-1 truncate text-left",
-                          workflowStatuses[worktree.id]?.integration !== "connected" && "opacity-50"
-                        )}
-                          >{worktree.name}</span
+                        <span
+                          class={cn(
+                            "min-w-0 flex-1 truncate text-left",
+                            workflowStatuses[worktree.id]?.integration !==
+                              "connected" && "opacity-50",
+                          )}>{worktree.name}</span
                         >
-                        {#if diffSummary?.hasChanges}
+                        {#if diffSummary?.hasChanges || shellActive}
                           <span
-                            class="ml-auto flex shrink-0 items-center gap-1 text-[0.625rem] leading-none tabular-nums"
+                            class="ml-auto flex shrink-0 items-center gap-2 text-[0.625rem] leading-none tabular-nums"
                             aria-hidden="true"
                           >
-                            <span class="text-diff-addition"
-                              >+{diffSummary.additions}</span
-                            >
-                            <span class="text-diff-deletion"
-                              >−{diffSummary.deletions}</span
-                            >
+                            {#if diffSummary?.hasChanges}
+                              <span class="flex items-center gap-1">
+                                <span class="text-diff-addition"
+                                  >+{diffSummary.additions}</span
+                                >
+                                <span class="text-diff-deletion"
+                                  >−{diffSummary.deletions}</span
+                                >
+                              </span>
+                            {/if}
+                            {#if shellActive}
+                              <span title="Terminal command running">
+                                <HugeiconsIcon
+                                  icon={ComputerTerminal01Icon}
+                                  strokeWidth={2}
+                                  data-icon="inline-start"
+                                />
+                              </span>
+                            {/if}
                           </span>
                         {/if}
                       </Button>

@@ -4,13 +4,17 @@ import type {
   ApiErrorCode,
   RestartRuntimeResponse,
   RuntimeDto,
+  ShellActivityDto,
 } from "@pi-dash/contracts";
-import type { PiResolver } from "../pi/pi-resolver.js";
 import { PiResolutionError } from "../pi/pi-resolver.js";
 import type { WorktreeLifecycleCoordinator } from "../worktrees/worktree-lifecycle.js";
 import { WorktreeServiceError } from "../worktrees/worktree-service.js";
-import type { TerminalSocketTransport } from "./terminal-runtime.js";
-import { TerminalRuntime } from "./terminal-runtime.js";
+import {
+  TerminalRuntime,
+  type TerminalLaunchSpec,
+  type TerminalSocketTransport,
+} from "./terminal-runtime.js";
+import type { ProcessScope } from "./process-group.js";
 
 export class TerminalManagerError extends Error {
   constructor(
@@ -28,13 +32,19 @@ interface RestartOperation {
   promise: Promise<RestartRuntimeResponse>;
 }
 
+export interface TerminalLaunchContext {
+  worktreeId: string;
+  runtimeId: string;
+  statusToken: string;
+}
+
 export interface TerminalManagerOptions {
+  runtimeKind: "pi" | "shell";
   lifecycle: WorktreeLifecycleCoordinator;
-  pi: PiResolver;
   getWorktree(id: string): { id: string };
   verifyWorktree(id: string): Promise<{ id: string }>;
-  inheritedEnv: NodeJS.ProcessEnv;
-  runtimeDirectory: string;
+  resolveLaunch(context: TerminalLaunchContext): Promise<TerminalLaunchSpec>;
+  processScope?: ProcessScope;
   initialCols: number;
   initialRows: number;
   outputBufferBytes: number;
@@ -45,6 +55,7 @@ export interface TerminalManagerOptions {
     resetRuntime(worktreeId: string, runtimeId: string): void;
   };
   onRuntimeState?: (runtime: RuntimeDto) => void;
+  onShellActivity?: (activity: ShellActivityDto) => void;
   now?: () => Date;
   id?: () => string;
 }
@@ -66,6 +77,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
   const now = options.now ?? (() => new Date());
   const createId = options.id ?? randomUUID;
   const runtimes = new Map<string, TerminalRuntime>();
+  const shellActivities = new Map<string, ShellActivityDto>();
   const locks = new Map<string, Promise<void>>();
   const restartOperations = new Map<string, RestartOperation>();
   let shuttingDown = false;
@@ -93,6 +105,15 @@ export function createTerminalManager(options: TerminalManagerOptions) {
 
   function runtimeDto(worktreeId: string): RuntimeDto {
     return { ...(runtimes.get(worktreeId)?.dto ?? stoppedRuntime(worktreeId)) };
+  }
+
+  function publishShellActivity(activity: ShellActivityDto): void {
+    shellActivities.set(activity.worktreeId, activity);
+    try {
+      options.onShellActivity?.(activity);
+    } catch {
+      // Application event fan-out is independent from terminal activity.
+    }
   }
 
   async function startLocked(worktreeId: string): Promise<RuntimeDto> {
@@ -139,13 +160,13 @@ export function createTerminalManager(options: TerminalManagerOptions) {
       );
     }
 
-    let runtime: TerminalRuntime;
+    let runtime: TerminalRuntime | undefined;
     try {
       if (claimed.health !== "healthy") {
         throw new TerminalManagerError(
           409,
           "WORKTREE_UNHEALTHY",
-          "The managed worktree must be healthy before Pi can start",
+          "The managed worktree must be healthy before a terminal can start",
         );
       }
       const runtimeId = createId();
@@ -154,9 +175,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
         worktreeId,
         runtimeId,
         cwd: claimed.path,
-        inheritedEnv: options.inheritedEnv,
-        runtimeDirectory: options.runtimeDirectory,
-        statusToken,
+        processScope: options.processScope,
         initialCols: options.initialCols,
         initialRows: options.initialRows,
         outputBufferBytes: options.outputBufferBytes,
@@ -169,9 +188,20 @@ export function createTerminalManager(options: TerminalManagerOptions) {
             options.status?.resetRuntime(worktreeId, runtimeId);
           }
         },
+        onShellActivity: options.onShellActivity
+          ? publishShellActivity
+          : undefined,
       });
       existing?.dispose();
       runtimes.set(worktreeId, runtime);
+      if (options.onShellActivity) {
+        publishShellActivity({
+          worktreeId,
+          runtimeId,
+          foregroundCommandActive: false,
+          changedAt: now().toISOString(),
+        });
+      }
       try {
         options.status?.registerRuntime(worktreeId, runtimeId, statusToken);
       } catch {
@@ -182,49 +212,49 @@ export function createTerminalManager(options: TerminalManagerOptions) {
       } catch {
         // Application event fan-out is independent from terminal startup.
       }
+
+      try {
+        const [canonicalPath, metadata, launch] = await Promise.all([
+          realpath(claimed.path),
+          stat(claimed.path),
+          options.resolveLaunch({ worktreeId, runtimeId, statusToken }),
+          options.verifyWorktree(worktreeId),
+        ]);
+        if (canonicalPath !== claimed.path || !metadata.isDirectory()) {
+          throw new TerminalManagerError(
+            409,
+            "WORKTREE_UNHEALTHY",
+            "The managed worktree path is no longer an exact directory",
+          );
+        }
+        await runtime.start(launch);
+        return { ...runtime.dto };
+      } catch (error) {
+        try {
+          await runtime.stop();
+        } catch {
+          // Preserve the original sanitized startup failure.
+        }
+        runtime.failStart();
+        if (error instanceof TerminalManagerError) throw error;
+        if (error instanceof PiResolutionError) {
+          throw new TerminalManagerError(503, error.code, error.message);
+        }
+        if (error instanceof WorktreeServiceError) {
+          throw new TerminalManagerError(
+            error.statusCode,
+            error.code,
+            error.message,
+          );
+        }
+        throw new TerminalManagerError(
+          503,
+          "PTY_START_FAILED",
+          `${options.runtimeKind === "pi" ? "Pi" : "The shell"} could not be started in the managed worktree`,
+        );
+      }
     } finally {
       options.lifecycle.releaseTerminalStart(worktreeId);
-    }
-
-    try {
-      const [canonicalPath, metadata, pi] = await Promise.all([
-        realpath(claimed.path),
-        stat(claimed.path),
-        options.pi.probe(),
-        options.verifyWorktree(worktreeId),
-      ]);
-      if (canonicalPath !== claimed.path || !metadata.isDirectory()) {
-        throw new TerminalManagerError(
-          409,
-          "WORKTREE_UNHEALTHY",
-          "The managed worktree path is no longer an exact directory",
-        );
-      }
-      await runtime.start(pi);
-      return { ...runtime.dto };
-    } catch (error) {
-      try {
-        await runtime.stop();
-      } catch {
-        // Preserve the original sanitized startup failure.
-      }
-      runtime.failStart();
-      if (error instanceof TerminalManagerError) throw error;
-      if (error instanceof PiResolutionError) {
-        throw new TerminalManagerError(503, error.code, error.message);
-      }
-      if (error instanceof WorktreeServiceError) {
-        throw new TerminalManagerError(
-          error.statusCode,
-          error.code,
-          error.message,
-        );
-      }
-      throw new TerminalManagerError(
-        503,
-        "PTY_START_FAILED",
-        "Pi could not be started in the managed worktree",
-      );
     }
   }
 
@@ -263,7 +293,13 @@ export function createTerminalManager(options: TerminalManagerOptions) {
       idempotencyKey: string,
     ): Promise<RestartRuntimeResponse> {
       const hash = createHash("sha256")
-        .update(JSON.stringify({ operation: "terminal-restart", worktreeId }))
+        .update(
+          JSON.stringify({
+            operation: "terminal-restart",
+            runtimeKind: options.runtimeKind,
+            worktreeId,
+          }),
+        )
         .digest("hex");
       const prior = restartOperations.get(idempotencyKey);
       if (prior) {
@@ -349,6 +385,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
         await stopLocked(worktreeId);
         runtime.dispose();
         runtimes.delete(worktreeId);
+        shellActivities.delete(worktreeId);
       });
     },
 
@@ -371,6 +408,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
           }
           runtimes.get(worktreeId)?.dispose();
           runtimes.delete(worktreeId);
+          shellActivities.delete(worktreeId);
         }
         if (failures.length > 0) {
           throw new AggregateError(
@@ -380,6 +418,10 @@ export function createTerminalManager(options: TerminalManagerOptions) {
         }
       })();
       return shutdownPromise;
+    },
+
+    activities(): ShellActivityDto[] {
+      return [...shellActivities.values()].map((activity) => ({ ...activity }));
     },
 
     diagnostics() {
@@ -393,6 +435,9 @@ export function createTerminalManager(options: TerminalManagerOptions) {
           (total, runtime) => total + runtime.output.bytes,
           0,
         ),
+        foregroundCommands: [...shellActivities.values()].filter(
+          (activity) => activity.foregroundCommandActive,
+        ).length,
       };
     },
   };

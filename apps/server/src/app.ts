@@ -59,6 +59,7 @@ export interface HttpServerOptions {
   workspaces: WorkspaceService;
   worktrees: WorktreeService;
   terminals: TerminalManager;
+  shellTerminals: TerminalManager;
   statuses: StatusService;
   events: ApplicationEvents;
   capabilities: {
@@ -239,6 +240,13 @@ export async function buildHttpServer(options: HttpServerOptions) {
     worktrees: options.worktrees,
     auth: options.auth,
     maxFrameBytes: options.config.terminalMaxFrameBytes,
+  });
+  await registerTerminalRoutes(app, {
+    terminals: options.shellTerminals,
+    worktrees: options.worktrees,
+    auth: options.auth,
+    maxFrameBytes: options.config.terminalMaxFrameBytes,
+    routeSegment: "shell-terminal",
   });
   await registerStatusRoutes(app, {
     statuses: options.statuses,

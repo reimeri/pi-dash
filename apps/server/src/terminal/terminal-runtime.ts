@@ -1,18 +1,18 @@
 import type {
   RuntimeDto,
+  ShellActivityDto,
   TerminalRuntimeState,
   TerminalServerFrame,
 } from "@pi-dash/contracts";
 import type { IDisposable, IPty } from "node-pty";
-import type { ResolvedPi } from "../pi/pi-resolver.js";
-import { createTerminalEnvironment } from "./environment.js";
 import { OutputRing } from "./output-ring.js";
 import {
-  captureOwnedProcessGroupDescendants,
-  captureOwnedProcessGroupMembers,
+  captureOwnedProcessDescendants,
+  captureOwnedProcessMembers,
   readProcessIdentity,
-  stopOwnedProcessGroup,
+  stopOwnedProcesses,
   type ProcessIdentity,
+  type ProcessScope,
 } from "./process-group.js";
 
 export interface TerminalSocketTransport {
@@ -27,13 +27,17 @@ interface ClientConnection {
   replayReady: boolean;
 }
 
+export interface TerminalLaunchSpec {
+  executable: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
 export interface TerminalRuntimeOptions {
   worktreeId: string;
   runtimeId: string;
   cwd: string;
-  inheritedEnv: NodeJS.ProcessEnv;
-  runtimeDirectory: string;
-  statusToken: string;
+  processScope?: ProcessScope;
   initialCols: number;
   initialRows: number;
   outputBufferBytes: number;
@@ -41,6 +45,7 @@ export interface TerminalRuntimeOptions {
   stopGraceMs: number;
   now: () => Date;
   onState?: (runtime: RuntimeDto) => void;
+  onShellActivity?: (activity: ShellActivityDto) => void;
 }
 
 export class TerminalRuntime {
@@ -56,6 +61,7 @@ export class TerminalRuntime {
   #trackerInFlight = Promise.resolve();
   #trackerBusy = false;
   #trackerTicks = 0;
+  #foregroundCommandActive = false;
   #inputOwner?: string;
   #stopRequested = false;
   #exitHandled = false;
@@ -105,20 +111,14 @@ export class TerminalRuntime {
     });
   }
 
-  async start(pi: ResolvedPi): Promise<void> {
+  async start(launch: TerminalLaunchSpec): Promise<void> {
     const { spawn } = await import("node-pty");
-    const pty = spawn(pi.executable, ["--extension", pi.extensionPath], {
+    const pty = spawn(launch.executable, launch.args, {
       name: "xterm-256color",
       cols: this.#dimensions.cols,
       rows: this.#dimensions.rows,
       cwd: this.options.cwd,
-      env: createTerminalEnvironment({
-        inherited: this.options.inheritedEnv,
-        runtimeDirectory: this.options.runtimeDirectory,
-        runtimeId: this.options.runtimeId,
-        worktreeId: this.options.worktreeId,
-        statusToken: this.options.statusToken,
-      }),
+      env: launch.env,
     });
     this.#pty = pty;
     this.#dataListener = pty.onData((data) => {
@@ -141,19 +141,29 @@ export class TerminalRuntime {
 
     if (process.platform === "linux") {
       this.#leader = await readProcessIdentity(pty.pid);
-      if (!this.#leader || this.#leader.processGroup !== pty.pid) {
+      if (
+        !this.#leader ||
+        this.#leader.processGroup !== pty.pid ||
+        (this.options.processScope === "session" &&
+          this.#leader.session !== pty.pid)
+      ) {
         this.#stopRequested = true;
         try {
           pty.kill("SIGKILL");
         } catch {
           // Process already exited while identity was checked.
         }
-        throw new Error("PTY child is not the owned process-group leader");
+        throw new Error(
+          this.options.processScope === "session"
+            ? "PTY child is not the owned session leader"
+            : "PTY child is not the owned process-group leader",
+        );
       }
       this.trackedProcesses.set(this.#leader.pid, this.#leader);
-      await captureOwnedProcessGroupMembers(
+      await captureOwnedProcessMembers(
         this.#leader,
         this.trackedProcesses,
+        this.options.processScope,
       );
       this.#tracker = setInterval(() => this.#trackProcesses(), 250);
       this.#tracker.unref?.();
@@ -171,16 +181,48 @@ export class TerminalRuntime {
     });
   }
 
+  #setForegroundCommandActive(active: boolean): void {
+    if (
+      !this.options.onShellActivity ||
+      this.#foregroundCommandActive === active
+    ) {
+      return;
+    }
+    this.#foregroundCommandActive = active;
+    try {
+      this.options.onShellActivity({
+        worktreeId: this.options.worktreeId,
+        runtimeId: this.options.runtimeId,
+        foregroundCommandActive: active,
+        changedAt: this.options.now().toISOString(),
+      });
+    } catch {
+      // Application event observers must not interfere with PTY tracking.
+    }
+  }
+
   #trackProcesses(): void {
     if (!this.#leader || this.#trackerBusy) return;
     this.#trackerBusy = true;
     this.#trackerTicks += 1;
+    const leader = this.#leader;
     const capture =
       this.#trackerTicks % 4 === 0
-        ? captureOwnedProcessGroupMembers
-        : captureOwnedProcessGroupDescendants;
-    this.#trackerInFlight = capture(this.#leader, this.trackedProcesses)
-      .then(() => undefined)
+        ? captureOwnedProcessMembers
+        : captureOwnedProcessDescendants;
+    this.#trackerInFlight = Promise.all([
+      capture(leader, this.trackedProcesses, this.options.processScope),
+      this.options.onShellActivity
+        ? readProcessIdentity(leader.pid)
+        : Promise.resolve(undefined),
+    ])
+      .then(([, currentLeader]) => {
+        if (!currentLeader) return;
+        this.#setForegroundCommandActive(
+          currentLeader.foregroundProcessGroup > 0 &&
+            currentLeader.foregroundProcessGroup !== currentLeader.processGroup,
+        );
+      })
       .catch(() => undefined)
       .finally(() => {
         this.#trackerBusy = false;
@@ -198,6 +240,7 @@ export class TerminalRuntime {
     this.#exitListener = undefined;
     this.#pty = undefined;
     const state = this.#stopRequested || exitCode === 0 ? "stopped" : "crashed";
+    this.#setForegroundCommandActive(false);
     this.#setState(state, {
       exitedAt: this.options.now().toISOString(),
       exitCode,
@@ -337,11 +380,12 @@ export class TerminalRuntime {
     this.#setState("stopping");
     if (this.#tracker) clearInterval(this.#tracker);
     await this.#trackerInFlight;
-    const cleaned = await stopOwnedProcessGroup({
+    const cleaned = await stopOwnedProcesses({
       pty: this.#pty,
       leader: this.#leader,
       tracked: this.trackedProcesses,
       timeoutMs: this.options.stopGraceMs,
+      scope: this.options.processScope,
     });
     if (!cleaned) {
       throw new Error(
@@ -349,6 +393,7 @@ export class TerminalRuntime {
       );
     }
     this.trackedProcesses.clear();
+    this.#setForegroundCommandActive(false);
     this.#setState("stopped", {
       exitedAt: this.dto.exitedAt ?? this.options.now().toISOString(),
     });

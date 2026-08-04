@@ -33,6 +33,11 @@ import {
   createTerminalManager,
   type TerminalManager,
 } from "./terminal/terminal-manager.js";
+import {
+  createPiTerminalEnvironment,
+  createShellTerminalEnvironment,
+} from "./terminal/environment.js";
+import { resolveUserShell } from "./terminal/shell-resolver.js";
 import { createGitDiffInspector } from "./git/git-diff-inspector.js";
 import { createGitInspector } from "./git/git-inspector.js";
 import { createGitWorktreeManager } from "./git/git-worktree-manager.js";
@@ -62,6 +67,7 @@ export interface Daemon {
   config: AppConfig;
   database: DatabaseService;
   terminals: TerminalManager;
+  shellTerminals: TerminalManager;
   statuses: StatusService;
   paths: AppPaths;
   bootstrapUrl: string;
@@ -90,6 +96,7 @@ export async function createDaemon(
   let workspaces: WorkspaceService | undefined;
   let worktrees: WorktreeService | undefined;
   let terminals: TerminalManager | undefined;
+  let shellTerminals: TerminalManager | undefined;
   let statuses: StatusService | undefined;
   let statusSocket: StatusSocketServer | undefined;
   let applicationEvents: ApplicationEvents | undefined;
@@ -110,6 +117,7 @@ export async function createDaemon(
       }
     };
     if (terminals) await attempt(() => terminals!.shutdown());
+    if (shellTerminals) await attempt(() => shellTerminals!.shutdown());
     if (statusSocket) await attempt(() => statusSocket!.close());
     if (applicationEvents) await attempt(() => applicationEvents!.close());
     if (app) await attempt(() => app!.close());
@@ -219,9 +227,19 @@ export async function createDaemon(
       }),
       managedRoot: paths.worktrees,
       stopRuntime: async (worktree) => {
-        if (!terminals) return;
-        await terminals.stop(worktree.id);
-        await terminals.dispose(worktree.id);
+        const results = await Promise.allSettled([
+          terminals?.dispose(worktree.id),
+          shellTerminals?.dispose(worktree.id),
+        ]);
+        const failures = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        );
+        if (failures.length > 0) {
+          throw new AggregateError(
+            failures,
+            "One or more worktree terminal runtimes could not be disposed",
+          );
+        }
       },
       onMembershipChange: (change) => {
         if (change.type === "removed") {
@@ -235,12 +253,24 @@ export async function createDaemon(
       },
     });
     terminals = createTerminalManager({
+      runtimeKind: "pi",
       lifecycle,
-      pi,
       getWorktree: (id) => worktrees!.get(id),
       verifyWorktree: (id) => worktrees!.verifyTerminalStart(id),
-      inheritedEnv: env,
-      runtimeDirectory: paths.runtime,
+      resolveLaunch: async ({ worktreeId, runtimeId, statusToken }) => {
+        const resolved = await pi.probe();
+        return {
+          executable: resolved.executable,
+          args: ["--extension", resolved.extensionPath],
+          env: createPiTerminalEnvironment({
+            inherited: env,
+            runtimeDirectory: paths.runtime,
+            runtimeId,
+            worktreeId,
+            statusToken,
+          }),
+        };
+      },
       initialCols: config.terminalInitialCols,
       initialRows: config.terminalInitialRows,
       outputBufferBytes: config.terminalOutputBufferBytes,
@@ -256,10 +286,30 @@ export async function createDaemon(
       },
       onRuntimeState: (runtime) => applicationEvents?.publishRuntime(runtime),
     });
+    shellTerminals = createTerminalManager({
+      runtimeKind: "shell",
+      lifecycle,
+      getWorktree: (id) => worktrees!.get(id),
+      verifyWorktree: (id) => worktrees!.verifyTerminalStart(id),
+      resolveLaunch: async () => ({
+        executable: await resolveUserShell(env),
+        args: [],
+        env: createShellTerminalEnvironment(env),
+      }),
+      processScope: "session",
+      initialCols: config.terminalInitialCols,
+      initialRows: config.terminalInitialRows,
+      outputBufferBytes: config.terminalOutputBufferBytes,
+      maxSocketBufferedBytes: config.terminalMaxSocketBufferedBytes,
+      stopGraceMs: config.terminalStopGraceMs,
+      onShellActivity: (activity) =>
+        applicationEvents?.publishShellActivity(activity),
+    });
     applicationEvents = createApplicationEvents({
       statuses: () => statuses!.list(),
       runtimes: () =>
         statuses!.list().map((status) => terminals!.get(status.worktreeId)),
+      shellActivities: () => shellTerminals!.activities(),
       workspaceAttention: () => statuses!.workspaceAttention(),
     });
     statuses.setPublisher((status) => applicationEvents!.publishStatus(status));
@@ -275,6 +325,7 @@ export async function createDaemon(
       workspaces,
       worktrees,
       terminals,
+      shellTerminals,
       statuses,
       events: applicationEvents,
       capabilities: {
@@ -320,7 +371,10 @@ export async function createDaemon(
             voluntary: resources.voluntaryContextSwitches,
             involuntary: resources.involuntaryContextSwitches,
           },
-          terminals: terminals!.diagnostics(),
+          terminals: {
+            pi: terminals!.diagnostics(),
+            shell: shellTerminals!.diagnostics(),
+          },
           activeResources,
         };
         if (logger.isLevelEnabled("info")) {
@@ -346,6 +400,7 @@ export async function createDaemon(
       config,
       database,
       terminals,
+      shellTerminals,
       statuses,
       paths,
       bootstrapUrl,

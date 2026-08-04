@@ -10,6 +10,7 @@ export function createStatusTestServices(sqlite: BetterSqlite3.Database) {
   const events = createApplicationEvents({
     statuses: () => statuses.list(),
     runtimes: () => [],
+    shellActivities: () => [],
     workspaceAttention: () => statuses.workspaceAttention(),
   });
   return { statuses, events };

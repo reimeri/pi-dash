@@ -36,6 +36,17 @@ export const RuntimeSchema = Type.Object(
 );
 export type RuntimeDto = Static<typeof RuntimeSchema>;
 
+export const ShellActivitySchema = Type.Object(
+  {
+    worktreeId: UuidSchema,
+    runtimeId: Type.Union([UuidSchema, Type.Null()]),
+    foregroundCommandActive: Type.Boolean(),
+    changedAt: TimestampSchema,
+  },
+  { additionalProperties: false },
+);
+export type ShellActivityDto = Static<typeof ShellActivitySchema>;
+
 export const RuntimeResponseSchema = Type.Object(
   { runtime: RuntimeSchema },
   { additionalProperties: false },

@@ -65,6 +65,7 @@
   import { syncStatusLabel } from "./lib/workspaces/sync.js";
   import type { TerminalControls } from "./lib/terminal/controls.js";
   import LazyTerminalWorkspace from "./lib/terminal/LazyTerminalWorkspace.svelte";
+  import LazyShellTerminalWorkspace from "./lib/terminal/LazyShellTerminalWorkspace.svelte";
   import {
     createStatusEventClient,
     type StatusEventClient,
@@ -90,6 +91,9 @@
   let createWorktreeWorkspaceId: string | undefined;
   let removeWorktreeTarget: WorktreeDto | undefined;
   let deleteBranchTarget: WorktreeDto | undefined;
+  type RightPanel = "none" | "diff" | "shell";
+  let rightPanel: RightPanel = "none";
+  let shellTrigger: HTMLButtonElement | null = null;
   let terminalControls: TerminalControls | undefined;
   let terminalMenuOpen = false;
   let focusTerminalAfterMenuClose = false;
@@ -147,6 +151,7 @@
   $: if (!terminalOpen) {
     terminalControls = undefined;
     terminalMenuOpen = false;
+    if (rightPanel !== "none") setRightPanel("none");
   }
 
   async function connect() {
@@ -267,6 +272,7 @@
   }
 
   function selectWorkspace(id: string) {
+    setRightPanel("none");
     selectedId = id;
     selectedWorktreeId = undefined;
     void worktreeStore.load(id);
@@ -304,6 +310,7 @@
 
   function selectWorktree(worktree: WorktreeDto) {
     if (!canOpenTerminal(worktree)) return;
+    if (selectedWorktreeId !== worktree.id) setRightPanel("none");
     selectedId = worktree.workspaceId;
     selectedWorktreeId = worktree.id;
     requestAnimationFrame(() => acknowledgeWorkflow(worktree.id));
@@ -330,6 +337,20 @@
           acknowledgements.delete(worktreeId);
         }
       });
+  }
+
+  function setRightPanel(panel: RightPanel): void {
+    rightPanel = panel;
+    diffStore.setOpen(panel === "diff");
+  }
+
+  function toggleRightPanel(panel: Exclude<RightPanel, "none">): void {
+    setRightPanel(rightPanel === panel ? "none" : panel);
+  }
+
+  function closeShellPanel(): void {
+    setRightPanel("none");
+    requestAnimationFrame(() => shellTrigger?.focus());
   }
 
   function diffButtonLabel(state: WorktreeDiffState): string {
@@ -445,13 +466,13 @@
     <div class="flex min-w-0 items-center gap-2">
       {#if diffAvailable}
         <Button
-          variant={$diffStore.open ? "secondary" : "outline"}
+          variant={rightPanel === "diff" ? "secondary" : "outline"}
           size={$diffStore.summary?.hasChanges ? "sm" : "icon-sm"}
           aria-label={diffButtonLabel($diffStore)}
-          aria-expanded={$diffStore.open}
+          aria-expanded={rightPanel === "diff"}
           aria-controls="worktree-diff-viewer"
           title={diffButtonLabel($diffStore)}
-          onclick={() => diffStore.setOpen(!$diffStore.open)}
+          onclick={() => toggleRightPanel("diff")}
         >
           {#if $diffStore.status === "loading" && !$diffStore.summary}
             <Spinner />
@@ -468,6 +489,26 @@
         </Button>
       {/if}
       {#if terminalOpen}
+        <Button
+          bind:ref={shellTrigger}
+          variant={rightPanel === "shell" ? "secondary" : "outline"}
+          size="icon-sm"
+          aria-label={rightPanel === "shell"
+            ? "Close shell terminal"
+            : "Open shell terminal"}
+          aria-expanded={rightPanel === "shell"}
+          aria-controls="worktree-shell-terminal"
+          title={rightPanel === "shell"
+            ? "Close shell terminal"
+            : "Open shell terminal"}
+          onclick={() => toggleRightPanel("shell")}
+        >
+          <HugeiconsIcon
+            icon={ComputerTerminal01Icon}
+            strokeWidth={2}
+            data-icon="inline-start"
+          />
+        </Button>
         <Popover.Root bind:open={terminalMenuOpen}>
           <Popover.Trigger>
             {#snippet child({ props })}
@@ -625,6 +666,7 @@
               worktreeLoadingByWorkspace={$worktreeStore.loadingByWorkspace}
               worktreeErrorsByWorkspace={$worktreeStore.errorsByWorkspace}
               workflowStatuses={$workflowStatusStore.byWorktree}
+              shellActivities={$workflowStatusStore.shellActivities}
               diffSummaries={sidebarDiffSummaries}
               workspaceAttentionStatuses={$workflowStatusStore.workspaceAttention}
               statusChannel={$workflowStatusStore.channel}
@@ -1233,7 +1275,7 @@
             {/if}
           </div>
         </Resizable.Pane>
-        {#if terminalOpen && $diffStore.open && selectedWorktree && !isMobile.current}
+        {#if terminalOpen && rightPanel !== "none" && selectedWorktree && !isMobile.current}
           <Resizable.Handle withHandle />
           <Resizable.Pane
             class="min-h-0"
@@ -1242,20 +1284,34 @@
             maxSize={70}
             order={2}
           >
-            <DiffWorkspace
-              worktree={selectedWorktree}
-              state={$diffStore}
-              onRefresh={diffStore.refresh}
-              onClose={() => diffStore.setOpen(false)}
-            />
+            {#if rightPanel === "diff"}
+              <DiffWorkspace
+                worktree={selectedWorktree}
+                state={$diffStore}
+                onRefresh={diffStore.refresh}
+                onClose={() => setRightPanel("none")}
+              />
+            {:else}
+              <LazyShellTerminalWorkspace
+                worktree={selectedWorktree}
+                workspaceName={selectedWorkspace?.name ?? ""}
+                maxFrameBytes={terminalMaxFrameBytes}
+                onClose={closeShellPanel}
+              />
+            {/if}
           </Resizable.Pane>
         {/if}
       </Resizable.PaneGroup>
 
       {#if terminalOpen && selectedWorktree && isMobile.current}
         <Sheet.Root
-          open={$diffStore.open}
-          onOpenChange={(open) => diffStore.setOpen(open)}
+          open={rightPanel !== "none"}
+          onOpenChange={(open) => {
+            if (!open) {
+              if (rightPanel === "shell") closeShellPanel();
+              else setRightPanel("none");
+            }
+          }}
         >
           <Sheet.Content
             side="right"
@@ -1263,18 +1319,30 @@
             class="w-[calc(100%-1rem)] p-0"
           >
             <Sheet.Header class="sr-only">
-              <Sheet.Title>Worktree changes</Sheet.Title>
+              <Sheet.Title>
+                {rightPanel === "diff" ? "Worktree changes" : "Shell terminal"}
+              </Sheet.Title>
               <Sheet.Description>
-                Unified diff against the selected worktree branch’s newest
-                commit.
+                {rightPanel === "diff"
+                  ? "Unified diff against the selected worktree branch’s newest commit."
+                  : "Interactive shell in the selected managed worktree."}
               </Sheet.Description>
             </Sheet.Header>
-            <DiffWorkspace
-              worktree={selectedWorktree}
-              state={$diffStore}
-              onRefresh={diffStore.refresh}
-              onClose={() => diffStore.setOpen(false)}
-            />
+            {#if rightPanel === "diff"}
+              <DiffWorkspace
+                worktree={selectedWorktree}
+                state={$diffStore}
+                onRefresh={diffStore.refresh}
+                onClose={() => setRightPanel("none")}
+              />
+            {:else if rightPanel === "shell"}
+              <LazyShellTerminalWorkspace
+                worktree={selectedWorktree}
+                workspaceName={selectedWorkspace?.name ?? ""}
+                maxFrameBytes={terminalMaxFrameBytes}
+                onClose={closeShellPanel}
+              />
+            {/if}
           </Sheet.Content>
         </Sheet.Root>
       {/if}

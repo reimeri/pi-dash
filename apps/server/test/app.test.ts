@@ -78,6 +78,7 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
     workspaces,
     worktrees: createUnavailableWorktreeService(),
     terminals: createUnavailableTerminalManager(),
+    shellTerminals: createUnavailableTerminalManager(),
     statuses: status.statuses,
     events: status.events,
     capabilities: {

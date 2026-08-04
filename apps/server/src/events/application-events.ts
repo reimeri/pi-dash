@@ -2,6 +2,7 @@ import {
   APPLICATION_EVENTS_PROTOCOL_VERSION,
   type ApplicationEventsServerFrame,
   type RuntimeDto,
+  type ShellActivityDto,
   type WorkflowStatusDto,
   type WorkspaceAttentionDto,
   type WorkspaceDto,
@@ -22,6 +23,7 @@ export interface ApplicationEvents {
   readonly cursor: number;
   publishStatus(status: WorkflowStatusDto): void;
   publishRuntime(runtime: RuntimeDto): void;
+  publishShellActivity(activity: ShellActivityDto): void;
   publishWorkspaceUpdated(workspace: WorkspaceDto): void;
   publishWorkspaceOrderUpdated(workspaceIds: string[]): void;
   publishWorktreeRemoved(worktreeId: string, workspaceId: string): void;
@@ -32,6 +34,7 @@ export interface ApplicationEvents {
 export function createApplicationEvents(options: {
   statuses: () => WorkflowStatusDto[];
   runtimes: () => RuntimeDto[];
+  shellActivities: () => ShellActivityDto[];
   workspaceAttention: () => WorkspaceAttentionDto[];
   maxBufferedBytes?: number;
 }): ApplicationEvents {
@@ -90,6 +93,15 @@ export function createApplicationEvents(options: {
         runtime,
       });
     },
+    publishShellActivity(activity) {
+      cursor += 1;
+      append({
+        v: APPLICATION_EVENTS_PROTOCOL_VERSION,
+        type: "shellActivity",
+        cursor,
+        activity,
+      });
+    },
     publishWorkspaceUpdated(workspace) {
       cursor += 1;
       append({
@@ -129,6 +141,7 @@ export function createApplicationEvents(options: {
         cursor: snapshotCursor,
         statuses: options.statuses(),
         runtimes: options.runtimes(),
+        shellActivities: options.shellActivities(),
         workspaceAttention: options.workspaceAttention(),
       });
       subscriber.snapshotSent = true;

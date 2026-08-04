@@ -28,13 +28,14 @@
 
   export let worktree: WorktreeDto;
   export let workspaceName: string;
+  export let kind: "pi" | "shell" = "pi";
   export let visible: boolean;
   export let maxFrameBytes: number;
   export let onControlsChange: (
     worktreeId: string,
     controls: Parameters<TerminalControlsChange>[0],
   ) => void;
-  export let onAcknowledge: (worktreeId: string) => void;
+  export let onAcknowledge: (worktreeId: string) => void = () => undefined;
 
   let host: HTMLDivElement;
   let terminal: Terminal | undefined;
@@ -137,7 +138,7 @@
   }
 
   function sendTextInput(data: string): void {
-    onAcknowledge(worktree.id);
+    if (kind === "pi") onAcknowledge(worktree.id);
     const maximum = Math.max(128, Math.min(64 * 1024, maxFrameBytes - 256));
     for (const chunk of splitUtf8Input(data, maximum)) {
       send({ v: 1, type: "input", data: chunk });
@@ -145,7 +146,7 @@
   }
 
   function sendBinaryInput(data: string): void {
-    onAcknowledge(worktree.id);
+    if (kind === "pi") onAcknowledge(worktree.id);
     const maximum = Math.max(
       64,
       Math.floor((Math.min(64 * 1024, maxFrameBytes - 256) * 3) / 4),
@@ -224,8 +225,7 @@
       queueOutput(frame.seq, frame.data);
     } else if (frame.type === "replayReset") {
       resetOutput(frame.earliestSeq - 1);
-      errorMessage =
-        "Older terminal output expired; Pi was asked to redraw the current screen.";
+      errorMessage = `Older terminal output expired; ${kind === "pi" ? "Pi" : "the shell"} was asked to redraw the current screen.`;
     } else if (frame.type === "runtime") {
       if (runtime) {
         runtime = {
@@ -247,7 +247,7 @@
     inputOwnerKnown = false;
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const candidate = new WebSocket(
-      `${scheme}://${location.host}/api/v1/worktrees/${encodeURIComponent(worktree.id)}/terminal/socket`,
+      `${scheme}://${location.host}/api/v1/worktrees/${encodeURIComponent(worktree.id)}/${kind === "pi" ? "terminal" : "shell-terminal"}/socket`,
     );
     socket = candidate;
     candidate.addEventListener("open", () => {
@@ -321,7 +321,10 @@
     errorMessage = "";
     try {
       const previousRuntimeId = runtime?.runtimeId;
-      const response = await api.startTerminal(worktree.id);
+      const response =
+        kind === "pi"
+          ? await api.startTerminal(worktree.id)
+          : await api.startShellTerminal(worktree.id);
       runtime = response.runtime;
       if (response.runtime.runtimeId !== previousRuntimeId) {
         runtimeId = undefined;
@@ -333,9 +336,14 @@
       }
     } catch (error) {
       errorMessage =
-        error instanceof Error ? error.message : "Unable to start Pi.";
+        error instanceof Error
+          ? error.message
+          : `Unable to start ${kind === "pi" ? "Pi" : "the shell"}.`;
       try {
-        runtime = (await api.terminal(worktree.id)).runtime;
+        runtime =
+          kind === "pi"
+            ? (await api.terminal(worktree.id)).runtime
+            : (await api.shellTerminal(worktree.id)).runtime;
       } catch {
         // Keep the sanitized startup error already shown.
       }
@@ -348,10 +356,15 @@
     busy = true;
     errorMessage = "";
     try {
-      runtime = (await api.stopTerminal(worktree.id)).runtime;
+      runtime =
+        kind === "pi"
+          ? (await api.stopTerminal(worktree.id)).runtime
+          : (await api.stopShellTerminal(worktree.id)).runtime;
     } catch (error) {
       errorMessage =
-        error instanceof Error ? error.message : "Unable to stop Pi.";
+        error instanceof Error
+          ? error.message
+          : `Unable to stop ${kind === "pi" ? "Pi" : "the shell"}.`;
     } finally {
       busy = false;
     }
@@ -362,7 +375,10 @@
     errorMessage = "";
     try {
       restartKey ??= crypto.randomUUID();
-      runtime = (await api.restartTerminal(worktree.id, restartKey)).runtime;
+      runtime =
+        kind === "pi"
+          ? (await api.restartTerminal(worktree.id, restartKey)).runtime
+          : (await api.restartShellTerminal(worktree.id, restartKey)).runtime;
       restartKey = undefined;
       runtimeId = undefined;
       lastReceivedSeq = 0;
@@ -370,7 +386,9 @@
       reconnectSocket();
     } catch (error) {
       errorMessage =
-        error instanceof Error ? error.message : "Unable to restart Pi.";
+        error instanceof Error
+          ? error.message
+          : `Unable to restart ${kind === "pi" ? "Pi" : "the shell"}.`;
     } finally {
       busy = false;
     }
@@ -378,10 +396,15 @@
 
   function focusTerminal(): void {
     terminal?.focus();
-    onAcknowledge(worktree.id);
+    if (kind === "pi") onAcknowledge(worktree.id);
+  }
+
+  function handleTerminalPointerDown(): void {
+    if (visible) focusTerminal();
   }
 
   function handleHostKeydown(event: KeyboardEvent): void {
+    if (kind !== "pi") return;
     if (!(event.target instanceof Node) || !host.contains(event.target)) return;
     const translated = translateTerminalKey(event);
     if (translated === null) return;
@@ -445,8 +468,7 @@
     if (worktree.lifecycle === "ready" && worktree.health === "healthy") {
       void startRuntime();
     } else {
-      errorMessage =
-        "This worktree must be ready and healthy before Pi can start.";
+      errorMessage = `This worktree must be ready and healthy before ${kind === "pi" ? "Pi" : "the shell"} can start.`;
     }
   });
 
@@ -503,9 +525,9 @@
     class="terminal-region min-h-0 flex-1 overflow-hidden bg-background p-2 focus-within:ring-2 focus-within:ring-ring focus-within:ring-inset"
     bind:this={host}
     role="application"
-    aria-label={`${workspaceName} ${worktree.name} interactive Pi terminal`}
-    on:pointerdown={() => visible && onAcknowledge(worktree.id)}
-    on:focusin={() => visible && onAcknowledge(worktree.id)}
+    aria-label={`${workspaceName} ${worktree.name} interactive ${kind === "pi" ? "Pi" : "shell"} terminal`}
+    on:pointerdown={handleTerminalPointerDown}
+    on:focusin={() => visible && kind === "pi" && onAcknowledge(worktree.id)}
   >
     <Xterm
       class="terminal-emulator"
@@ -516,7 +538,9 @@
       onData={sendTextInput}
       onBinary={sendBinaryInput}
       onResize={({ cols, rows }) => sendTerminalSize(cols, rows)}
-      aria-label="Pi terminal emulator"
+      aria-label={kind === "pi"
+        ? "Pi terminal emulator"
+        : "Shell terminal emulator"}
     />
   </div>
 </section>

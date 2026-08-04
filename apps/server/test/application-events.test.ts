@@ -49,6 +49,7 @@ describe("application event stream", () => {
     const events = createApplicationEvents({
       statuses: () => [status],
       runtimes: () => [runtime],
+      shellActivities: () => [],
       workspaceAttention: () => [],
     });
     events.subscribe({
@@ -58,6 +59,12 @@ describe("application event stream", () => {
     });
     events.publishStatus({ ...status, state: "working", revision: 1 });
     events.publishRuntime({ ...runtime, state: "starting" });
+    events.publishShellActivity({
+      worktreeId: status.worktreeId,
+      runtimeId: "33333333-3333-4333-8333-333333333333",
+      foregroundCommandActive: true,
+      changedAt: "2026-01-01T00:00:01.000Z",
+    });
     events.publishWorkspaceUpdated(workspace);
     events.publishWorkspaceOrderUpdated([workspace.id]);
     events.publishWorktreeRemoved(
@@ -68,15 +75,16 @@ describe("application event stream", () => {
       "snapshot",
       "status",
       "runtime",
+      "shellActivity",
       "workspaceUpdated",
       "workspaceOrderUpdated",
       "worktreeRemoved",
     ]);
-    expect(received.map((frame) => frame.v)).toEqual([5, 5, 5, 5, 5, 5]);
+    expect(received.map((frame) => frame.v)).toEqual([6, 6, 6, 6, 6, 6, 6]);
     expect(received.map((frame) => "cursor" in frame && frame.cursor)).toEqual([
-      0, 1, 2, 3, 4, 5,
+      0, 1, 2, 3, 4, 5, 6,
     ]);
-    expect(received[4]).toMatchObject({
+    expect(received[5]).toMatchObject({
       type: "workspaceOrderUpdated",
       workspaceIds: [workspace.id],
     });
@@ -87,6 +95,7 @@ describe("application event stream", () => {
     const events = createApplicationEvents({
       statuses: () => [status],
       runtimes: () => [runtime],
+      shellActivities: () => [],
       workspaceAttention: () => [],
       maxBufferedBytes: 1,
     });
