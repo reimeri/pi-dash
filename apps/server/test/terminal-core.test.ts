@@ -33,6 +33,10 @@ describe("terminal core contracts", () => {
     expect(ring.latestSeq).toBe(4);
   });
 
+  it("defaults output replay to 16,384 chunks", () => {
+    expect(new OutputRing(4 * 1024 * 1024).maxChunks).toBe(16_384);
+  });
+
   it("validates versioned frames, dimensions, and canonical binary data", () => {
     expect(
       parseTerminalClientFrame('{"v":1,"type":"attach","afterSeq":0}'),

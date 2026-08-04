@@ -11,7 +11,7 @@ export class OutputRing {
 
   constructor(
     readonly maxBytes: number,
-    readonly maxChunks = 4_096,
+    readonly maxChunks = 16_384,
   ) {
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
       throw new Error("maxBytes must be a positive safe integer");

@@ -59,6 +59,7 @@ describe("configuration", () => {
     );
     expect(config.port).toBe(4300);
     expect(config.piExecutable).toBe("pi-from-cli");
+    expect(config.terminalOutputBufferBytes).toBe(4 * 1024 * 1024);
     expect(config.logLevel).toBe("warn");
     expect(config.nativeDialog).toBe("auto");
     expect(config.openBrowser).toBe(false);

@@ -63,7 +63,7 @@ Pi Dash checks effective environment values while running. When they change, the
 
 **WORKTREE_NOT_READY / WORKTREE_UNHEALTHY** — reconcile the managed worktree and restore its exact Git identity before starting Pi.
 
-**Replay buffer wrapped** — the pane resets, replays the retained suffix, and requests a Pi redraw. Scrollback older than the configured memory buffer is intentionally unavailable.
+**Replay buffer wrapped** — the pane resets, replays the retained suffix, and requests a Pi redraw. Each runtime retains a rolling 4 MiB by default, capped at 16,384 PTY output chunks; scrollback older than either bound is intentionally unavailable.
 
 **Observer only** — another attached browser owns input. Close the owner and reconnect; explicit takeover UX arrives in Phase 6.
 

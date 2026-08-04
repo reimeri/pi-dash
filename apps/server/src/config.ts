@@ -371,7 +371,7 @@ export function loadConfig(
         env.PI_DASH_TERMINAL_OUTPUT_BUFFER_BYTES,
         file.terminalOutputBufferBytes,
       ),
-      1024 * 1024,
+      4 * 1024 * 1024,
       64 * 1024,
       16 * 1024 * 1024,
     ),
