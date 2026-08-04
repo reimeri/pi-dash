@@ -340,6 +340,9 @@
     if (workspace.repository.syncStatus === "diverged") {
       return `${workspace.name}, branch diverged from upstream`;
     }
+    if (workspace.repository.syncStatus === "dirty") {
+      return `${workspace.name}, local changes present`;
+    }
     return workspace.name;
   }
 

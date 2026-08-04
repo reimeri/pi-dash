@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { WorkspaceSyncStatus } from "@pi-dash/contracts";
   import {
+    FileEditIcon,
     GitMergeConflictIcon,
     RefreshIcon,
   } from "@hugeicons/core-free-icons";
@@ -16,6 +17,7 @@
 
   $: syncable = status === "syncable";
   $: diverged = status === "diverged";
+  $: dirty = status === "dirty";
 </script>
 
 {#if syncable}
@@ -33,12 +35,7 @@
     </Alert.Description>
     {#if onSync}
       <Alert.Action>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={syncing}
-          onclick={onSync}
-        >
+        <Button size="sm" variant="outline" disabled={syncing} onclick={onSync}>
           {#if syncing}<Spinner data-icon="inline-start" />{/if}
           {syncing ? "Syncing…" : "Sync"}
         </Button>
@@ -51,11 +48,25 @@
     <Alert.Title>Branch diverged from upstream</Alert.Title>
     <Alert.Description>
       {#if context === "worktree"}
-        Workspace HEAD and upstream have diverged. Reconcile the branch
-        manually before relying on this base for new worktrees.
+        Workspace HEAD and upstream have diverged. Reconcile the branch manually
+        before relying on this base for new worktrees.
       {:else}
         The workspace branch and its upstream have diverged. Reconcile them
         manually; automatic sync will not rewrite local commits.
+      {/if}
+    </Alert.Description>
+  </Alert.Root>
+{:else if dirty}
+  <Alert.Root role="status">
+    <HugeiconsIcon icon={FileEditIcon} strokeWidth={2} />
+    <Alert.Title>Workspace has local changes</Alert.Title>
+    <Alert.Description>
+      {#if context === "worktree"}
+        Uncommitted changes are not included in new worktrees. Commit, stash, or
+        discard them before relying on this workspace as a clean base.
+      {:else}
+        Commit, stash, or discard the local changes before syncing this
+        workspace with upstream.
       {/if}
     </Alert.Description>
   </Alert.Root>
