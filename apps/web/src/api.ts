@@ -8,6 +8,7 @@ import {
   RuntimeResponseSchema,
   SessionResponseSchema,
   StatusAcknowledgeResponseSchema,
+  WorkspaceEnvironmentResponseSchema,
   WorkspaceListResponseSchema,
   WorkspaceRefsResponseSchema,
   WorktreeDiffSchema,
@@ -25,6 +26,7 @@ import {
   type RenameWorkspaceRequest,
   type ReorderWorkspacesRequest,
   type StatusAcknowledgeRequest,
+  type UpdateWorkspaceEnvironmentRequest,
   type WorkspacePathRequest,
 } from "@pi-dash/contracts";
 import type { Static, TSchema } from "@sinclair/typebox";
@@ -166,6 +168,20 @@ export const api = {
       WorkspaceResponseSchema,
       { method: "POST", body: {} },
     ),
+  workspaceEnvironment: (id: string) =>
+    requestJson(
+      `/api/v1/workspaces/${encodeURIComponent(id)}/environment`,
+      WorkspaceEnvironmentResponseSchema,
+    ),
+  updateWorkspaceEnvironment: (
+    id: string,
+    body: UpdateWorkspaceEnvironmentRequest,
+  ) =>
+    requestJson(
+      `/api/v1/workspaces/${encodeURIComponent(id)}/environment`,
+      WorkspaceEnvironmentResponseSchema,
+      { method: "PATCH", body },
+    ),
   removeWorkspace: (id: string) =>
     requestEmpty(`/api/v1/workspaces/${encodeURIComponent(id)}`, {
       method: "DELETE",
@@ -258,11 +274,15 @@ export const api = {
       StatusAcknowledgeResponseSchema,
       { method: "POST", body },
     ),
-  restartTerminal: (worktreeId: string, idempotencyKey: string) =>
+  restartTerminal: (
+    worktreeId: string,
+    idempotencyKey: string,
+    expectedRuntimeId: string | null,
+  ) =>
     requestJson(
       `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/terminal/restart`,
       RestartRuntimeResponseSchema,
-      { method: "POST", body: {}, idempotencyKey },
+      { method: "POST", body: { expectedRuntimeId }, idempotencyKey },
     ),
   shellTerminal: (worktreeId: string) =>
     requestJson(
@@ -281,10 +301,14 @@ export const api = {
       RuntimeResponseSchema,
       { method: "POST", body: {} },
     ),
-  restartShellTerminal: (worktreeId: string, idempotencyKey: string) =>
+  restartShellTerminal: (
+    worktreeId: string,
+    idempotencyKey: string,
+    expectedRuntimeId: string | null,
+  ) =>
     requestJson(
       `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/shell-terminal/restart`,
       RestartRuntimeResponseSchema,
-      { method: "POST", body: {}, idempotencyKey },
+      { method: "POST", body: { expectedRuntimeId }, idempotencyKey },
     ),
 };

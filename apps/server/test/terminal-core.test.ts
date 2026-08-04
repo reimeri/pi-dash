@@ -90,6 +90,24 @@ describe("terminal core contracts", () => {
     ]);
   });
 
+  it("applies workspace variables without allowing dashboard overrides", () => {
+    const env = createShellTerminalEnvironment(
+      { HOME: "/home/test", SHARED: "daemon" },
+      {
+        SHARED: "workspace",
+        PROJECT_SECRET: "available",
+        PI_DASH_STATUS_TOKEN: "forbidden",
+      },
+    );
+    expect(env).toMatchObject({
+      HOME: "/home/test",
+      SHARED: "workspace",
+      PROJECT_SECRET: "available",
+      TERM: "xterm-256color",
+    });
+    expect(env.PI_DASH_STATUS_TOKEN).toBeUndefined();
+  });
+
   it("resolves a canonical executable shell and safely falls back", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-dash-shell-resolver-"));
     try {

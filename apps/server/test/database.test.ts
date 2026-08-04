@@ -42,8 +42,8 @@ describe("foundation database", () => {
       path: target.path,
       migrationsDirectory,
     });
-    expect(database.schemaVersion).toBe(7);
-    expect(database.foundation.getSchemaVersion()).toBe(7);
+    expect(database.schemaVersion).toBe(8);
+    expect(database.foundation.getSchemaVersion()).toBe(8);
     expect(
       database.sqlite
         .prepare(
@@ -389,8 +389,8 @@ describe("foundation database", () => {
       migrationsDirectory,
       now: () => new Date("2026-01-01T00:00:00Z"),
     });
-    expect(database.schemaVersion).toBe(7);
-    expect(database.backupPaths).toHaveLength(7);
+    expect(database.schemaVersion).toBe(8);
+    expect(database.backupPaths).toHaveLength(8);
     const backup = new BetterSqlite3(database.backupPaths[0]!, {
       readonly: true,
     });

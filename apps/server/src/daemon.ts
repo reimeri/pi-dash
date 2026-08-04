@@ -31,6 +31,7 @@ import {
 } from "./status/status-socket-server.js";
 import {
   createTerminalManager,
+  TerminalManagerError,
   type TerminalManager,
 } from "./terminal/terminal-manager.js";
 import {
@@ -50,6 +51,10 @@ import {
   createWorkspaceService,
   type WorkspaceService,
 } from "./workspaces/workspace-service.js";
+import {
+  createWorkspaceEnvironmentService,
+  type WorkspaceEnvironmentService,
+} from "./workspaces/workspace-environment.js";
 import { createWorkspaceRepository } from "./workspaces/workspace-repository.js";
 import { createBaseSnapshotSigner } from "./worktrees/base-snapshot.js";
 import { createRemovalConfirmationSigner } from "./worktrees/removal-confirmation.js";
@@ -94,6 +99,7 @@ export async function createDaemon(
   let auth: AuthService | undefined;
   let dialogs: NativeDirectoryDialogService | undefined;
   let workspaces: WorkspaceService | undefined;
+  let environments: WorkspaceEnvironmentService | undefined;
   let worktrees: WorktreeService | undefined;
   let terminals: TerminalManager | undefined;
   let shellTerminals: TerminalManager | undefined;
@@ -123,6 +129,7 @@ export async function createDaemon(
     if (app) await attempt(() => app!.close());
     else {
       if (workspaces) await attempt(() => workspaces!.close());
+      if (environments) await attempt(() => environments!.close());
       if (dialogs) await attempt(() => dialogs!.close());
     }
     if (auth) await attempt(() => auth!.clear());
@@ -180,6 +187,28 @@ export async function createDaemon(
     const workspaceRepository = createWorkspaceRepository(database.sqlite);
     const worktreeRepository = createWorktreeRepository(database.sqlite);
     const statusRepository = createStatusRepository(database.sqlite);
+    environments = createWorkspaceEnvironmentService({
+      repository: workspaceRepository,
+      liveRuntimes: () => {
+        const collect = (
+          manager: TerminalManager | undefined,
+          kind: "pi" | "shell",
+        ) =>
+          (manager?.runtimes() ?? []).flatMap((runtime) => {
+            const record = worktreeRepository.get(runtime.worktreeId);
+            return record
+              ? [{ workspaceId: record.workspaceId, kind, runtime }]
+              : [];
+          });
+        return [
+          ...collect(terminals, "pi"),
+          ...collect(shellTerminals, "shell"),
+        ];
+      },
+      onWorkspaceChanged: (workspaceId) =>
+        applicationEvents?.publishWorkspaceEnvironmentChanged(workspaceId),
+      inherited: env,
+    });
     statusRepository.resetActive(new Date().toISOString());
     statuses = createStatusService({ repository: statusRepository });
     statusSocket = createStatusSocketServer({
@@ -259,11 +288,37 @@ export async function createDaemon(
       verifyWorktree: (id) => worktrees!.verifyTerminalStart(id),
       resolveLaunch: async ({ worktreeId, runtimeId, statusToken }) => {
         const resolved = await pi.probe();
+        const worktree = worktreeRepository.get(worktreeId);
+        if (!worktree) {
+          throw new TerminalManagerError(
+            404,
+            "WORKTREE_NOT_MANAGED",
+            "Managed worktree was not found",
+          );
+        }
+        let workspaceEnvironment: Record<string, string>;
+        try {
+          workspaceEnvironment = environments!.prepareRuntime({
+            workspaceId: worktree.workspaceId,
+            worktreeId,
+            runtimeId,
+            kind: "pi",
+          });
+        } catch (error) {
+          throw new TerminalManagerError(
+            422,
+            "ENVIRONMENT_SOURCE_INVALID",
+            error instanceof Error
+              ? error.message
+              : "Workspace environment is invalid",
+          );
+        }
         return {
           executable: resolved.executable,
           args: ["--extension", resolved.extensionPath],
           env: createPiTerminalEnvironment({
             inherited: env,
+            workspace: workspaceEnvironment,
             runtimeDirectory: paths.runtime,
             runtimeId,
             worktreeId,
@@ -284,18 +339,51 @@ export async function createDaemon(
         resetRuntime: (worktreeId, runtimeId) =>
           statuses!.resetRuntime(worktreeId, runtimeId),
       },
-      onRuntimeState: (runtime) => applicationEvents?.publishRuntime(runtime),
+      onRuntimeState: (runtime) => {
+        applicationEvents?.publishRuntime(runtime);
+        const workspaceId = worktreeRepository.get(
+          runtime.worktreeId,
+        )?.workspaceId;
+        if (workspaceId) environments?.runtimeChanged(workspaceId);
+      },
     });
     shellTerminals = createTerminalManager({
       runtimeKind: "shell",
       lifecycle,
       getWorktree: (id) => worktrees!.get(id),
       verifyWorktree: (id) => worktrees!.verifyTerminalStart(id),
-      resolveLaunch: async () => ({
-        executable: await resolveUserShell(env),
-        args: [],
-        env: createShellTerminalEnvironment(env),
-      }),
+      resolveLaunch: async ({ worktreeId, runtimeId }) => {
+        const worktree = worktreeRepository.get(worktreeId);
+        if (!worktree) {
+          throw new TerminalManagerError(
+            404,
+            "WORKTREE_NOT_MANAGED",
+            "Managed worktree was not found",
+          );
+        }
+        let workspaceEnvironment: Record<string, string>;
+        try {
+          workspaceEnvironment = environments!.prepareRuntime({
+            workspaceId: worktree.workspaceId,
+            worktreeId,
+            runtimeId,
+            kind: "shell",
+          });
+        } catch (error) {
+          throw new TerminalManagerError(
+            422,
+            "ENVIRONMENT_SOURCE_INVALID",
+            error instanceof Error
+              ? error.message
+              : "Workspace environment is invalid",
+          );
+        }
+        return {
+          executable: await resolveUserShell(env),
+          args: [],
+          env: createShellTerminalEnvironment(env, workspaceEnvironment),
+        };
+      },
       processScope: "session",
       initialCols: config.terminalInitialCols,
       initialRows: config.terminalInitialRows,
@@ -304,6 +392,12 @@ export async function createDaemon(
       stopGraceMs: config.terminalStopGraceMs,
       onShellActivity: (activity) =>
         applicationEvents?.publishShellActivity(activity),
+      onRuntimeState: (runtime) => {
+        const workspaceId = worktreeRepository.get(
+          runtime.worktreeId,
+        )?.workspaceId;
+        if (workspaceId) environments?.runtimeChanged(workspaceId);
+      },
     });
     applicationEvents = createApplicationEvents({
       statuses: () => statuses!.list(),
@@ -311,6 +405,7 @@ export async function createDaemon(
         statuses!.list().map((status) => terminals!.get(status.worktreeId)),
       shellActivities: () => shellTerminals!.activities(),
       workspaceAttention: () => statuses!.workspaceAttention(),
+      environmentChanges: () => environments!.changes(),
     });
     statuses.setPublisher((status) => applicationEvents!.publishStatus(status));
     await worktrees.reconcile();
@@ -323,6 +418,7 @@ export async function createDaemon(
       staticDirectory: config.staticDir ?? resources.staticAssets,
       dialogs,
       workspaces,
+      environments,
       worktrees,
       terminals,
       shellTerminals,
@@ -336,6 +432,7 @@ export async function createDaemon(
       },
     });
     workspaces.startHealthRefresh();
+    environments.start();
     const logDiagnostics = () => {
       try {
         const memory = process.memoryUsage();

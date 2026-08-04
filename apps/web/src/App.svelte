@@ -29,6 +29,7 @@
   import StartupEmptyStates from "./lib/dashboard/StartupEmptyStates.svelte";
   import { getStatusString } from "./lib/dashboard/status-label.js";
   import NoWorkspaceSelected from "./lib/workspaces/NoWorkspaceSelected.svelte";
+  import EnvironmentRestartNotice from "./lib/workspaces/EnvironmentRestartNotice.svelte";
   import WorkspaceDetail from "./lib/workspaces/WorkspaceDetail.svelte";
   import WorkspaceSidebar from "./lib/workspaces/WorkspaceSidebar.svelte";
   import WorkspaceSidebarAddButton from "./lib/workspaces/WorkspaceSidebarAddButton.svelte";
@@ -65,6 +66,8 @@
   let focusTerminalAfterMenuClose = false;
   let mainContent: HTMLDivElement | null = null;
   let reconciling = false;
+  let environmentRefreshToken = 0;
+  let restartingEnvironmentRuntimes = false;
   let statusEvents: StatusEventClient | undefined;
   const acknowledgements = new SvelteMap<string, number>();
   const syncingIds = new SvelteSet<string>();
@@ -143,6 +146,9 @@
         onWorkspaceUpdated: (workspace) => workspaceStore.upsert(workspace),
         onWorkspaceOrderUpdated: (workspaceIds) =>
           workspaceStore.applyOrder(workspaceIds),
+        onWorkspaceEnvironmentChanged: (workspaceId) => {
+          if (selectedId === workspaceId) environmentRefreshToken += 1;
+        },
         onSnapshot: () => {
           void workspaceStore.load();
           for (const workspaceId of Object.keys($worktreeStore.byWorkspace)) {
@@ -169,6 +175,41 @@
         startup = reduceStartupState(startup, { type: "DISCONNECTED" });
       }
     }
+  }
+
+  async function restartAffectedEnvironmentRuntimes(): Promise<boolean> {
+    if (restartingEnvironmentRuntimes) return false;
+    restartingEnvironmentRuntimes = true;
+    workspaceActionError = "";
+    const affected = workflowStatusStore
+      .current()
+      .environmentChanges.flatMap((change) => change.affectedRuntimes);
+    const results = await Promise.allSettled(
+      affected.map((runtime) =>
+        runtime.kind === "pi"
+          ? api.restartTerminal(
+              runtime.worktreeId,
+              crypto.randomUUID(),
+              runtime.runtimeId,
+            )
+          : api.restartShellTerminal(
+              runtime.worktreeId,
+              crypto.randomUUID(),
+              runtime.runtimeId,
+            ),
+      ),
+    );
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failure) {
+      workspaceActionError =
+        failure.reason instanceof Error
+          ? failure.reason.message
+          : "Unable to restart every affected runtime.";
+    }
+    restartingEnvironmentRuntimes = false;
+    return !failure;
   }
 
   function upsert(workspace: WorkspaceDto) {
@@ -501,6 +542,15 @@
         </Alert.Root>
       {/if}
 
+      <EnvironmentRestartNotice
+        changes={$workflowStatusStore.environmentChanges}
+        workspaces={$workspaceStore.workspaces}
+        worktreesByWorkspace={$worktreeStore.byWorkspace}
+        shellActivities={$workflowStatusStore.shellActivities}
+        restarting={restartingEnvironmentRuntimes}
+        onRestart={restartAffectedEnvironmentRuntimes}
+      />
+
       <Resizable.PaneGroup direction="horizontal" class="min-h-0 flex-1">
         <Resizable.Pane class="flex min-h-0" minSize={30} order={1}>
           <DashboardMain
@@ -531,6 +581,7 @@
                 refreshing={refreshingId === selectedWorkspace.id}
                 syncing={syncingIds.has(selectedWorkspace.id)}
                 {reconciling}
+                {environmentRefreshToken}
                 onRename={() => (renameTarget = selectedWorkspace)}
                 onRemove={() => (removeTarget = selectedWorkspace)}
                 onSync={() => syncWorkspace(selectedWorkspace)}

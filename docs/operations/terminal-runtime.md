@@ -38,19 +38,26 @@ Runtime states are `stopped`, `starting`, `running`, `stopping`, and `crashed`. 
 
 ## Environment
 
-Pi and the shell inherit the user's ordinary environment, including HOME, PATH, SHELL, locale, XDG locations, SSH agent, and provider credentials. Every inherited `PI_DASH_*` value is removed. Only Pi receives these per-runtime status values:
+Pi and the shell inherit the user's ordinary environment, including HOME, PATH, SHELL, locale, XDG locations, SSH agent, and provider credentials. Pi Dash then loads `<registered-repository>/.env` when it exists and applies an optional workspace private override file. Private values override repository values; workspace values override inherited values. No environment file is created in a managed worktree.
+
+Environment sources use dotenv assignment syntax without shell evaluation or variable expansion. Sources must be regular files owned by the daemon user, cannot be writable by another user, and cannot define `PI_DASH_*` names. A configured source that is unreadable or invalid blocks runtime startup rather than launching with a partial environment.
+
+Every inherited `PI_DASH_*` value is removed. Only Pi receives these per-runtime status values:
 
 - `PI_DASH_STATUS_SOCKET`
 - `PI_DASH_RUNTIME_ID`
+- `PI_DASH_WORKTREE_ID`
 - `PI_DASH_STATUS_TOKEN`
 
-The token and terminal bytes are never logged.
+Pi Dash checks effective environment values while running. When they change, the dashboard persistently identifies runtimes using older values and offers a confirmed restart action. Restarting terminates each affected process tree; foreground shell commands are called out before confirmation. Source contents, status tokens, and terminal bytes are never logged or returned through the environment configuration API.
 
 ## Recovery and troubleshooting
 
 **PI_UNAVAILABLE** — verify `pi --version` works for the daemon user, or set `PI_DASH_PI_EXECUTABLE`/`--pi-executable` to an executable path.
 
 **PI_VERSION_UNSUPPORTED** — upgrade Pi or deliberately lower the configured minimum only after validating its TUI against the terminal feasibility checklist.
+
+**ENVIRONMENT_SOURCE_INVALID** — inspect the workspace Environment card. Restore or correct the source, ensure it is a normalized absolute regular-file path owned by the daemon user, and remove write access for other users.
 
 **PTY_START_FAILED** — verify native `node-pty` installation, worktree permissions, executable permissions, and available PTYs. Reinstall dependencies after installing native build prerequisites.
 

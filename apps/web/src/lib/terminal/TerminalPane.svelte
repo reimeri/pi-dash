@@ -377,8 +377,20 @@
       restartKey ??= crypto.randomUUID();
       runtime =
         kind === "pi"
-          ? (await api.restartTerminal(worktree.id, restartKey)).runtime
-          : (await api.restartShellTerminal(worktree.id, restartKey)).runtime;
+          ? (
+              await api.restartTerminal(
+                worktree.id,
+                restartKey,
+                runtime?.runtimeId ?? null,
+              )
+            ).runtime
+          : (
+              await api.restartShellTerminal(
+                worktree.id,
+                restartKey,
+                runtime?.runtimeId ?? null,
+              )
+            ).runtime;
       restartKey = undefined;
       runtimeId = undefined;
       lastReceivedSeq = 0;

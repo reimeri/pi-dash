@@ -53,8 +53,18 @@ export const RuntimeResponseSchema = Type.Object(
 );
 export type RuntimeResponse = Static<typeof RuntimeResponseSchema>;
 
+export const RestartRuntimeRequestSchema = Type.Object(
+  { expectedRuntimeId: Type.Union([UuidSchema, Type.Null()]) },
+  { additionalProperties: false },
+);
+export type RestartRuntimeRequest = Static<typeof RestartRuntimeRequestSchema>;
+
 export const RestartRuntimeResponseSchema = Type.Object(
-  { operationId: UuidSchema, runtime: RuntimeSchema },
+  {
+    operationId: UuidSchema,
+    restarted: Type.Boolean(),
+    runtime: RuntimeSchema,
+  },
   { additionalProperties: false },
 );
 export type RestartRuntimeResponse = Static<

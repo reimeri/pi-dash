@@ -17,6 +17,7 @@
   import { syncStatusLabel } from "./sync.js";
   import WorkspaceSyncIndicator from "./WorkspaceSyncIndicator.svelte";
   import WorkspaceSyncNotice from "./WorkspaceSyncNotice.svelte";
+  import WorkspaceEnvironmentCard from "./WorkspaceEnvironmentCard.svelte";
   import WorktreeSection from "../worktrees/WorktreeSection.svelte";
 
   export let workspace: WorkspaceDto;
@@ -26,6 +27,7 @@
   export let refreshing: boolean;
   export let syncing: boolean;
   export let reconciling: boolean;
+  export let environmentRefreshToken: number;
   export let onRename: () => void;
   export let onRemove: () => void;
   export let onSync: () => void;
@@ -43,7 +45,9 @@
   class="mx-auto flex w-full max-w-5xl flex-col gap-6"
   aria-labelledby="workspace-title"
 >
-  <header class="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+  <header
+    class="flex flex-col justify-between gap-4 sm:flex-row sm:items-start"
+  >
     <div class="min-w-0">
       <Badge variant="outline">Workspace</Badge>
       <h2
@@ -85,7 +89,7 @@
     <WorkspaceSyncNotice
       status={workspace.repository.syncStatus}
       {syncing}
-      onSync={onSync}
+      {onSync}
     />
   {/if}
 
@@ -177,7 +181,9 @@
           only its Pi Dash metadata.
         </p>
         <Button disabled={refreshing} onclick={onRefresh}>
-          {#if refreshing}<Spinner data-icon="inline-start" />{:else}<HugeiconsIcon
+          {#if refreshing}<Spinner
+              data-icon="inline-start"
+            />{:else}<HugeiconsIcon
               icon={RefreshIcon}
               strokeWidth={2}
               data-icon="inline-start"
@@ -187,6 +193,11 @@
       {/if}
     </Card.Footer>
   </Card.Root>
+
+  <WorkspaceEnvironmentCard
+    workspaceId={workspace.id}
+    refreshToken={environmentRefreshToken}
+  />
 
   <Separator />
   <WorktreeSection

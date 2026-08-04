@@ -58,6 +58,61 @@ export const WorkspaceSchema = Type.Object(
 export type WorkspaceDto = Static<typeof WorkspaceSchema>;
 export type WorkspaceSummaryDto = WorkspaceDto;
 
+export const WorkspaceEnvironmentStatusSchema = Type.Union([
+  Type.Literal("empty"),
+  Type.Literal("ready"),
+  Type.Literal("error"),
+]);
+export type WorkspaceEnvironmentStatus = Static<
+  typeof WorkspaceEnvironmentStatusSchema
+>;
+
+export const WorkspaceEnvironmentSchema = Type.Object(
+  {
+    workspaceId: WorkspaceIdSchema,
+    repositoryFile: Type.Object(
+      {
+        path: Type.String({ minLength: 1, maxLength: 4096 }),
+        present: Type.Boolean(),
+      },
+      { additionalProperties: false },
+    ),
+    privateFilePath: Type.Union([
+      Type.String({ minLength: 1, maxLength: 4096 }),
+      Type.Null(),
+    ]),
+    status: WorkspaceEnvironmentStatusSchema,
+    variableCount: Type.Integer({ minimum: 0, maximum: 512 }),
+    error: Type.Union([
+      Type.String({ minLength: 1, maxLength: 500 }),
+      Type.Null(),
+    ]),
+  },
+  { additionalProperties: false },
+);
+export type WorkspaceEnvironmentDto = Static<typeof WorkspaceEnvironmentSchema>;
+
+export const WorkspaceEnvironmentResponseSchema = Type.Object(
+  { environment: WorkspaceEnvironmentSchema },
+  { additionalProperties: false },
+);
+export type WorkspaceEnvironmentResponse = Static<
+  typeof WorkspaceEnvironmentResponseSchema
+>;
+
+export const UpdateWorkspaceEnvironmentRequestSchema = Type.Object(
+  {
+    privateFilePath: Type.Union([
+      Type.String({ minLength: 1, maxLength: 4096 }),
+      Type.Null(),
+    ]),
+  },
+  { additionalProperties: false },
+);
+export type UpdateWorkspaceEnvironmentRequest = Static<
+  typeof UpdateWorkspaceEnvironmentRequestSchema
+>;
+
 export const WorkspaceListResponseSchema = Type.Object(
   { workspaces: Type.Array(WorkspaceSchema) },
   { additionalProperties: false },

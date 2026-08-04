@@ -3,9 +3,11 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import {
   ApiErrorEnvelopeSchema,
   EmptyObjectSchema,
+  RestartRuntimeRequestSchema,
   RestartRuntimeResponseSchema,
   RuntimeResponseSchema,
   WorktreeIdParamsSchema,
+  type RestartRuntimeRequest,
   type TerminalServerFrame,
   type WorktreeIdParams,
 } from "@pi-dash/contracts";
@@ -30,6 +32,7 @@ const TERMINAL_ERROR_RESPONSES = {
   403: ApiErrorEnvelopeSchema,
   404: ApiErrorEnvelopeSchema,
   409: ApiErrorEnvelopeSchema,
+  422: ApiErrorEnvelopeSchema,
   500: ApiErrorEnvelopeSchema,
   503: ApiErrorEnvelopeSchema,
 } as const;
@@ -135,12 +138,12 @@ export async function registerTerminalRoutes(
     },
   );
 
-  app.post<{ Params: WorktreeIdParams; Body: Record<string, never> }>(
+  app.post<{ Params: WorktreeIdParams; Body: RestartRuntimeRequest }>(
     `${basePath}/restart`,
     {
       schema: {
         params: WorktreeIdParamsSchema,
-        body: EmptyObjectSchema,
+        body: RestartRuntimeRequestSchema,
         response: {
           200: RestartRuntimeResponseSchema,
           ...TERMINAL_ERROR_RESPONSES,
@@ -152,6 +155,7 @@ export async function registerTerminalRoutes(
         return await options.terminals.restart(
           request.params.id,
           idempotencyKey(request),
+          request.body.expectedRuntimeId,
         );
       } catch (error) {
         serviceError(error);

@@ -4,7 +4,7 @@ import { ShellActivitySchema } from "./terminal.js";
 
 export const STATUS_PROTOCOL_VERSION = 1 as const;
 export const STATUS_MAX_FRAME_BYTES = 16 * 1024;
-export const APPLICATION_EVENTS_PROTOCOL_VERSION = 6 as const;
+export const APPLICATION_EVENTS_PROTOCOL_VERSION = 7 as const;
 
 const UuidSchema = Type.String({
   pattern:
@@ -145,6 +145,27 @@ export const WorkspaceAttentionSchema = Type.Object(
 );
 export type WorkspaceAttentionDto = Static<typeof WorkspaceAttentionSchema>;
 
+export const WorkspaceEnvironmentChangeSchema = Type.Object(
+  {
+    workspaceId: UuidSchema,
+    affectedRuntimes: Type.Array(
+      Type.Object(
+        {
+          worktreeId: UuidSchema,
+          runtimeId: UuidSchema,
+          kind: Type.Union([Type.Literal("pi"), Type.Literal("shell")]),
+        },
+        { additionalProperties: false },
+      ),
+      { maxItems: 100 },
+    ),
+  },
+  { additionalProperties: false },
+);
+export type WorkspaceEnvironmentChangeDto = Static<
+  typeof WorkspaceEnvironmentChangeSchema
+>;
+
 export const ApplicationEventsClientFrameSchema = Type.Object(
   {
     v: Type.Literal(APPLICATION_EVENTS_PROTOCOL_VERSION),
@@ -189,6 +210,7 @@ export const ApplicationEventsServerFrameSchema = Type.Union([
       ),
       shellActivities: Type.Array(ShellActivitySchema),
       workspaceAttention: Type.Array(WorkspaceAttentionSchema),
+      environmentChanges: Type.Array(WorkspaceEnvironmentChangeSchema),
     },
     { additionalProperties: false },
   ),
@@ -237,6 +259,16 @@ export const ApplicationEventsServerFrameSchema = Type.Union([
       type: Type.Literal("workspaceOrderUpdated"),
       cursor: Type.Integer({ minimum: 1 }),
       workspaceIds: Type.Array(UuidSchema, { maxItems: 50 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      v: Type.Literal(APPLICATION_EVENTS_PROTOCOL_VERSION),
+      type: Type.Literal("workspaceEnvironmentChanged"),
+      cursor: Type.Integer({ minimum: 1 }),
+      workspaceId: UuidSchema,
+      environmentChanges: Type.Array(WorkspaceEnvironmentChangeSchema),
     },
     { additionalProperties: false },
   ),
