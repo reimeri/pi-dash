@@ -541,7 +541,7 @@
             onCloseAutoFocus={handleTerminalMenuCloseAutoFocus}
           >
             <Popover.Header>
-              <Popover.Title>Terminal status</Popover.Title>
+              <Popover.Title>Pi terminal status</Popover.Title>
             </Popover.Header>
             <div class="flex flex-col gap-3" aria-live="polite">
               <div class="grid grid-cols-2 gap-2 text-sm">

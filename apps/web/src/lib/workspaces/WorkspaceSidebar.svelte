@@ -26,6 +26,12 @@
   import WorkflowStatusIndicator from "../status/WorkflowStatusIndicator.svelte";
   import WorkspaceSyncIndicator from "./WorkspaceSyncIndicator.svelte";
   import { orderWorktreesByActivity } from "../worktrees/order.js";
+  import {
+    WORKTREE_VISIBLE_INITIAL,
+    WORKTREE_VISIBLE_STEP,
+    nextVisibleLimit,
+    visibleWorktrees,
+  } from "../worktrees/visible.js";
   import { cn } from "tailwind-variants";
 
   export let workspaces: WorkspaceDto[];
@@ -53,6 +59,7 @@
   const storageKey = "pi-dash.expanded-workspaces.v1";
   let expanded = new SvelteSet<string>();
   const requestedExpanded = new SvelteSet<string>();
+  let visibleLimitByWorkspace: Record<string, number> = {};
   interface WorkspaceDragCandidate {
     element: HTMLElement;
     pointerId: number;
@@ -295,6 +302,21 @@
     return worktree.lifecycle === "ready" && worktree.health === "healthy";
   }
 
+  function adjustVisibleLimit(
+    workspaceId: string,
+    total: number,
+    delta: number,
+  ): void {
+    visibleLimitByWorkspace = {
+      ...visibleLimitByWorkspace,
+      [workspaceId]: nextVisibleLimit(
+        visibleLimitByWorkspace[workspaceId] ?? WORKTREE_VISIBLE_INITIAL,
+        total,
+        delta,
+      ),
+    };
+  }
+
   function worktreeLabel(worktree: WorktreeDto): string {
     const details: string[] = [];
     const summary = diffSummaries[worktree.id];
@@ -364,10 +386,32 @@
     }
   }
 
+  $: sidebarEntries = renderedWorkspaces.map((workspace) => {
+    const orderedWorktrees = orderWorktreesByActivity(
+      worktreesByWorkspace[workspace.id] ?? [],
+      workflowStatuses,
+    );
+    const visibleLimit =
+      visibleLimitByWorkspace[workspace.id] ?? WORKTREE_VISIBLE_INITIAL;
+    return {
+      workspace,
+      activity: workspaceAttentionStatuses.find(
+        (attention) => attention.workspaceId === workspace.id,
+      ),
+      orderedWorktrees,
+      visibleLimit,
+      renderedWorktrees: visibleWorktrees(
+        orderedWorktrees,
+        visibleLimit,
+        selectedWorktreeId,
+      ),
+    };
+  });
+
   $: onVisibleWorktreesChange(
-    renderedWorkspaces.flatMap((workspace) =>
+    sidebarEntries.flatMap(({ workspace, renderedWorktrees }) =>
       expanded.has(workspace.id)
-        ? (worktreesByWorkspace[workspace.id] ?? [])
+        ? renderedWorktrees
             .filter(canOpenTerminal)
             .map((worktree) => worktree.id)
         : [],
@@ -417,14 +461,7 @@
       </Alert.Root>
     {/if}
     <Sidebar.Menu>
-      {#each renderedWorkspaces as workspace (workspace.id)}
-        {@const activity = workspaceAttentionStatuses.find(
-          (attention) => attention.workspaceId === workspace.id,
-        )}
-        {@const orderedWorktrees = orderWorktreesByActivity(
-          worktreesByWorkspace[workspace.id] ?? [],
-          workflowStatuses,
-        )}
+      {#each sidebarEntries as { workspace, activity, orderedWorktrees, visibleLimit, renderedWorktrees } (workspace.id)}
         <Collapsible.Root
           open={expanded.has(workspace.id)}
           onOpenChange={(open) => setExpanded(workspace.id, open)}
@@ -542,7 +579,7 @@
                     {worktreeErrorsByWorkspace[workspace.id]}
                   </li>
                 {:else if orderedWorktrees.length > 0}
-                  {#each orderedWorktrees as worktree (worktree.id)}
+                  {#each renderedWorktrees as worktree (worktree.id)}
                     {@const diffSummary = diffSummaries[worktree.id]}
                     {@const shellActive =
                       shellActivities[worktree.id]?.foregroundCommandActive ===
@@ -602,6 +639,42 @@
                       </Button>
                     </Sidebar.MenuSubItem>
                   {/each}
+                  {#if orderedWorktrees.length > WORKTREE_VISIBLE_INITIAL || visibleLimit > WORKTREE_VISIBLE_INITIAL}
+                    <li class="flex items-center gap-1 px-1 py-0.5">
+                      {#if orderedWorktrees.length > visibleLimit}
+                        <Button
+                          class="h-7 justify-start px-3 text-xs text-muted-foreground hover:text-foreground"
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Show more worktrees in ${workspace.name}`}
+                          onclick={() =>
+                            adjustVisibleLimit(
+                              workspace.id,
+                              orderedWorktrees.length,
+                              WORKTREE_VISIBLE_STEP,
+                            )}
+                        >
+                          Show more
+                        </Button>
+                      {/if}
+                      {#if visibleLimit > WORKTREE_VISIBLE_INITIAL}
+                        <Button
+                          class="h-7 justify-start px-3 text-xs text-muted-foreground hover:text-foreground"
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Show less worktrees in ${workspace.name}`}
+                          onclick={() =>
+                            adjustVisibleLimit(
+                              workspace.id,
+                              orderedWorktrees.length,
+                              -WORKTREE_VISIBLE_STEP,
+                            )}
+                        >
+                          Show less
+                        </Button>
+                      {/if}
+                    </li>
+                  {/if}
                 {:else}
                   <li class="px-3 py-1 text-xs text-muted-foreground">
                     No managed worktrees
