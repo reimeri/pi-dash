@@ -140,6 +140,11 @@
   $: selectedWorkflowStatus = selectedWorktreeId
     ? $workflowStatusStore.byWorktree[selectedWorktreeId]
     : undefined;
+  $: shellCommandActive =
+    !!selectedWorktreeId &&
+    $workflowStatusStore.shellActivities[selectedWorktreeId]
+      ?.foregroundCommandActive === true;
+  $: shellActivityPending = shellCommandActive && rightPanel !== "shell";
   $: terminalOpen =
     startup.status === "ready" &&
     !!selectedWorktree &&
@@ -493,6 +498,7 @@
           bind:ref={shellTrigger}
           variant={rightPanel === "shell" ? "secondary" : "outline"}
           size="icon-sm"
+          class="relative"
           aria-label={rightPanel === "shell"
             ? "Close shell terminal"
             : "Open shell terminal"}
@@ -508,6 +514,12 @@
             strokeWidth={2}
             data-icon="inline-start"
           />
+          {#if shellActivityPending}
+            <span
+              class="absolute top-1 right-1 size-1.5 rounded-full bg-primary"
+              aria-hidden="true"
+            ></span>
+          {/if}
         </Button>
         <Popover.Root bind:open={terminalMenuOpen}>
           <Popover.Trigger>

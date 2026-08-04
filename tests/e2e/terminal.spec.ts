@@ -349,11 +349,19 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     page.getByRole("heading", { name: "Changes", exact: true }),
   ).toBeVisible();
   await expect(activeShellWorktree).toBeVisible();
-  await page.getByRole("button", { name: "Open shell terminal" }).click();
+  await expect(
+    page.getByRole("button", {
+      name: "Open shell terminal, command running",
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Open shell terminal, command running" }).click();
   await expect(
     page.getByRole("heading", { name: "Changes", exact: true }),
   ).toHaveCount(0);
   await expect(shell).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Close shell terminal" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Close terminal" }).click();
   await expect(terminal).toBeVisible();
   await expect
