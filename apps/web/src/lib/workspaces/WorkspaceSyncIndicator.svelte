@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { WorkspaceSyncStatus } from "@pi-dash/contracts";
   import {
+    FileEditIcon,
     GitMergeConflictIcon,
     RefreshIcon,
   } from "@hugeicons/core-free-icons";
@@ -11,7 +12,9 @@
   $: label =
     status === "syncable"
       ? "Upstream updates available"
-      : "Branch diverged from upstream";
+      : status === "diverged"
+        ? "Branch diverged from upstream"
+        : "Local changes present";
 </script>
 
 {#if status === "syncable"}
@@ -31,5 +34,14 @@
     title="Branch diverged from upstream"
   >
     <HugeiconsIcon icon={GitMergeConflictIcon} strokeWidth={2} />
+  </span>
+{:else if status === "dirty"}
+  <span
+    class="inline-flex shrink-0 text-muted-foreground [&_svg]:size-4"
+    role="img"
+    aria-label={label}
+    title="Local changes present"
+  >
+    <HugeiconsIcon icon={FileEditIcon} strokeWidth={2} />
   </span>
 {/if}
