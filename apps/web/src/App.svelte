@@ -1,5 +1,9 @@
 <script lang="ts">
-  import type { WorkspaceDto, WorktreeDto } from "@pi-dash/contracts";
+  import {
+    APP_VERSION,
+    type WorkspaceDto,
+    type WorktreeDto,
+  } from "@pi-dash/contracts";
   import { onDestroy, onMount } from "svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import { AlertCircleIcon } from "@hugeicons/core-free-icons";
@@ -500,20 +504,28 @@
           </Sidebar.GroupContent>
         </Sidebar.Group>
       </Sidebar.Content>
+      <Sidebar.Footer class="flex-row items-center justify-between">
+        <Badge
+          variant={startup.status === "ready"
+            ? "default"
+            : startup.status === "connecting"
+              ? "outline"
+              : "destructive"}
+          role="status"
+          aria-label="Daemon connection"
+          aria-live="polite"
+          aria-atomic="true"
+          class="size-2 p-0"
+          title={getStatusString(startup.status)}
+        ></Badge>
+        <span
+          class="text-xs text-muted-foreground tabular-nums opacity-30"
+          aria-label="Application version"
+        >
+          v{APP_VERSION}
+        </span>
+      </Sidebar.Footer>
       <Sidebar.Rail />
-      <Badge
-        variant={startup.status === "ready"
-          ? "default"
-          : startup.status === "connecting"
-            ? "outline"
-            : "destructive"}
-        role="status"
-        aria-label="Daemon connection"
-        aria-live="polite"
-        aria-atomic="true"
-        class="m-2 size-2 p-0"
-        title={getStatusString(startup.status)}
-      ></Badge>
     </Sidebar.Root>
 
     <Sidebar.Inset class="min-h-0 min-w-0 overflow-hidden">

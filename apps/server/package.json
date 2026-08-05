@@ -1,6 +1,6 @@
 {
   "name": "@pi-dash/server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,8 +15,8 @@
     "@fastify/cookie": "11.1.2",
     "@fastify/static": "10.1.2",
     "@fastify/websocket": "11.3.0",
-    "@pi-dash/contracts": "0.1.0",
-    "@pi-dash/pi-extension": "0.1.0",
+    "@pi-dash/contracts": "0.1.1",
+    "@pi-dash/pi-extension": "0.1.1",
     "@sinclair/typebox": "0.34.52",
     "better-sqlite3": "13.0.2",
     "drizzle-orm": "0.45.2",

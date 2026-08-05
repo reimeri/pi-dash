@@ -52,7 +52,7 @@ describe("foundation database", () => {
         .get(),
     ).toBeTruthy();
     expect(database.foundation.getMetadata("application_version")).toBe(
-      "0.1.0",
+      "0.1.1",
     );
     expect(database.sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(database.sqlite.pragma("journal_mode", { simple: true })).toBe(

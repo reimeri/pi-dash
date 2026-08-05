@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { APP_VERSION } from "@pi-dash/contracts";
 import type { Logger } from "pino";
 import { buildHttpServer, type HttpServer } from "./app.js";
 import { createAuthService, type AuthService } from "./auth.js";
@@ -504,7 +505,7 @@ export async function createDaemon(
       markReady() {
         secureWriteFile(
           paths.runtimeInfo,
-          `${JSON.stringify({ pid: process.pid, host: config.host, port: config.port, version: "0.1.0" })}\n`,
+          `${JSON.stringify({ pid: process.pid, host: config.host, port: config.port, version: APP_VERSION })}\n`,
         );
         runtimeInfoWritten = true;
         logDiagnostics();
