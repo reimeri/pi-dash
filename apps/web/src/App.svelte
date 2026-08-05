@@ -13,6 +13,7 @@
   import { Button } from "$lib/components/ui/button";
   import * as Resizable from "$lib/components/ui/resizable";
   import * as Sidebar from "$lib/components/ui/sidebar";
+  import { Toaster } from "$lib/components/ui/sonner";
   import { ApiClientError, api } from "./api.js";
   import {
     createCoordinatedWorktreeDiffClient,
@@ -681,3 +682,5 @@
   onCloseDeleteBranch={() => (deleteBranchTarget = undefined)}
   onDeletedBranch={removeWorktree}
 />
+
+<Toaster />

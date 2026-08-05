@@ -14,6 +14,7 @@
   import { Cancel01Icon } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
   import { onDestroy, onMount } from "svelte";
+  import { toast } from "svelte-sonner";
   import * as Alert from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
   import { api } from "../../api.js";
@@ -225,7 +226,9 @@
       queueOutput(frame.seq, frame.data);
     } else if (frame.type === "replayReset") {
       resetOutput(frame.earliestSeq - 1);
-      errorMessage = `Older terminal output expired; ${kind === "pi" ? "Pi" : "the shell"} was asked to redraw the current screen.`;
+      toast.warning(
+        `Older terminal output expired; ${kind === "pi" ? "Pi" : "the shell"} was asked to redraw the current screen.`,
+      );
     } else if (frame.type === "runtime") {
       if (runtime) {
         runtime = {
