@@ -1,6 +1,6 @@
 {
   "name": "pi-dash",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -32,7 +32,8 @@
     "start": "npm start -w @pi-dash/server --",
     "test": "vitest run",
     "verify:linux-artifact": "node scripts/verify-linux-artifact.mjs",
-    "test:e2e": "npm run build && playwright test"
+    "test:e2e": "npm run build && playwright test",
+    "version:bump": "node scripts/bump-version.mjs"
   },
   "devDependencies": {
     "@eslint/js": "9.39.2",

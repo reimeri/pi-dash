@@ -11,6 +11,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_VERSION } from "@pi-dash/contracts";
 import BetterSqlite3 from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -52,7 +53,7 @@ describe("foundation database", () => {
         .get(),
     ).toBeTruthy();
     expect(database.foundation.getMetadata("application_version")).toBe(
-      "0.1.1",
+      APP_VERSION,
     );
     expect(database.sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(database.sqlite.pragma("journal_mode", { simple: true })).toBe(

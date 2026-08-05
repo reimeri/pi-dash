@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_VERSION } from "@pi-dash/contracts";
 import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildHttpServer, type HttpServer } from "../src/app.js";
@@ -124,7 +125,7 @@ describe("Fastify foundation API", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
       status: "ready",
-      version: "0.1.1",
+      version: APP_VERSION,
       schemaVersion: 8,
       capabilities: {
         git: "available",

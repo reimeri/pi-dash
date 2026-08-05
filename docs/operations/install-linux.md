@@ -19,7 +19,7 @@ Download the tarball and `SHA256SUMS` into one directory, then run:
 
 ```sh
 sha256sum --check SHA256SUMS --ignore-missing
-tar -xzf pi-dash-0.1.1-linux-x64.tar.gz
+tar -xzf pi-dash-<version>-linux-x64.tar.gz
 ```
 
 Run the `pi-dash` executable from the extracted directory. The executable may be launched from any current working directory; all immutable resources are resolved from the application installation.
