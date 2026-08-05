@@ -1,4 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -141,6 +142,61 @@ test.afterAll(async () => {
     });
   }
   if (root) await rm(root, { recursive: true, force: true });
+});
+
+test("expands a collapsed workspace after creating a worktree", async ({
+  page,
+}) => {
+  const suffix = randomUUID();
+  const workspaceName = `Expand E2E ${suffix}`;
+  const expandableRepository = createGitRepository(
+    root,
+    `expand-project-${suffix}`,
+  );
+
+  await page.goto(bootstrapUrl);
+  await page
+    .getByRole("main")
+    .getByRole("button", { name: "Add workspace" })
+    .click();
+  const workspaceDialog = page.getByRole("dialog", { name: "Add workspace" });
+  await workspaceDialog
+    .getByLabel("Repository directory")
+    .fill(expandableRepository);
+  await workspaceDialog.getByRole("button", { name: "Continue" }).click();
+  await workspaceDialog.getByLabel("Workspace name").fill(workspaceName);
+  await workspaceDialog.getByRole("button", { name: "Add workspace" }).click();
+
+  const workspaceNavigation = page.getByRole("navigation", {
+    name: "Workspaces",
+  });
+  await expect(
+    workspaceNavigation.getByRole("button", {
+      name: `Expand ${workspaceName}`,
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: `New worktree in ${workspaceName}` })
+    .click();
+  const createDialog = page.getByRole("dialog", {
+    name: "Create managed worktree",
+  });
+  await createDialog.getByLabel("Name").fill("Visible worktree");
+  await createDialog.getByRole("button", { name: "Create worktree" }).click();
+
+  const collapseWorkspaceButton = workspaceNavigation.getByRole("button", {
+    name: `Collapse ${workspaceName}`,
+  });
+  const visibleWorktreeButton = workspaceNavigation.getByRole("button", {
+    name: "Visible worktree",
+    exact: true,
+  });
+  await expect(collapseWorkspaceButton).toBeVisible();
+  await expect(visibleWorktreeButton).toBeVisible();
+
+  await page.reload();
+  await expect(collapseWorkspaceButton).toBeVisible();
+  await expect(visibleWorktreeButton).toBeVisible();
 });
 
 test("creates, persists, protects dirty state, removes, and safely deletes a branch", async ({

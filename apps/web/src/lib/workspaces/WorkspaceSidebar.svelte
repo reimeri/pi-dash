@@ -262,6 +262,10 @@
     save();
   }
 
+  export function expandWorkspace(id: string): void {
+    if (!expanded.has(id)) setExpanded(id, true);
+  }
+
   function closeMobileSidebar(): void {
     if (sidebar.isMobile) sidebar.setOpenMobile(false);
   }
