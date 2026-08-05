@@ -70,6 +70,7 @@
   let terminalMenuOpen = false;
   let focusTerminalAfterMenuClose = false;
   let mainContent: HTMLDivElement | null = null;
+  let workspaceSidebar: WorkspaceSidebar | undefined;
   let reconciling = false;
   let environmentRefreshToken = 0;
   let restartingEnvironmentRuntimes = false;
@@ -393,6 +394,7 @@
 
   function openCreatedWorktree(worktree: WorktreeDto): void {
     upsertWorktree(worktree);
+    workspaceSidebar?.expandWorkspace(worktree.workspaceId);
     selectWorktree(worktree);
   }
 
@@ -481,6 +483,7 @@
         <Sidebar.Group class="p-0">
           <Sidebar.GroupContent>
             <WorkspaceSidebar
+              bind:this={workspaceSidebar}
               workspaces={$workspaceStore.workspaces}
               status={$workspaceStore.status}
               message={$workspaceStore.message}
