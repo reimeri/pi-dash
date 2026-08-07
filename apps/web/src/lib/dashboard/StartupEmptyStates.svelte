@@ -21,8 +21,8 @@
         >Open Pi Dash from its launch link</Empty.Title
       >
       <Empty.Description
-        >Return to the terminal running Pi Dash and open the one-time URL it
-        printed.</Empty.Description
+        >Return to the terminal running Pi Dash and open a fresh one-time launch
+        link. Send SIGUSR1 to the daemon to print a new link without restarting.</Empty.Description
       >
     </Empty.Header>
   </Empty.Root>

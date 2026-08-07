@@ -8,14 +8,21 @@ import {
   ApiErrorEnvelopeSchema,
   APP_VERSION,
   BootstrapQuerySchema,
+  DesktopRebootstrapResponseSchema,
   HealthResponseSchema,
   SessionResponseSchema,
   type BootstrapQuery,
+  type DesktopRebootstrapResponse,
   type HealthResponse,
 } from "@pi-dash/contracts";
 import Fastify, { type FastifyError, type FastifyRequest } from "fastify";
 import type { Logger } from "pino";
-import { SESSION_COOKIE, type AuthService, type Session } from "./auth.js";
+import {
+  equalSecret,
+  SESSION_COOKIE,
+  type AuthService,
+  type Session,
+} from "./auth.js";
 import type { AppConfig } from "./config.js";
 import type { DatabaseService } from "./database.js";
 import { ApiHttpError } from "./errors.js";
@@ -40,6 +47,7 @@ declare module "fastify" {
 
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const BOOTSTRAP_PATH = "/auth/bootstrap";
+const DESKTOP_REBOOTSTRAP_PATH = "/auth/desktop/rebootstrap";
 
 function cleanBootstrapFailure(message: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pi Dash launch failed</title></head><body><main><h1>Unable to launch Pi Dash</h1><p>${message}</p></main><script>history.replaceState(null,"",${JSON.stringify(BOOTSTRAP_PATH)})</script></body></html>`;
@@ -47,6 +55,18 @@ function cleanBootstrapFailure(message: string): string {
 
 function requestPath(request: FastifyRequest): string {
   return request.url.split("?", 1)[0] ?? request.url;
+}
+
+export function bootstrapLaunchUrl(origin: string, token: string): string {
+  return `${origin}/auth/bootstrap?token=${encodeURIComponent(token)}`;
+}
+
+function bearerToken(
+  header: string | string[] | undefined,
+): string | undefined {
+  if (typeof header !== "string") return undefined;
+  const match = /^Bearer\s+(\S+)$/i.exec(header.trim());
+  return match?.[1];
 }
 
 export interface HttpServerOptions {
@@ -278,11 +298,40 @@ export async function buildHttpServer(options: HttpServerOptions) {
         httpOnly: true,
         sameSite: "strict",
         path: "/",
-        maxAge: 12 * 60 * 60,
       });
       return reply.redirect(options.config.uiOrigin ?? "/", 302);
     },
   );
+
+  if (options.config.desktopControlToken) {
+    const controlToken = options.config.desktopControlToken;
+    app.post(
+      DESKTOP_REBOOTSTRAP_PATH,
+      {
+        schema: {
+          response: {
+            200: DesktopRebootstrapResponseSchema,
+            401: ApiErrorEnvelopeSchema,
+            403: ApiErrorEnvelopeSchema,
+          },
+        },
+      },
+      async (request): Promise<DesktopRebootstrapResponse> => {
+        const candidate = bearerToken(request.headers.authorization);
+        if (!candidate || !equalSecret(candidate, controlToken)) {
+          throw new ApiHttpError(
+            401,
+            ApiErrorCodes.UNAUTHORIZED,
+            "Desktop control authentication is required",
+          );
+        }
+        const token = options.auth.issueBootstrap();
+        return {
+          bootstrapUrl: bootstrapLaunchUrl(options.policy.serverOrigin, token),
+        };
+      },
+    );
+  }
 
   if (options.config.mode === "production") {
     const index = join(options.staticDirectory, "index.html");

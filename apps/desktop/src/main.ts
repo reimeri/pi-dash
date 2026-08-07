@@ -1,32 +1,44 @@
+import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   app,
   BrowserWindow,
   dialog,
+  ipcMain,
   Menu,
+  powerMonitor,
   session,
+  type IpcMainInvokeEvent,
   type WebContents,
 } from "electron";
-import {
-  createDaemonLog,
-  type DaemonLogSink,
-  sanitizeDaemonOutput,
-} from "./daemon-log.js";
+import { createDaemonLog, type DaemonLogSink } from "./daemon-log.js";
 import {
   assertDesktopRuntimePaths,
   resolveDesktopRuntimePaths,
 } from "./runtime-paths.js";
+import {
+  requestDesktopRebootstrap,
+  validateBootstrapUrl,
+  waitForDaemonHealth,
+} from "./reauth.js";
+
 const STARTUP_TIMEOUT_MS = 30_000;
 const SHUTDOWN_TIMEOUT_MS = 10_000;
+const PRELOAD_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "preload.cjs",
+);
 
 interface OwnedDaemonProcess {
   child: ChildProcessWithoutNullStreams;
   bootstrapDirectory: string;
   closed: Promise<void>;
   log: DaemonLogSink;
+  controlToken: string;
 }
 
 interface DaemonProcess extends OwnedDaemonProcess {
@@ -35,8 +47,11 @@ interface DaemonProcess extends OwnedDaemonProcess {
 }
 
 let mainWindow: BrowserWindow | undefined;
-let ownedDaemon: OwnedDaemonProcess | undefined;
+let ownedDaemon: DaemonProcess | undefined;
+let activeRuntime: DaemonProcess | undefined;
 let shutdownPromise: Promise<void> | undefined;
+let recoveryPromise: Promise<void> | undefined;
+const terminationPromises = new WeakMap<OwnedDaemonProcess, Promise<void>>();
 let quitting = false;
 
 function desktopArguments(): string[] {
@@ -58,25 +73,8 @@ function validateDesktopArguments(args: readonly string[]): void {
   }
 }
 
-function validateBootstrapUrl(rawUrl: string): { url: string; origin: string } {
-  const url = new URL(rawUrl);
-  const loopback =
-    url.hostname === "::1" ||
-    (url.hostname.startsWith("127.") &&
-      url.hostname.split(".").every((part) => /^\d+$/.test(part)));
-  if (
-    url.protocol !== "http:" ||
-    !loopback ||
-    url.pathname !== "/auth/bootstrap" ||
-    !url.searchParams.has("token")
-  ) {
-    throw new Error("The daemon returned an invalid desktop launch URL");
-  }
-  return { url: url.href, origin: url.origin };
-}
-
-function sanitizedFailure(message: string, maxCharacters = 8_192): string {
-  return sanitizeDaemonOutput(message).trim().slice(-maxCharacters);
+function createControlToken(): string {
+  return randomBytes(32).toString("base64url");
 }
 
 async function startDaemon(): Promise<DaemonProcess> {
@@ -86,6 +84,7 @@ async function startDaemon(): Promise<DaemonProcess> {
   const bootstrapDirectory = mkdtempSync(join(tmpdir(), "pi-dash-desktop-"));
   chmodSync(bootstrapDirectory, 0o700);
   const bootstrapOutput = join(bootstrapDirectory, "bootstrap-url");
+  const controlToken = createControlToken();
   const daemonLog = createDaemonLog();
   const runtime = resolveDesktopRuntimePaths({
     packaged: app.isPackaged,
@@ -130,6 +129,7 @@ async function startDaemon(): Promise<DaemonProcess> {
           NODE_ENV: "production",
           PI_DASH_RESOURCE_ROOT: runtime.resourceRoot,
           PI_DASH_DESKTOP: "true",
+          PI_DASH_DESKTOP_CONTROL_TOKEN: controlToken,
           PI_DASH_NO_OPEN: "true",
           PI_DASH_UI_ORIGIN: "",
         },
@@ -150,7 +150,15 @@ async function startDaemon(): Promise<DaemonProcess> {
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve;
   });
-  const ownership = { child, bootstrapDirectory, closed, log: daemonLog };
+  const ownership: DaemonProcess = {
+    child,
+    bootstrapDirectory,
+    closed,
+    log: daemonLog,
+    controlToken,
+    bootstrapUrl: "",
+    origin: "",
+  };
   ownedDaemon = ownership;
 
   child.stdout.on("data", (chunk: Buffer) => daemonLog.write("stdout", chunk));
@@ -230,14 +238,9 @@ async function startDaemon(): Promise<DaemonProcess> {
       child.once("close", handleClose);
     });
     const launch = validateBootstrapUrl(rawUrl);
-    return {
-      child,
-      bootstrapDirectory,
-      closed,
-      log: daemonLog,
-      bootstrapUrl: launch.url,
-      origin: launch.origin,
-    };
+    ownership.bootstrapUrl = launch.url;
+    ownership.origin = launch.origin;
+    return ownership;
   } catch (error) {
     if (ownedDaemon === ownership) ownedDaemon = undefined;
     await terminateDaemon(ownership);
@@ -258,66 +261,199 @@ function waitForClose(
   });
 }
 
-async function terminateDaemon(current: OwnedDaemonProcess): Promise<void> {
-  try {
-    current.child.kill("SIGTERM");
-    if (!(await waitForClose(current.closed, SHUTDOWN_TIMEOUT_MS))) {
-      current.child.kill("SIGKILL");
-      await waitForClose(current.closed, 2_000);
+function terminateDaemon(current: OwnedDaemonProcess): Promise<void> {
+  const existing = terminationPromises.get(current);
+  if (existing) return existing;
+  const pending = (async () => {
+    try {
+      if (current.child.exitCode === null) {
+        try {
+          current.child.kill("SIGTERM");
+        } catch {
+          // The process may already be gone.
+        }
+        if (!(await waitForClose(current.closed, SHUTDOWN_TIMEOUT_MS))) {
+          try {
+            current.child.kill("SIGKILL");
+          } catch {
+            // The process may already be gone.
+          }
+          await waitForClose(current.closed, 2_000);
+        }
+      } else {
+        await current.closed;
+      }
+    } finally {
+      current.log.close();
+      rmSync(current.bootstrapDirectory, { recursive: true, force: true });
     }
-  } finally {
-    current.log.close();
-    rmSync(current.bootstrapDirectory, { recursive: true, force: true });
-  }
+  })().finally(() => {
+    if (terminationPromises.get(current) === pending) {
+      terminationPromises.delete(current);
+    }
+  });
+  terminationPromises.set(current, pending);
+  return pending;
 }
 
 async function stopDaemon(): Promise<void> {
   const current = ownedDaemon;
   ownedDaemon = undefined;
+  activeRuntime = undefined;
   if (current) await terminateDaemon(current);
 }
 
-function createWindow(runtime: DaemonProcess): BrowserWindow {
-  const window = new BrowserWindow({
-    width: 1440,
-    height: 960,
-    minWidth: 900,
-    minHeight: 600,
-    show: false,
-    backgroundColor: "#09090b",
-    title: "Pi Dash",
-    webPreferences: {
-      contextIsolation: true,
-      devTools: false,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  window.webContents.setIgnoreMenuShortcuts(true);
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  window.webContents.on("will-attach-webview", (event) =>
-    event.preventDefault(),
-  );
-  window.webContents.on("will-navigate", (event, navigationUrl) => {
-    try {
-      if (new URL(navigationUrl).origin === runtime.origin) return;
-    } catch {
-      // Deny malformed and non-HTTP navigation below.
-    }
-    event.preventDefault();
-  });
-  window.once("ready-to-show", () => window.show());
-  void window.loadURL(runtime.bootstrapUrl).catch((error: unknown) => {
-    dialog.showErrorBox("Pi Dash failed to load", (error as Error).message);
-    app.quit();
-  });
-  return window;
+function daemonChildAlive(runtime: DaemonProcess): boolean {
+  return !runtime.child.killed && runtime.child.exitCode === null;
 }
 
-async function launch(): Promise<void> {
-  Menu.setApplicationMenu(null);
-  const runtime = await startDaemon();
+type RecoveryStatus = "retrying" | "recovered" | "restarting";
+
+function sendRecoveryStatus(status: RecoveryStatus): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("pi-dash:recovery-status", status);
+}
+
+function attachDaemonExitRecovery(runtime: DaemonProcess): void {
+  runtime.child.once("close", () => {
+    if (quitting || ownedDaemon !== runtime) return;
+    void recoverDaemon("The local daemon exited unexpectedly.").catch(
+      (error: unknown) => {
+        dialog.showErrorBox(
+          "Pi Dash daemon stopped",
+          [
+            "The local daemon exited unexpectedly and could not be restarted.",
+            (error as Error).message,
+            runtime.log.failure
+              ? `Diagnostic logging was unavailable: ${runtime.log.failure}`
+              : `Diagnostic log: ${runtime.log.path}`,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        );
+        app.quit();
+      },
+    );
+  });
+}
+
+async function loadBootstrap(url: string): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    throw new Error("The Pi Dash window is unavailable");
+  }
+  await mainWindow.loadURL(url);
+}
+
+async function requestAndLoadBootstrap(runtime: DaemonProcess): Promise<void> {
+  const bootstrapUrl = await requestDesktopRebootstrap({
+    origin: runtime.origin,
+    controlToken: runtime.controlToken,
+  });
+  runtime.bootstrapUrl = bootstrapUrl;
+  await loadBootstrap(bootstrapUrl);
+}
+
+async function runtimeWasReplaced(runtime: DaemonProcess): Promise<boolean> {
+  if (activeRuntime === runtime) return false;
+  if (recoveryPromise) await recoveryPromise;
+  return true;
+}
+
+async function reauthenticate(): Promise<void> {
+  const runtime = activeRuntime;
+  if (!runtime || !daemonChildAlive(runtime)) {
+    await recoverDaemon("The local daemon is unavailable.");
+    return;
+  }
+  try {
+    await requestAndLoadBootstrap(runtime);
+  } catch (error) {
+    if (await runtimeWasReplaced(runtime)) return;
+    const healthy = await waitForDaemonHealth({ origin: runtime.origin });
+    if (await runtimeWasReplaced(runtime)) return;
+    if (healthy) {
+      try {
+        await requestAndLoadBootstrap(runtime);
+        return;
+      } catch {
+        if (await runtimeWasReplaced(runtime)) return;
+        // A responsive daemon that cannot reauthenticate must be replaced.
+      }
+    }
+    await recoverDaemon(
+      `Desktop reauthentication failed: ${(error as Error).message}`,
+    );
+  }
+}
+
+async function performDaemonRecovery(reason: string): Promise<void> {
+  const previous = ownedDaemon;
+  activeRuntime = undefined;
+  if (previous) {
+    previous.log.write("desktop", `${reason}\n`);
+    await terminateDaemon(previous).catch(() => undefined);
+    if (ownedDaemon === previous) ownedDaemon = undefined;
+  }
   if (quitting) return;
+  const runtime = await startDaemon();
+  if (quitting) {
+    if (ownedDaemon === runtime) ownedDaemon = undefined;
+    await terminateDaemon(runtime);
+    return;
+  }
+  activeRuntime = runtime;
+  attachDaemonExitRecovery(runtime);
+  configureClipboardPermissions(runtime.origin);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    await loadBootstrap(runtime.bootstrapUrl);
+  } else {
+    mainWindow = createWindow(runtime);
+    mainWindow.on("closed", () => {
+      mainWindow = undefined;
+    });
+  }
+  sendRecoveryStatus("recovered");
+}
+
+function recoverDaemon(reason: string): Promise<void> {
+  if (quitting) return Promise.resolve();
+  if (recoveryPromise) return recoveryPromise;
+  sendRecoveryStatus("restarting");
+  const pending = performDaemonRecovery(reason).finally(() => {
+    if (recoveryPromise === pending) recoveryPromise = undefined;
+  });
+  recoveryPromise = pending;
+  return pending;
+}
+
+async function ensureDaemonAfterResume(): Promise<void> {
+  if (quitting) return;
+  if (recoveryPromise) {
+    await recoveryPromise;
+    return;
+  }
+  const runtime = activeRuntime;
+  if (!runtime || !daemonChildAlive(runtime)) {
+    await recoverDaemon("The local daemon was not running after resume.");
+    return;
+  }
+  let retrying = false;
+  const healthy = await waitForDaemonHealth({
+    origin: runtime.origin,
+    onRetrying() {
+      retrying = true;
+      sendRecoveryStatus("retrying");
+    },
+  });
+  if (await runtimeWasReplaced(runtime)) return;
+  if (healthy) {
+    if (retrying) sendRecoveryStatus("recovered");
+    return;
+  }
+  await recoverDaemon("The local daemon did not respond after resume.");
+}
+
+function configureClipboardPermissions(origin: string): void {
   const clipboardPermission = (
     webContents: WebContents | null,
     permission: string,
@@ -326,7 +462,7 @@ async function launch(): Promise<void> {
   ): boolean => {
     let trustedOrigin = false;
     try {
-      trustedOrigin = new URL(requestingUrl).origin === runtime.origin;
+      trustedOrigin = new URL(requestingUrl).origin === origin;
     } catch {
       // Reject malformed requesting URLs below.
     }
@@ -358,30 +494,85 @@ async function launch(): Promise<void> {
         details.isMainFrame,
       ),
   );
-  runtime.child.once("close", (code, signal) => {
-    if (quitting) return;
-    const detail = runtime.log.tail(4_000);
-    dialog.showErrorBox(
-      "Pi Dash daemon stopped",
-      [
-        `The local daemon exited unexpectedly (${signal ?? code ?? "unknown"}).`,
-        detail
-          ? `Final diagnostic output:\n${sanitizedFailure(detail, 2_000)}`
-          : "",
-        runtime.log.failure
-          ? `Diagnostic logging was unavailable: ${runtime.log.failure}`
-          : `Diagnostic log: ${runtime.log.path}`,
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-    );
+}
+
+function createWindow(runtime: DaemonProcess): BrowserWindow {
+  const window = new BrowserWindow({
+    width: 1440,
+    height: 960,
+    minWidth: 900,
+    minHeight: 600,
+    show: false,
+    backgroundColor: "#09090b",
+    title: "Pi Dash",
+    webPreferences: {
+      contextIsolation: true,
+      devTools: false,
+      nodeIntegration: false,
+      preload: PRELOAD_PATH,
+      sandbox: true,
+    },
+  });
+  window.webContents.setIgnoreMenuShortcuts(true);
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-attach-webview", (event) =>
+    event.preventDefault(),
+  );
+  window.webContents.on("will-navigate", (event, navigationUrl) => {
+    try {
+      if (new URL(navigationUrl).origin === activeRuntime?.origin) return;
+    } catch {
+      // Deny malformed and non-HTTP navigation below.
+    }
+    event.preventDefault();
+  });
+  window.once("ready-to-show", () => window.show());
+  void window.loadURL(runtime.bootstrapUrl).catch((error: unknown) => {
+    dialog.showErrorBox("Pi Dash failed to load", (error as Error).message);
     app.quit();
   });
+  return window;
+}
+
+async function launch(): Promise<void> {
+  Menu.setApplicationMenu(null);
+  const runtime = await startDaemon();
+  if (quitting) return;
+  activeRuntime = runtime;
+  configureClipboardPermissions(runtime.origin);
+  attachDaemonExitRecovery(runtime);
   mainWindow = createWindow(runtime);
   mainWindow.on("closed", () => {
     mainWindow = undefined;
   });
 }
+
+function validateReauthenticationSender(event: IpcMainInvokeEvent): void {
+  const window = mainWindow;
+  const runtime = activeRuntime;
+  const frame = event.senderFrame;
+  let trustedOrigin = false;
+  try {
+    trustedOrigin =
+      !!runtime && new URL(frame?.url ?? "").origin === runtime.origin;
+  } catch {
+    // Reject malformed sender URLs below.
+  }
+  if (
+    !window ||
+    window.isDestroyed() ||
+    event.sender !== window.webContents ||
+    frame !== window.webContents.mainFrame ||
+    !trustedOrigin
+  ) {
+    throw new Error("Desktop reauthentication is unavailable to this sender");
+  }
+}
+
+ipcMain.handle("pi-dash:reauthenticate", async (event) => {
+  validateReauthenticationSender(event);
+  await reauthenticate();
+});
 
 app.enableSandbox();
 const primaryInstance = app.requestSingleInstanceLock();
@@ -404,7 +595,19 @@ if (!primaryInstance) {
   });
   void app
     .whenReady()
-    .then(launch)
+    .then(async () => {
+      await launch();
+      powerMonitor.on("resume", () => {
+        void ensureDaemonAfterResume().catch((error: unknown) => {
+          if (quitting) return;
+          dialog.showErrorBox(
+            "Pi Dash failed to recover",
+            (error as Error).message,
+          );
+          app.quit();
+        });
+      });
+    })
     .catch((error: unknown) => {
       if (!quitting) {
         dialog.showErrorBox(

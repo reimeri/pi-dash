@@ -32,36 +32,37 @@ export function createWorkspaceStore(
 
   const store = {
     subscribe,
-    async load() {
+    async load(signal?: AbortSignal): Promise<boolean> {
       if (activeReorderOperation !== undefined) {
         reloadAfterReorder = true;
-        return;
+        return true;
       }
       const generation = ++loadGeneration;
       const startingRevision = revision;
       update((state) => ({ ...state, status: "loading", message: undefined }));
       try {
-        const response = await client.workspaces();
-        if (generation !== loadGeneration) return;
+        const response = await client.workspaces(signal);
+        if (generation !== loadGeneration) return true;
         if (activeReorderOperation !== undefined) {
           reloadAfterReorder = true;
-          return;
+          return true;
         }
         if (revision !== startingRevision) {
           update((state) => ({ ...state, status: "ready" }));
           void store.load();
-          return;
+          return true;
         }
         replaceWorkspaces(response.workspaces);
+        return true;
       } catch (error) {
-        if (generation !== loadGeneration) return;
+        if (generation !== loadGeneration) return true;
         if (activeReorderOperation !== undefined) {
           reloadAfterReorder = true;
-          return;
+          return true;
         }
         if (revision !== startingRevision) {
           update((state) => ({ ...state, status: "ready" }));
-          return;
+          return true;
         }
         update((state) => ({
           ...state,
@@ -71,6 +72,7 @@ export function createWorkspaceStore(
               ? error.message
               : "Unable to load workspaces",
         }));
+        return false;
       }
     },
     upsert(workspace: WorkspaceDto) {

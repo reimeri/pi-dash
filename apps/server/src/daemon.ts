@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { APP_VERSION } from "@pi-dash/contracts";
 import type { Logger } from "pino";
-import { buildHttpServer, type HttpServer } from "./app.js";
+import { buildHttpServer, bootstrapLaunchUrl, type HttpServer } from "./app.js";
 import { createAuthService, type AuthService } from "./auth.js";
 import { loadConfig, type AppConfig } from "./config.js";
 import { openDatabase, type DatabaseService } from "./database.js";
@@ -77,6 +77,7 @@ export interface Daemon {
   statuses: StatusService;
   paths: AppPaths;
   bootstrapUrl: string;
+  renewBootstrap(): string;
   markReady(): void;
   shutdown(): Promise<void>;
 }
@@ -486,11 +487,24 @@ export async function createDaemon(
         // Diagnostics are best-effort and must never affect daemon lifecycle.
       }
     };
-    const bootstrapUrl = `${policy.serverOrigin}/auth/bootstrap?token=${encodeURIComponent(auth.bootstrapToken)}`;
+    let bootstrapUrl = bootstrapLaunchUrl(
+      policy.serverOrigin,
+      auth.bootstrapToken,
+    );
     if (config.bootstrapOutput) {
       secureWriteFile(config.bootstrapOutput, `${bootstrapUrl}\n`);
       bootstrapOutputWritten = true;
     }
+
+    const renewBootstrap = (): string => {
+      const token = auth!.issueBootstrap();
+      bootstrapUrl = bootstrapLaunchUrl(policy.serverOrigin, token);
+      if (config.bootstrapOutput) {
+        secureWriteFile(config.bootstrapOutput, `${bootstrapUrl}\n`);
+        bootstrapOutputWritten = true;
+      }
+      return bootstrapUrl;
+    };
 
     const daemon: Daemon = {
       app,
@@ -501,7 +515,10 @@ export async function createDaemon(
       shellTerminals,
       statuses,
       paths,
-      bootstrapUrl,
+      get bootstrapUrl() {
+        return bootstrapUrl;
+      },
+      renewBootstrap,
       markReady() {
         secureWriteFile(
           paths.runtimeInfo,

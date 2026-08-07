@@ -29,7 +29,7 @@ describe("origin policy", () => {
 });
 
 describe("local authentication", () => {
-  it("consumes a bootstrap token once and expires sessions", () => {
+  it("consumes a bootstrap token once and keeps sessions for the process lifetime", () => {
     let now = 1_000;
     let sequence = 0;
     const auth = createAuthService({
@@ -43,7 +43,27 @@ describe("local authentication", () => {
     expect(auth.exchangeBootstrap(auth.bootstrapToken)).toBeUndefined();
     expect(auth.getSession(session?.id)).toEqual(session);
     now += 13 * 60 * 60 * 1000;
-    expect(auth.getSession(session?.id)).toBeUndefined();
+    expect(auth.getSession(session?.id)).toEqual(session);
+  });
+
+  it("rotates unused bootstrap tokens with issueBootstrap", () => {
+    let now = 1_000;
+    let sequence = 0;
+    const auth = createAuthService({
+      policy,
+      now: () => now,
+      randomToken: () => `token-${String(sequence++).padStart(40, "x")}`,
+    });
+    const first = auth.bootstrapToken;
+    const second = auth.issueBootstrap();
+    expect(second).not.toBe(first);
+    expect(auth.exchangeBootstrap(first)).toBeUndefined();
+    const session = auth.exchangeBootstrap(second);
+    expect(session).toBeDefined();
+    expect(auth.exchangeBootstrap(second)).toBeUndefined();
+    const third = auth.issueBootstrap();
+    now += 6 * 60 * 1000;
+    expect(auth.exchangeBootstrap(third)).toBeUndefined();
   });
 
   it("shares Host, Origin, and cookie checks with future upgrades", () => {
@@ -89,7 +109,11 @@ describe("redaction", () => {
     logger.info({
       req: { method: "GET", url: "/auth/bootstrap?token=url-secret" },
       token: "top-secret",
-      context: { csrfToken: "csrf-secret", cookie: "session-secret" },
+      context: {
+        csrfToken: "csrf-secret",
+        cookie: "session-secret",
+        desktopControlToken: "desktop-secret",
+      },
       headers: { authorization: "bearer-secret" },
     });
     expect(output).toContain("[Redacted]");
@@ -98,6 +122,7 @@ describe("redaction", () => {
       "top-secret",
       "csrf-secret",
       "session-secret",
+      "desktop-secret",
       "bearer-secret",
     ]) {
       expect(output).not.toContain(secret);

@@ -8,6 +8,7 @@ import { test, expect } from "@playwright/test";
 
 const port = 4318;
 let root: string;
+let bootstrapOutputFile: string;
 let bootstrapUrl: string;
 let daemon: ChildProcess;
 let daemonOutput = "";
@@ -33,9 +34,19 @@ async function waitForServer(outputFile: string): Promise<void> {
   throw new Error(`Timed out waiting for daemon: ${daemonOutput}`);
 }
 
+async function waitForBootstrapChange(previous: string): Promise<string> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const next = (await readFile(bootstrapOutputFile, "utf8")).trim();
+    if (next && next !== previous) return next;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+  }
+  throw new Error("Timed out waiting for a refreshed launch link");
+}
+
 test.beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), "pi-dash-e2e-"));
-  const outputFile = join(root, "runtime", "bootstrap-url");
+  bootstrapOutputFile = join(root, "runtime", "bootstrap-url");
   daemon = spawn(
     process.execPath,
     [
@@ -49,7 +60,7 @@ test.beforeAll(async () => {
       "--runtime-dir",
       join(root, "runtime"),
       "--bootstrap-output",
-      outputFile,
+      bootstrapOutputFile,
       "--log-level",
       "warn",
     ],
@@ -69,7 +80,7 @@ test.beforeAll(async () => {
   daemon.stderr?.on("data", (chunk: Buffer) => {
     daemonOutput += chunk.toString();
   });
-  await waitForServer(outputFile);
+  await waitForServer(bootstrapOutputFile);
 });
 
 test.afterAll(async () => {
@@ -99,7 +110,7 @@ test("bootstrap lands on a clean authenticated dashboard and survives reload", a
   ).toBeVisible();
   await expect(
     page.getByRole("status", { name: "Daemon connection" }),
-  ).toContainText("Connected");
+  ).toHaveAttribute("title", "Connected");
   const dashboardBox = await page.getByTestId("dashboard-shell").boundingBox();
   expect(dashboardBox).not.toBeNull();
   expect(
@@ -116,11 +127,20 @@ test("bootstrap lands on a clean authenticated dashboard and survives reload", a
   await page.goto(`http://127.0.0.1:${port}/`);
   await expect(
     page.getByRole("status", { name: "Daemon connection" }),
-  ).toContainText("Connected");
+  ).toHaveAttribute("title", "Connected");
   await page.reload();
   await expect(
     page.getByRole("status", { name: "Daemon connection" }),
-  ).toContainText("Connected");
+  ).toHaveAttribute("title", "Connected");
+
+  const healthUrl = `http://127.0.0.1:${port}/api/v1/health`;
+  await page.route(healthUrl, (route) => route.abort("connectionrefused"));
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByText("Daemon disconnected")).toBeVisible();
+  await page.unroute(healthUrl);
+  await expect(
+    page.getByRole("status", { name: "Daemon connection" }),
+  ).toHaveAttribute("title", "Connected", { timeout: 15_000 });
 
   await page.goto(bootstrapUrl);
   await expect(page).toHaveURL(`http://127.0.0.1:${port}/auth/bootstrap`);
@@ -158,4 +178,27 @@ test("unauthenticated and wrong-origin API requests are denied", async ({
   await expect(
     page.getByRole("heading", { name: "Open Pi Dash from its launch link" }),
   ).toBeVisible();
+  await expect(
+    page.getByText("Send SIGUSR1 to the daemon to print a new link", {
+      exact: false,
+    }),
+  ).toBeVisible();
+});
+
+test("SIGUSR1 issues a fresh launch link for a new browser session", async ({
+  browser,
+}) => {
+  const previous = (await readFile(bootstrapOutputFile, "utf8")).trim();
+  daemon.kill("SIGUSR1");
+  const refreshed = await waitForBootstrapChange(previous);
+  expect(refreshed).not.toBe(previous);
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(refreshed);
+  await expect(page).toHaveURL(`http://127.0.0.1:${port}/`);
+  await expect(
+    page.getByRole("status", { name: "Daemon connection" }),
+  ).toHaveAttribute("title", "Connected");
+  await context.close();
 });

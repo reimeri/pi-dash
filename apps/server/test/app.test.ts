@@ -35,7 +35,9 @@ const resources: Array<{
   database: DatabaseService;
 }> = [];
 
-async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
+async function fixture(
+  overrides: Partial<AppConfig> = {},
+): Promise<{ app: HttpServer; auth: AuthService }> {
   const root = mkdtempSync(join(tmpdir(), "pi-dash-app-"));
   const config: AppConfig = {
     host: "127.0.0.1",
@@ -53,6 +55,7 @@ async function fixture(): Promise<{ app: HttpServer; auth: AuthService }> {
     logLevel: "silent",
     openBrowser: false,
     mode: "test",
+    ...overrides,
   };
   const database = await openDatabase({
     path: join(root, "db.sqlite"),
@@ -160,6 +163,7 @@ describe("Fastify foundation API", () => {
       sameSite: "Strict",
       path: "/",
     });
+    expect(cookie?.maxAge).toBeUndefined();
 
     const session = await app.inject({
       method: "GET",
@@ -281,5 +285,47 @@ describe("Fastify foundation API", () => {
     expect(response.statusCode).toBe(400);
     expect(response.body).toContain("history.replaceState");
     expect(response.body).not.toContain("short-secret");
+  });
+
+  it("mints a fresh bootstrap URL for desktop control tokens", async () => {
+    const controlToken = "d".repeat(43);
+    const { app, auth } = await fixture({ desktopControlToken: controlToken });
+    auth.exchangeBootstrap(auth.bootstrapToken);
+    const forbidden = await app.inject({
+      method: "POST",
+      url: "/auth/desktop/rebootstrap",
+      headers: headers({
+        authorization: "Bearer wrong-token-value-here-xxxxx",
+      }),
+    });
+    expect(forbidden.statusCode).toBe(401);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/auth/desktop/rebootstrap",
+      headers: headers({ authorization: `Bearer ${controlToken}` }),
+    });
+    expect(response.statusCode).toBe(200);
+    const bootstrapUrl = response.json().bootstrapUrl as string;
+    expect(bootstrapUrl).toMatch(
+      /^http:\/\/127\.0\.0\.1:4317\/auth\/bootstrap\?token=/,
+    );
+    const token = new URL(bootstrapUrl).searchParams.get("token")!;
+    const bootstrap = await app.inject({
+      method: "GET",
+      url: `/auth/bootstrap?token=${encodeURIComponent(token)}`,
+      headers: headers(),
+    });
+    expect(bootstrap.statusCode).toBe(302);
+  });
+
+  it("hides desktop rebootstrap when no control token is configured", async () => {
+    const { app } = await fixture();
+    const response = await app.inject({
+      method: "POST",
+      url: "/auth/desktop/rebootstrap",
+      headers: headers({ authorization: `Bearer ${"d".repeat(43)}` }),
+    });
+    expect(response.statusCode).toBe(404);
   });
 });

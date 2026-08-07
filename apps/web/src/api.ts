@@ -119,14 +119,21 @@ async function requestEmpty(
 }
 
 export const api = {
-  health: () => requestJson("/api/v1/health", HealthResponseSchema),
-  async session() {
-    const session = await requestJson("/api/v1/session", SessionResponseSchema);
+  health: (signal?: AbortSignal) =>
+    requestJson("/api/v1/health", HealthResponseSchema, { signal }),
+  async session(signal?: AbortSignal) {
+    const session = await requestJson(
+      "/api/v1/session",
+      SessionResponseSchema,
+      {
+        signal,
+      },
+    );
     csrfToken = session.csrfToken;
     return session;
   },
-  workspaces: () =>
-    requestJson("/api/v1/workspaces", WorkspaceListResponseSchema),
+  workspaces: (signal?: AbortSignal) =>
+    requestJson("/api/v1/workspaces", WorkspaceListResponseSchema, { signal }),
   chooseWorkspaceDirectory: (signal?: AbortSignal) =>
     requestJson(
       "/api/v1/dialogs/workspace-directory",
@@ -191,10 +198,11 @@ export const api = {
       `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/refs?query=${encodeURIComponent(query)}&limit=${limit}`,
       WorkspaceRefsResponseSchema,
     ),
-  worktrees: (workspaceId: string) =>
+  worktrees: (workspaceId: string, signal?: AbortSignal) =>
     requestJson(
       `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/worktrees`,
       WorktreeListResponseSchema,
+      { signal },
     ),
   createWorktree: (
     workspaceId: string,

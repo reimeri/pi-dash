@@ -6,7 +6,7 @@ export * from "./terminal.js";
 export * from "./workspaces.js";
 export * from "./worktrees.js";
 
-export const APP_VERSION = "0.1.8";
+export const APP_VERSION = "0.2.1";
 export const API_VERSION = 1;
 export const CURRENT_SCHEMA_VERSION = 8;
 
@@ -61,6 +61,16 @@ export const SessionResponseSchema = Type.Object(
   { additionalProperties: false },
 );
 export type SessionResponse = Static<typeof SessionResponseSchema>;
+
+export const DesktopRebootstrapResponseSchema = Type.Object(
+  {
+    bootstrapUrl: Type.String({ minLength: 1, maxLength: 2048 }),
+  },
+  { additionalProperties: false },
+);
+export type DesktopRebootstrapResponse = Static<
+  typeof DesktopRebootstrapResponseSchema
+>;
 
 export const ApiErrorCodes = {
   UNAUTHORIZED: "UNAUTHORIZED",

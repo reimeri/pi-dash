@@ -25,9 +25,12 @@ const SECRET_KEYS = new Set([
   "authorization",
   "basesnapshottoken",
   "bootstraptoken",
+  "bootstrapurl",
   "cookie",
   "csrftoken",
+  "desktopcontroltoken",
   "pi_dash_bootstrap_token",
+  "pi_dash_desktop_control_token",
   "pi_dash_status_token",
   "sessionid",
   "statustoken",
@@ -85,7 +88,7 @@ export function sanitizeDaemonOutput(message: string): string {
       `$1${REDACTED}`,
     )
     .replace(
-      /(\b(?:baseSnapshotToken|bootstrapToken|cookie|csrfToken|PI_DASH_BOOTSTRAP_TOKEN|PI_DASH_STATUS_TOKEN|sessionId|statusToken|token|x-csrf-token)["']?\s*[:=]\s*["']?)[^&;\s,"'}]+/gi,
+      /(\b(?:baseSnapshotToken|bootstrapToken|bootstrapUrl|cookie|csrfToken|desktopControlToken|PI_DASH_BOOTSTRAP_TOKEN|PI_DASH_DESKTOP_CONTROL_TOKEN|PI_DASH_STATUS_TOKEN|sessionId|statusToken|token|x-csrf-token)["']?\s*[:=]\s*["']?)[^&;\s,"'}]+/gi,
       `$1${REDACTED}`,
     )
     .replace(/(\bpi_dash_session=)[^;\s,"'}]+/gi, `$1${REDACTED}`);

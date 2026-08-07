@@ -1,6 +1,6 @@
 import type { WorktreeDto } from "@pi-dash/contracts";
 import { get } from "svelte/store";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createWorktreeStore } from "../src/lib/worktrees/store.js";
 
 const worktree: WorktreeDto = {
@@ -21,6 +21,17 @@ const worktree: WorktreeDto = {
 };
 
 describe("worktree store", () => {
+  it("forwards cancellation to worktree loads", async () => {
+    const worktrees = vi.fn(async () => ({ worktrees: [] }));
+    const store = createWorktreeStore({
+      worktrees,
+      reconcileWorktrees: async () => ({ worktrees: [] }),
+    });
+    const signal = AbortSignal.abort();
+    await store.load(worktree.workspaceId, signal);
+    expect(worktrees).toHaveBeenCalledWith(worktree.workspaceId, signal);
+  });
+
   it("tracks concurrent workspace loads and failures independently", async () => {
     let resolveFirst!: (value: { worktrees: [] }) => void;
     let rejectSecond!: (error: Error) => void;

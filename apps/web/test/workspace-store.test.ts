@@ -31,6 +31,28 @@ const second = workspace("00000000-0000-4000-8000-000000000002", "Second");
 const third = workspace("00000000-0000-4000-8000-000000000003", "Third");
 
 describe("workspace store", () => {
+  it("forwards cancellation to workspace loads", async () => {
+    const workspaces = vi.fn(async () => ({ workspaces: [] }));
+    const store = createWorkspaceStore({
+      workspaces,
+      reorderWorkspaces: vi.fn(),
+    });
+    const signal = AbortSignal.abort();
+    await store.load(signal);
+    expect(workspaces).toHaveBeenCalledWith(signal);
+  });
+
+  it("reports current load failures to connection recovery", async () => {
+    const store = createWorkspaceStore({
+      workspaces: async () => {
+        throw new Error("offline");
+      },
+      reorderWorkspaces: vi.fn(),
+    });
+    await expect(store.load()).resolves.toBe(false);
+    expect(get(store)).toMatchObject({ status: "error", message: "offline" });
+  });
+
   it("preserves authoritative server order", async () => {
     const store = createWorkspaceStore({
       workspaces: async () => ({ workspaces: [third, first, second] }),

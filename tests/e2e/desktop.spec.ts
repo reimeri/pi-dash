@@ -1,5 +1,5 @@
 import { chmodSync, mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -57,7 +57,10 @@ async function openTerminal(): Promise<{
   await worktreeDialog.getByRole("button", { name: "Create worktree" }).click();
   await expect(worktreeDialog).not.toBeVisible({ timeout: 15_000 });
 
-  await window.getByRole("button", { name: "Expand Desktop E2E" }).click();
+  const expandWorkspace = window.getByRole("button", {
+    name: "Expand Desktop E2E",
+  });
+  if (await expandWorkspace.isVisible()) await expandWorkspace.click();
   await window
     .getByRole("navigation", { name: "Workspaces" })
     .getByRole("button", { name: "Keybindings", exact: true })
@@ -107,8 +110,33 @@ test.afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-test("desktop delivers Pi keybindings instead of browser shortcuts", async () => {
+test("desktop delivers Pi keybindings and recovers its daemon", async () => {
   const { window, inputFrames } = await openTerminal();
+  await expect(
+    window.evaluate(
+      () =>
+        `${typeof window.piDashDesktop?.reauthenticate}:${typeof window.piDashDesktop?.onRecoveryStatus}`,
+    ),
+  ).resolves.toBe("function:function");
+  await desktop.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.webContents.send(
+      "pi-dash:recovery-status",
+      "retrying",
+    );
+  });
+  await expect(
+    window.getByText("Reconnecting to the local daemon…"),
+  ).toBeVisible();
+  await desktop.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.webContents.send(
+      "pi-dash:recovery-status",
+      "recovered",
+    );
+  });
+  await expect(
+    window.getByText("Reconnected to the local daemon"),
+  ).toBeVisible();
+
   const cases: Array<[string, string]> = [
     ["Control+w", "\u0017"],
     ["Control+l", "\u000c"],
@@ -182,4 +210,25 @@ test("desktop delivers Pi keybindings instead of browser shortcuts", async () =>
     .poll(() => desktop.evaluate(({ clipboard }) => clipboard.readText()))
     .toContain("desktop-paste");
   expect(inputFrames).toHaveLength(priorCount);
+
+  const runtimeInfo = join(root, "runtime", "daemon.json");
+  const originalPid = JSON.parse(await readFile(runtimeInfo, "utf8"))
+    .pid as number;
+  process.kill(originalPid, "SIGKILL");
+  await expect
+    .poll(
+      async () => {
+        try {
+          return (JSON.parse(await readFile(runtimeInfo, "utf8")).pid ??
+            originalPid) as number;
+        } catch {
+          return originalPid;
+        }
+      },
+      { timeout: 45_000 },
+    )
+    .not.toBe(originalPid);
+  await expect(
+    window.getByRole("status", { name: "Daemon connection" }),
+  ).toHaveAttribute("title", "Connected", { timeout: 45_000 });
 });

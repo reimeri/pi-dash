@@ -3,12 +3,10 @@ import type { OriginPolicy, RequestHeaders } from "./security.js";
 
 export const SESSION_COOKIE = "pi_dash_session";
 const BOOTSTRAP_TTL_MS = 5 * 60 * 1000;
-const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 export interface Session {
   id: string;
   csrfToken: string;
-  expiresAt: number;
 }
 
 export interface UpgradeRequest {
@@ -16,7 +14,8 @@ export interface UpgradeRequest {
 }
 
 export interface AuthService {
-  bootstrapToken: string;
+  readonly bootstrapToken: string;
+  issueBootstrap(): string;
   exchangeBootstrap(candidate: string): Session | undefined;
   getSession(id: string | undefined): Session | undefined;
   authenticateUpgrade(request: UpgradeRequest): Session | undefined;
@@ -27,7 +26,7 @@ function defaultToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
-function equalSecret(candidate: string, expected: string): boolean {
+export function equalSecret(candidate: string, expected: string): boolean {
   const left = Buffer.from(candidate);
   const right = Buffer.from(expected);
   return left.length === right.length && timingSafeEqual(left, right);
@@ -52,24 +51,26 @@ export function createAuthService(options: {
 }): AuthService {
   const now = options.now ?? Date.now;
   const makeToken = options.randomToken ?? defaultToken;
-  const bootstrapToken = makeToken();
-  const bootstrapExpiresAt = now() + BOOTSTRAP_TTL_MS;
+  let bootstrapToken = makeToken();
+  let bootstrapExpiresAt = now() + BOOTSTRAP_TTL_MS;
   const sessions = new Map<string, Session>();
   let bootstrapUsed = false;
 
   function getSession(id: string | undefined): Session | undefined {
     if (!id) return undefined;
-    const session = sessions.get(id);
-    if (!session) return undefined;
-    if (session.expiresAt <= now()) {
-      sessions.delete(id);
-      return undefined;
-    }
-    return session;
+    return sessions.get(id);
   }
 
   return {
-    bootstrapToken,
+    get bootstrapToken() {
+      return bootstrapToken;
+    },
+    issueBootstrap() {
+      bootstrapToken = makeToken();
+      bootstrapExpiresAt = now() + BOOTSTRAP_TTL_MS;
+      bootstrapUsed = false;
+      return bootstrapToken;
+    },
     exchangeBootstrap(candidate) {
       if (
         bootstrapUsed ||
@@ -81,7 +82,6 @@ export function createAuthService(options: {
       const session: Session = {
         id: makeToken(),
         csrfToken: makeToken(),
-        expiresAt: now() + SESSION_TTL_MS,
       };
       sessions.set(session.id, session);
       return session;

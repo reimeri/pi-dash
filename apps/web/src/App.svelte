@@ -6,6 +6,7 @@
   } from "@pi-dash/contracts";
   import { onDestroy, onMount } from "svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
+  import { toast } from "svelte-sonner";
   import { AlertCircleIcon } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
   import * as Alert from "$lib/components/ui/alert";
@@ -21,6 +22,7 @@
     createWorktreeDiffSummaryStore,
     syncSidebarDiffSummaries,
   } from "./lib/diff/store.js";
+  import { desktopBridge } from "./lib/desktop-bridge.js";
   import { IsMobile } from "./lib/hooks/is-mobile.svelte.js";
   import {
     initialStartupState,
@@ -134,19 +136,92 @@
     if (rightPanel !== "none") setRightPanel("none");
   }
 
-  async function connect() {
+  const RECONNECT_BASE_MS = 500;
+  const RECONNECT_MAX_MS = 10_000;
+  const RECONNECT_REQUEST_TIMEOUT_MS = 5_000;
+  const RECOVERY_TOAST_ID = "daemon-recovery";
+  let authRecoveryPromise: Promise<boolean> | undefined;
+  let connectPromise: Promise<void> | undefined;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let reconnectAttempts = 0;
+  let destroyed = false;
+
+  function cancelReconnect(): void {
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = undefined;
+  }
+
+  function reconnectSignal(): AbortSignal {
+    return AbortSignal.timeout(RECONNECT_REQUEST_TIMEOUT_MS);
+  }
+
+  function scheduleReconnect(immediate = false): void {
+    if (
+      destroyed ||
+      reconnectTimer ||
+      startup.status === "migration-failed" ||
+      (startup.status === "unauthorized" && !desktopBridge())
+    ) {
+      return;
+    }
+    const delay = immediate
+      ? 0
+      : Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** reconnectAttempts);
+    reconnectAttempts += 1;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined;
+      void beginConnect(false);
+    }, delay);
+  }
+
+  function disconnectAndRetry(): void {
+    statusEvents?.close();
+    statusEvents = undefined;
+    startup = reduceStartupState(startup, { type: "DISCONNECTED" });
+    scheduleReconnect();
+  }
+
+  function handleUnauthorized(): Promise<boolean> {
+    statusEvents?.close();
+    statusEvents = undefined;
+    if (authRecoveryPromise) return authRecoveryPromise;
+    const desktop = desktopBridge();
+    if (!desktop) {
+      startup = reduceStartupState(startup, { type: "UNAUTHORIZED" });
+      return Promise.resolve(false);
+    }
     startup = reduceStartupState(startup, { type: "CONNECT" });
+    const pending = desktop
+      .reauthenticate()
+      .then(() => true)
+      .catch(() => {
+        startup = reduceStartupState(startup, { type: "UNAUTHORIZED" });
+        scheduleReconnect();
+        return false;
+      })
+      .finally(() => {
+        if (authRecoveryPromise === pending) authRecoveryPromise = undefined;
+      });
+    authRecoveryPromise = pending;
+    return pending;
+  }
+
+  async function connectOnce(showConnecting: boolean): Promise<void> {
+    if (showConnecting) {
+      startup = reduceStartupState(startup, { type: "CONNECT" });
+    }
     try {
-      const health = await api.health();
+      const health = await api.health(reconnectSignal());
       nativeDialogAvailable =
         health.capabilities.nativeDirectoryDialog === "available";
       terminalCacheSize = health.settings.terminalCacheSize;
       terminalMaxFrameBytes = health.settings.terminalMaxFrameBytes;
       if (health.status === "migration-failed") {
+        cancelReconnect();
         startup = reduceStartupState(startup, { type: "MIGRATION_FAILED" });
         return;
       }
-      await api.session();
+      await api.session(reconnectSignal());
       statusEvents ??= createStatusEventClient({
         onWorktreeRemoved: removeWorktree,
         onWorkspaceUpdated: (workspace) => workspaceStore.upsert(workspace),
@@ -163,23 +238,66 @@
         },
       });
       statusEvents.start();
-      await workspaceStore.load();
+      if (!(await workspaceStore.load(reconnectSignal()))) {
+        throw new Error("Unable to load workspaces from the local daemon");
+      }
+      reconnectAttempts = 0;
       startup = reduceStartupState(startup, { type: "READY" });
-      if (selectedId) await worktreeStore.load(selectedId);
+      if (selectedId) {
+        await worktreeStore.load(selectedId, reconnectSignal());
+      }
     } catch (error) {
       if (error instanceof ApiClientError && error.status === 401) {
-        startup = reduceStartupState(startup, { type: "UNAUTHORIZED" });
+        if (await handleUnauthorized()) scheduleReconnect(true);
       } else if (
         error instanceof ApiClientError &&
         error.envelope?.error.code === "MIGRATION_REQUIRED"
       ) {
+        cancelReconnect();
         startup = reduceStartupState(startup, {
           type: "MIGRATION_FAILED",
           message: error.message,
         });
       } else {
-        startup = reduceStartupState(startup, { type: "DISCONNECTED" });
+        disconnectAndRetry();
       }
+    }
+  }
+
+  function beginConnect(showConnecting: boolean): Promise<void> {
+    cancelReconnect();
+    if (connectPromise) return connectPromise;
+    const pending = connectOnce(showConnecting).finally(() => {
+      if (connectPromise === pending) connectPromise = undefined;
+    });
+    connectPromise = pending;
+    return pending;
+  }
+
+  function connect(): Promise<void> {
+    return beginConnect(true);
+  }
+
+  let verifyingWake = false;
+  async function verifySessionOnWake(): Promise<void> {
+    if (verifyingWake) return;
+    if (startup.status === "disconnected") {
+      await connect();
+      return;
+    }
+    if (startup.status !== "ready") return;
+    verifyingWake = true;
+    try {
+      await api.health(reconnectSignal());
+      await api.session(reconnectSignal());
+    } catch (error) {
+      if (error instanceof ApiClientError && error.status === 401) {
+        if (await handleUnauthorized()) scheduleReconnect(true);
+      } else {
+        disconnectAndRetry();
+      }
+    } finally {
+      verifyingWake = false;
     }
   }
 
@@ -429,9 +547,42 @@
 
   onMount(() => {
     void connect();
+    const unsubscribeRecovery = desktopBridge()?.onRecoveryStatus((status) => {
+      if (status === "retrying") {
+        toast.loading("Reconnecting to the local daemon…", {
+          id: RECOVERY_TOAST_ID,
+          description:
+            "Pi Dash will preserve active terminals while retrying for up to 15 seconds.",
+        });
+      } else if (status === "restarting") {
+        toast.loading("Restarting the local daemon…", {
+          id: RECOVERY_TOAST_ID,
+          description: "The daemon did not recover during the retry window.",
+        });
+      } else {
+        toast.success("Reconnected to the local daemon", {
+          id: RECOVERY_TOAST_ID,
+        });
+      }
+    });
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void verifySessionOnWake();
+    };
+    const onFocus = () => {
+      void verifySessionOnWake();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      unsubscribeRecovery?.();
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+    };
   });
 
   onDestroy(() => {
+    destroyed = true;
+    cancelReconnect();
     statusEvents?.close();
     diffStore.destroy();
     sidebarDiffSummaryStore.destroy();
@@ -533,7 +684,7 @@
     </Sidebar.Root>
 
     <Sidebar.Inset class="min-h-0 min-w-0 overflow-hidden">
-      {#if startup.status === "disconnected" || startup.status === "migration-failed"}
+      {#if startup.status === "disconnected" || startup.status === "migration-failed" || startup.status === "unauthorized"}
         <Alert.Root
           variant="destructive"
           class="rounded-none border-x-0 border-t-0"
@@ -544,12 +695,15 @@
           <Alert.Title
             >{startup.status === "migration-failed"
               ? "Database setup failed"
-              : "Daemon disconnected"}</Alert.Title
+              : startup.status === "unauthorized"
+                ? "Authentication required"
+                : "Daemon disconnected"}</Alert.Title
           >
-          <Alert.Description
-            >{startup.message}. Check the daemon output for an actionable
-            diagnostic.</Alert.Description
-          >
+          <Alert.Description>
+            {startup.status === "unauthorized"
+              ? `${startup.message}. Open a fresh launch link or try again.`
+              : `${startup.message}. Check the daemon output for an actionable diagnostic.`}
+          </Alert.Description>
           <Alert.Action>
             <Button variant="outline" size="sm" onclick={connect}
               >Try again</Button

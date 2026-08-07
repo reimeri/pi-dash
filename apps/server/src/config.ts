@@ -35,6 +35,7 @@ export interface AppConfig {
   uiOrigin?: string;
   staticDir?: string;
   bootstrapOutput?: string;
+  desktopControlToken?: string;
   openBrowser: boolean;
   mode: "development" | "production" | "test";
 }
@@ -440,6 +441,15 @@ export function loadConfig(
         ) ?? "",
       ),
     ),
+    desktopControlToken: (() => {
+      const token = env.PI_DASH_DESKTOP_CONTROL_TOKEN?.trim() ?? "";
+      if (!token) return undefined;
+      if (token.length < 32)
+        throw new Error(
+          "PI_DASH_DESKTOP_CONTROL_TOKEN must be at least 32 characters",
+        );
+      return token;
+    })(),
     openBrowser:
       cli["no-open"] !== "true" &&
       !parseBooleanEnvironment("PI_DASH_NO_OPEN", env.PI_DASH_NO_OPEN),

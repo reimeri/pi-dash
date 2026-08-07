@@ -48,6 +48,10 @@ describe("desktop daemon log", () => {
       `${JSON.stringify({ cookie: "pi_dash_session=cookie-secret", nested: { baseSnapshotToken: "snapshot-secret", csrfToken: "csrf-secret", sessionId: "session-secret", statusToken: "status-secret", token: "token-secret" } })}\n`,
     );
     log.write("stderr", "PI_DASH_STATUS_TOKEN=environment-secret\n");
+    log.write(
+      "stderr",
+      "PI_DASH_DESKTOP_CONTROL_TOKEN=desktop-control-secret\n",
+    );
     const unicode = Buffer.from("split 🙂 character\n", "utf8");
     log.write("stdout", unicode.subarray(0, 8));
     log.write("stdout", unicode.subarray(8));
@@ -68,6 +72,7 @@ describe("desktop daemon log", () => {
     expect(output).not.toContain("status-secret");
     expect(output).not.toContain("token-secret");
     expect(output).not.toContain("environment-secret");
+    expect(output).not.toContain("desktop-control-secret");
     expect(output).not.toContain("boundary-secret");
     expect(output).toContain("[oversized line omitted]");
     expect(output).toContain("split 🙂 character");

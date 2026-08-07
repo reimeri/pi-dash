@@ -26,6 +26,18 @@ async function main(): Promise<void> {
   };
   process.on("SIGINT", () => handleSignal("SIGINT"));
   process.on("SIGTERM", () => handleSignal("SIGTERM"));
+  process.on("SIGUSR1", () => {
+    if (stopping) return;
+    try {
+      const bootstrapUrl = daemon.renewBootstrap();
+      process.stdout.write(`Open Pi Dash: ${bootstrapUrl}\n`);
+      daemon.app.log.info("Issued a fresh launch link");
+    } catch (error) {
+      process.stderr.write(
+        `pi-dash failed to issue a launch link: ${(error as Error).message}\n`,
+      );
+    }
+  });
 
   try {
     await listenAndLaunchDashboard(daemon);

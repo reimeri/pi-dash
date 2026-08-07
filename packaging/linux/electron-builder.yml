@@ -8,6 +8,7 @@ directories:
   output: ../../dist
 files:
   - dist/**/*.js
+  - dist/**/*.cjs
   - package.json
 extraResources:
   - from: ../pi-dash

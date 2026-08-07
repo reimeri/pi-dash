@@ -50,7 +50,7 @@ export function createWorktreeStore(
 
   return {
     subscribe,
-    async load(workspaceId: string) {
+    async load(workspaceId: string, signal?: AbortSignal) {
       const generation = (generations.get(workspaceId) ?? 0) + 1;
       generations.set(workspaceId, generation);
       update((state) => ({
@@ -65,7 +65,7 @@ export function createWorktreeStore(
         },
       }));
       try {
-        const response = await client.worktrees(workspaceId);
+        const response = await client.worktrees(workspaceId, signal);
         if (generations.get(workspaceId) === generation) {
           replace(workspaceId, response.worktrees);
         }
