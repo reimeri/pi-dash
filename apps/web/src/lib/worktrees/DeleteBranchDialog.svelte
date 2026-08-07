@@ -9,7 +9,8 @@
   import { onMount } from "svelte";
   import * as Alert from "$lib/components/ui/alert";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
-  import * as Card from "$lib/components/ui/card";
+  import { Button } from "$lib/components/ui/button";
+  import * as Collapsible from "$lib/components/ui/collapsible";
   import { Spinner } from "$lib/components/ui/spinner";
   import { ApiClientError, api } from "../../api.js";
 
@@ -21,6 +22,7 @@
   let safetyTarget: (GitRefDto & { ref: string }) | null = null;
   let loading = true;
   let deleting = false;
+  let detailsOpen = false;
   let error = "";
   let operationId = crypto.randomUUID();
   let dialogOpen = true;
@@ -107,57 +109,72 @@
     <p class="sr-only" role="status" aria-live="polite">
       {deleting ? "Verifying and deleting managed branch" : ""}
     </p>
-    <AlertDialog.Header
-      ><AlertDialog.Media
-        ><HugeiconsIcon
-          icon={Delete02Icon}
-          strokeWidth={2}
-        /></AlertDialog.Media
-      ><AlertDialog.Title>Delete removed worktree branch</AlertDialog.Title
-      ><AlertDialog.Description
-        >This separately deletes only the unchanged recorded branch ref after
-        proving it is merged.</AlertDialog.Description
-      ></AlertDialog.Header
-    >
-    <Card.Root size="sm">
-      <Card.Header>
-        <Card.Title>{worktree.name}</Card.Title>
-        <Card.Description class="break-all font-mono"
-          >{worktree.branchRef}</Card.Description
-        >
-      </Card.Header>
-    </Card.Root>
-    {#if loading}<div
+    <AlertDialog.Header>
+      <AlertDialog.Media>
+        <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+      </AlertDialog.Media>
+      <AlertDialog.Title>Delete removed worktree branch</AlertDialog.Title>
+      <AlertDialog.Description>
+        Deletes the recorded branch only if it is merged into workspace HEAD.
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+
+    <div class="min-w-0">
+      <p class="font-medium">{worktree.name}</p>
+      <p class="mt-0.5 break-all font-mono text-sm text-muted-foreground">
+        {worktree.branchRef}
+      </p>
+    </div>
+
+    {#if loading}
+      <div
         class="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground"
         role="status"
       >
         <Spinner aria-hidden="true" />Resolving workspace HEAD…
       </div>
-    {:else if safetyTarget}<dl class="grid gap-3 text-sm">
-        <div>
-          <dt class="text-muted-foreground">Expected branch tip</dt>
-          <dd><code class="break-all">{worktree.finalBranchTip}</code></dd>
-        </div>
-        <div>
-          <dt class="text-muted-foreground">Safety target</dt>
-          <dd>
-            <code class="break-all"
-              >{safetyTarget.fullName} at {safetyTarget.commit}</code
+    {:else if safetyTarget}
+      <Collapsible.Root bind:open={detailsOpen}>
+        <Collapsible.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              type="button"
+              variant="link"
+              size="sm"
+              class="h-auto px-0"
+              disabled={deleting}
             >
-          </dd>
-        </div>
-      </dl>
-      <p class="text-sm text-muted-foreground">
-        Pi Dash verifies no worktree uses this branch, proves the expected tip
-        is an ancestor of this exact target, then atomically compare-deletes the
-        ref. A moved or unmerged branch is left intact.
-      </p>{/if}
-    {#if error}<Alert.Root variant="destructive" role="alert"
-        ><HugeiconsIcon
-          icon={AlertCircleIcon}
-          strokeWidth={2}
-        /><Alert.Description>{error}</Alert.Description></Alert.Root
-      >{/if}
+              {detailsOpen ? "Hide details" : "Details"}
+            </Button>
+          {/snippet}
+        </Collapsible.Trigger>
+        <Collapsible.Content>
+          <dl class="mt-3 grid gap-3 text-sm">
+            <div>
+              <dt class="text-muted-foreground">Expected branch tip</dt>
+              <dd><code class="break-all">{worktree.finalBranchTip}</code></dd>
+            </div>
+            <div>
+              <dt class="text-muted-foreground">Safety target</dt>
+              <dd>
+                <code class="break-all"
+                  >{safetyTarget.fullName} at {safetyTarget.commit}</code
+                >
+              </dd>
+            </div>
+          </dl>
+        </Collapsible.Content>
+      </Collapsible.Root>
+    {/if}
+
+    {#if error}
+      <Alert.Root variant="destructive" role="alert">
+        <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} />
+        <Alert.Description>{error}</Alert.Description>
+      </Alert.Root>
+    {/if}
+
     <AlertDialog.Footer>
       <AlertDialog.Cancel disabled={deleting} onclick={close}
         >Keep branch</AlertDialog.Cancel

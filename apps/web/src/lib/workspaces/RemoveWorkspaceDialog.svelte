@@ -5,7 +5,6 @@
   import { onMount } from "svelte";
   import * as Alert from "$lib/components/ui/alert";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
-  import * as Card from "$lib/components/ui/card";
   import { Spinner } from "$lib/components/ui/spinner";
   import { api } from "../../api.js";
   import { displayPath } from "./display.js";
@@ -72,44 +71,41 @@
     }}
   >
     <AlertDialog.Header>
-      <AlertDialog.Media
-        ><HugeiconsIcon
-          icon={Delete02Icon}
-          strokeWidth={2}
-        /></AlertDialog.Media
-      >
+      <AlertDialog.Media>
+        <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+      </AlertDialog.Media>
       <AlertDialog.Title>Remove workspace</AlertDialog.Title>
-      <AlertDialog.Description
-        >This removes Pi Dash metadata only. Repository files are never deleted.</AlertDialog.Description
-      >
+      <AlertDialog.Description>
+        Removes Pi Dash metadata only. Repository files are never deleted.
+      </AlertDialog.Description>
     </AlertDialog.Header>
-    <Card.Root size="sm">
-      <Card.Header>
-        <Card.Title>{workspace.name}</Card.Title>
-        <Card.Description class="break-all font-mono"
-          >{displayPath(workspace.repositoryPath)}</Card.Description
-        >
-      </Card.Header>
-    </Card.Root>
-    {#if workspace.worktreeCount > 0}<Alert.Root
-        variant="destructive"
-        role="note"
-        ><HugeiconsIcon
-          icon={AlertCircleIcon}
-          strokeWidth={2}
-        /><Alert.Description
-          >This workspace has {workspace.worktreeCount} managed {workspace.worktreeCount ===
+
+    <div class="min-w-0">
+      <p class="font-medium">{workspace.name}</p>
+      <p class="mt-0.5 break-all font-mono text-sm text-muted-foreground">
+        {displayPath(workspace.repositoryPath)}
+      </p>
+    </div>
+
+    {#if workspace.worktreeCount > 0}
+      <Alert.Root variant="destructive" role="note">
+        <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} />
+        <Alert.Description>
+          This workspace has {workspace.worktreeCount} managed {workspace.worktreeCount ===
           1
             ? "worktree"
-            : "worktrees"}. Remove them first.</Alert.Description
-        ></Alert.Root
-      >{/if}
-    {#if error}<Alert.Root variant="destructive" role="alert"
-        ><HugeiconsIcon
-          icon={AlertCircleIcon}
-          strokeWidth={2}
-        /><Alert.Description>{error}</Alert.Description></Alert.Root
-      >{/if}
+            : "worktrees"}. Remove them first.
+        </Alert.Description>
+      </Alert.Root>
+    {/if}
+
+    {#if error}
+      <Alert.Root variant="destructive" role="alert">
+        <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} />
+        <Alert.Description>{error}</Alert.Description>
+      </Alert.Root>
+    {/if}
+
     <AlertDialog.Footer>
       <AlertDialog.Cancel disabled={removing} onclick={close}
         >Cancel</AlertDialog.Cancel

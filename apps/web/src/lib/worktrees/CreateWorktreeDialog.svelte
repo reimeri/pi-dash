@@ -4,11 +4,10 @@
     WorkspaceDto,
     WorktreeDto,
   } from "@pi-dash/contracts";
-  import { GitBranchIcon } from "@hugeicons/core-free-icons";
+  import { Edit02Icon } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
   import { afterUpdate, onMount, tick } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import * as Alert from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
   import * as Dialog from "$lib/components/ui/dialog";
   import * as Field from "$lib/components/ui/field";
@@ -29,12 +28,14 @@
   let name = "";
   let slug = "";
   let slugEdited = false;
+  let editingSlug = false;
   let loading = true;
   let saving = false;
   let error = "";
   let operationId = crypto.randomUUID();
   let dialogOpen = true;
   let nameInput: HTMLInputElement | null = null;
+  let slugInput: HTMLInputElement | null = null;
   let returnFocus: HTMLElement | null = null;
   let loadedHeadCommit = workspace.repository.headCommit;
   $: selected = refs.find(
@@ -79,6 +80,12 @@
   }
   function updateName() {
     if (!slugEdited) slug = slugFor(name);
+  }
+  async function showSlugEditor() {
+    editingSlug = true;
+    await tick();
+    slugInput?.focus();
+    slugInput?.select();
   }
   async function loadRefs() {
     loading = true;
@@ -168,11 +175,12 @@
       if (!saving) close();
     }}
   >
-    <Dialog.Header
-      ><Dialog.Title>Create managed worktree</Dialog.Title><Dialog.Description
-        >Create a new branch and linked worktree from an exact commit snapshot.</Dialog.Description
-      ></Dialog.Header
-    >
+    <Dialog.Header>
+      <Dialog.Title>Create worktree</Dialog.Title>
+      <Dialog.Description>
+        Create a new branch and linked worktree from the selected base.
+      </Dialog.Description>
+    </Dialog.Header>
     {#if workspace.repository.health === "healthy"}
       <WorkspaceSyncNotice
         status={workspace.repository.syncStatus}
@@ -194,8 +202,9 @@
           {saving ? "Creating managed worktree" : ""}
         </p>
         <Field.Group>
-          <Field.Field data-disabled={saving ? "" : undefined}
-            ><Field.Label for="worktree-name">Name</Field.Label><Input
+          <Field.Field data-disabled={saving ? "" : undefined}>
+            <Field.Label for="worktree-name">Name</Field.Label>
+            <Input
               id="worktree-name"
               bind:ref={nameInput}
               bind:value={name}
@@ -204,11 +213,35 @@
               oninput={updateName}
               autocomplete="off"
               placeholder="OAuth refresh"
-            /></Field.Field
+            />
+          </Field.Field>
+          <Field.Field
+            data-disabled={saving || refs.length === 0 ? "" : undefined}
           >
-          <Field.Field data-disabled={saving ? "" : undefined}
-            ><Field.Label for="worktree-slug">Slug</Field.Label><Input
+            <Field.Label for="worktree-base">Base</Field.Label>
+            <NativeSelect.Root
+              id="worktree-base"
+              bind:value={selectedKey}
+              disabled={saving || refs.length === 0}
+            >
+              {#each refs as ref (`${ref.fullName}:${ref.commit}`)}
+                <NativeSelect.Option value={`${ref.fullName}:${ref.commit}`}>
+                  {ref.kind === "tag" ? "tag: " : ""}{ref.name} — {ref.commit.slice(
+                    0,
+                    12,
+                  )}
+                </NativeSelect.Option>
+              {/each}
+            </NativeSelect.Root>
+          </Field.Field>
+        </Field.Group>
+
+        {#if editingSlug}
+          <Field.Field data-disabled={saving ? "" : undefined}>
+            <Field.Label for="worktree-slug">Slug</Field.Label>
+            <Input
               id="worktree-slug"
+              bind:ref={slugInput}
               bind:value={slug}
               maxlength={72}
               pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
@@ -216,69 +249,42 @@
               oninput={() => (slugEdited = true)}
               autocomplete="off"
               spellcheck="false"
-            /></Field.Field
-          >
-          <Field.Field
-            data-disabled={saving || refs.length === 0 ? "" : undefined}
-            ><Field.Label for="worktree-base">Base</Field.Label
-            ><NativeSelect.Root
-              id="worktree-base"
-              bind:value={selectedKey}
-              disabled={saving || refs.length === 0}
-              >{#each refs as ref (`${ref.fullName}:${ref.commit}`)}<NativeSelect.Option
-                  value={`${ref.fullName}:${ref.commit}`}
-                  >{ref.kind === "tag" ? "tag: " : ""}{ref.name} — {ref.commit.slice(
-                    0,
-                    12,
-                  )}</NativeSelect.Option
-                >{/each}</NativeSelect.Root
-            ></Field.Field
-          >
-        </Field.Group>
-        {#if selected}
-          <Alert.Root role="note"
-            ><HugeiconsIcon icon={GitBranchIcon} strokeWidth={2} /><Alert.Title
-              >Exact worktree snapshot</Alert.Title
-            ><Alert.Description
-              ><dl class="mt-2 grid gap-2 text-xs">
-                <div>
-                  <dt class="text-muted-foreground">Exact base commit</dt>
-                  <dd><code class="break-all">{selected.commit}</code></dd>
-                </div>
-                <div>
-                  <dt class="text-muted-foreground">New branch</dt>
-                  <dd><code>{branch}</code></dd>
-                </div>
-                <div>
-                  <dt class="text-muted-foreground">Managed path</dt>
-                  <dd>
-                    <code class="break-all"
-                      >…/worktrees/{workspace.id}/&lt;id&gt;-{slug ||
-                        "slug"}</code
-                    >
-                  </dd>
-                </div>
-                <div>
-                  <dt class="text-muted-foreground">Snapshot expires</dt>
-                  <dd>{new Date(selected.expiresAt).toLocaleTimeString()}</dd>
-                </div>
-              </dl></Alert.Description
-            ></Alert.Root
-          >
+            />
+            <Field.Description>Branch will be <code>{branch}</code></Field.Description>
+          </Field.Field>
+        {:else}
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+            <p class="text-muted-foreground">
+              Branch will be <code class="text-foreground">{branch}</code>
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Edit slug"
+              disabled={saving}
+              onclick={() => void showSlugEditor()}
+            >
+              <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
+            </Button>
+          </div>
         {/if}
+
         {#if error}<Field.Error>{error}</Field.Error>{/if}
-        <Dialog.Footer
-          ><Button variant="outline" disabled={saving} onclick={close}
+        <Dialog.Footer>
+          <Button variant="outline" disabled={saving} onclick={close}
             >Cancel</Button
-          ><Button
+          >
+          <Button
             class="ml-auto"
             type="submit"
             disabled={saving || !selected || !name.trim() || !slug}
-            >{#if saving}<Spinner data-icon="inline-start" />{/if}{saving
+          >
+            {#if saving}<Spinner data-icon="inline-start" />{/if}{saving
               ? "Creating…"
-              : "Create worktree"}</Button
-          ></Dialog.Footer
-        >
+              : "Create worktree"}
+          </Button>
+        </Dialog.Footer>
       </form>
     {/if}
   </Dialog.Content>

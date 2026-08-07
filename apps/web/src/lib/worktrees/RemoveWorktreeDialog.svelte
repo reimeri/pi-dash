@@ -15,9 +15,9 @@
   import { onMount } from "svelte";
   import * as Alert from "$lib/components/ui/alert";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
-  import * as Card from "$lib/components/ui/card";
-  import * as Field from "$lib/components/ui/field";
   import { Button } from "$lib/components/ui/button";
+  import * as Collapsible from "$lib/components/ui/collapsible";
+  import * as Field from "$lib/components/ui/field";
   import { Input } from "$lib/components/ui/input";
   import { Spinner } from "$lib/components/ui/spinner";
   import { ApiClientError, api } from "../../api.js";
@@ -32,6 +32,7 @@
   let loading = true;
   let removing = false;
   let reviewingForce = false;
+  let detailsOpen = false;
   let confirmation = "";
   let error = "";
   let operationId = crypto.randomUUID();
@@ -74,10 +75,35 @@
       : undefined;
   }
 
+  function statusParts(current: WorktreeRemovalInspection): {
+    status: string;
+    removal: string;
+    branch: string;
+  } {
+    return {
+      status: !current.dirty.available
+        ? "Unknown"
+        : current.dirty.dirty
+          ? "Has local changes"
+          : "Clean",
+      removal:
+        current.removalStrategy === "git"
+          ? current.observed.locked
+            ? "Git removal with lock override"
+            : "Git removal"
+          : "Filesystem only",
+      branch:
+        current.branchDisposition.kind === "manual"
+          ? "Left alone"
+          : "Kept for cleanup",
+    };
+  }
+
   async function prepare(): Promise<void> {
     loading = true;
     error = "";
     reviewingForce = false;
+    detailsOpen = false;
     confirmation = "";
     try {
       inspection = await api.prepareWorktreeRemoval(worktree.id);
@@ -198,95 +224,45 @@
         <AlertDialog.Description>
           {reviewingForce
             ? "This override may discard changed files or break a Git worktree lock."
-            : "Pi Dash inspects path, Git identity, changes, locks, and mounts before removal."}
+            : "Removes the worktree directory. The managed branch is kept for separate cleanup."}
         </AlertDialog.Description>
       </AlertDialog.Header>
 
-      <Card.Root size="sm">
-        <Card.Header>
-          <Card.Title>{worktree.name}</Card.Title>
-          <Card.Description class="break-all font-mono">
-            {worktree.path}
-          </Card.Description>
-        </Card.Header>
-      </Card.Root>
+      <div class="flex min-w-0 flex-col gap-2">
+        <p class="font-medium">{worktree.name}</p>
 
-      {#if loading}
-        <div class="flex items-center gap-2 text-sm text-muted-foreground">
-          <Spinner /> Inspecting removal safety…
-        </div>
-      {:else if inspection}
-        {#if inspection.issues.length > 0}
-          <Alert.Root variant="destructive">
-            <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} />
-            <Alert.Title>Removal safety checks found issues</Alert.Title>
-            <Alert.Description>
-              <ul class="flex list-disc flex-col gap-1 pl-4">
-                {#each inspection.issues as issue (issue.code)}
-                  <li>{issue.summary}</li>
-                {/each}
-              </ul>
-            </Alert.Description>
-          </Alert.Root>
+        {#if loading}
+          <div class="flex items-center gap-2 text-sm text-muted-foreground">
+            <Spinner /> Inspecting removal safety…
+          </div>
+        {:else if inspection}
+          {#if inspection.issues.length > 0}
+            <Alert.Root variant="destructive">
+              <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} />
+              <Alert.Title>Removal safety checks found issues</Alert.Title>
+              <Alert.Description>
+                <ul class="flex list-disc flex-col gap-1 pl-4">
+                  {#each inspection.issues as issue (issue.code)}
+                    <li>{issue.summary}</li>
+                  {/each}
+                </ul>
+              </Alert.Description>
+            </Alert.Root>
+          {:else if !reviewingForce}
+            {@const status = statusParts(inspection)}
+            <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+              <dt class="text-muted-foreground">Status</dt>
+              <dd>{status.status}</dd>
+              <dt class="text-muted-foreground">Removal</dt>
+              <dd>{status.removal}</dd>
+              <dt class="text-muted-foreground">Branch</dt>
+              <dd>{status.branch}</dd>
+            </dl>
+          {/if}
         {/if}
+      </div>
 
-        <dl class="grid gap-3 text-sm">
-          <div>
-            <dt class="text-muted-foreground">Expected branch</dt>
-            <dd class="break-all">
-              <code>{inspection.expected.branchRef}</code>
-            </dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground">Current branch</dt>
-            <dd class="break-all">
-              <code
-                >{inspection.observed.branchRef ??
-                  (inspection.observed.detached
-                    ? "detached HEAD"
-                    : "unavailable")}</code
-              >
-            </dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground">Git repository identity</dt>
-            <dd>
-              {inspection.observed.gitCommonDir ===
-              inspection.expected.gitCommonDir
-                ? "Matches the recorded workspace"
-                : `Expected ${inspection.expected.gitCommonDir}; found ${inspection.observed.gitCommonDir ?? "none"}`}
-            </dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground">Changes</dt>
-            <dd>
-              {inspection.dirty.available
-                ? `${inspection.dirty.tracked} tracked, ${inspection.dirty.untracked} untracked`
-                : "Could not be inspected"}
-            </dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground">Removal strategy</dt>
-            <dd>
-              {inspection.removalStrategy === "git"
-                ? inspection.observed.locked
-                  ? "Git removal with lock override"
-                  : "Git-managed removal"
-                : "Filesystem-only removal; Git metadata is left untouched"}
-            </dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground">Branch handling</dt>
-            <dd>
-              {inspection.branchDisposition.kind === "adopt_observed"
-                ? `Adopt ${inspection.branchDisposition.cleanupBranchRef} for separate cleanup`
-                : inspection.branchDisposition.kind === "recorded"
-                  ? `Keep ${inspection.branchDisposition.cleanupBranchRef} for separate cleanup`
-                  : "Leave all branches for manual management"}
-            </dd>
-          </div>
-        </dl>
-
+      {#if !loading && inspection}
         {#if reviewingForce}
           {#if inspection.warnings.length > 0}
             <Alert.Root variant="destructive">
@@ -307,9 +283,9 @@
             <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} />
             <Alert.Title>This action cannot be undone</Alert.Title>
             <Alert.Description>
-              The deterministic Pi Dash allocation will be removed recursively.
-              Mounted content is never crossed. Any listed dirty files and Git
-              lock are intentionally overridden.
+              The worktree directory will be removed recursively. Mounted
+              content is never crossed. Dirty files and any Git lock are
+              intentionally overridden.
             </Alert.Description>
           </Alert.Root>
           <Field.FieldGroup>
@@ -336,10 +312,84 @@
             </Field.Field>
           </Field.FieldGroup>
         {:else}
-          <p class="text-sm text-muted-foreground">
-            Safe removal keeps the managed branch. Branch deletion remains a
-            separate mergedness-checked confirmation.
-          </p>
+          <Collapsible.Root bind:open={detailsOpen}>
+            <Collapsible.Trigger>
+              {#snippet child({ props })}
+                <Button
+                  {...props}
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  class="h-auto px-0"
+                  disabled={removing}
+                >
+                  {detailsOpen ? "Hide details" : "Show details"}
+                </Button>
+              {/snippet}
+            </Collapsible.Trigger>
+            <Collapsible.Content>
+              <dl class="mt-3 grid gap-3 text-sm">
+                <div>
+                  <dt class="text-muted-foreground">Path</dt>
+                  <dd class="break-all font-mono text-xs">{worktree.path}</dd>
+                </div>
+                <div>
+                  <dt class="text-muted-foreground">Expected branch</dt>
+                  <dd class="break-all">
+                    <code>{inspection.expected.branchRef}</code>
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-muted-foreground">Current branch</dt>
+                  <dd class="break-all">
+                    <code
+                      >{inspection.observed.branchRef ??
+                        (inspection.observed.detached
+                          ? "detached HEAD"
+                          : "unavailable")}</code
+                    >
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-muted-foreground">Git repository identity</dt>
+                  <dd>
+                    {inspection.observed.gitCommonDir ===
+                    inspection.expected.gitCommonDir
+                      ? "Matches the recorded workspace"
+                      : `Expected ${inspection.expected.gitCommonDir}; found ${inspection.observed.gitCommonDir ?? "none"}`}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-muted-foreground">Changes</dt>
+                  <dd>
+                    {inspection.dirty.available
+                      ? `${inspection.dirty.tracked} tracked, ${inspection.dirty.untracked} untracked`
+                      : "Could not be inspected"}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-muted-foreground">Removal strategy</dt>
+                  <dd>
+                    {inspection.removalStrategy === "git"
+                      ? inspection.observed.locked
+                        ? "Git removal with lock override"
+                        : "Git-managed removal"
+                      : "Filesystem-only removal; Git metadata is left untouched"}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-muted-foreground">Branch handling</dt>
+                  <dd>
+                    {inspection.branchDisposition.kind === "adopt_observed"
+                      ? `Adopt ${inspection.branchDisposition.cleanupBranchRef} for separate cleanup`
+                      : inspection.branchDisposition.kind === "recorded"
+                        ? `Keep ${inspection.branchDisposition.cleanupBranchRef} for separate cleanup`
+                        : "Leave all branches for manual management"}
+                  </dd>
+                </div>
+              </dl>
+            </Collapsible.Content>
+          </Collapsible.Root>
         {/if}
       {/if}
 

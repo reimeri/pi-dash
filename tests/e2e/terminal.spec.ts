@@ -140,7 +140,7 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
 
   await page.getByRole("button", { name: "Create worktree" }).click();
   const createDialog = page.getByRole("dialog", {
-    name: "Create managed worktree",
+    name: "Create worktree",
   });
   await createDialog.getByLabel("Name").fill("Terminal work");
   const createResponse = page.waitForResponse(
@@ -483,7 +483,7 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     .getByRole("button", { name: "New worktree in Terminal E2E" })
     .click();
   const secondCreateDialog = page.getByRole("dialog", {
-    name: "Create managed worktree",
+    name: "Create worktree",
   });
   await secondCreateDialog.getByLabel("Name").fill("Second terminal");
   await secondCreateDialog

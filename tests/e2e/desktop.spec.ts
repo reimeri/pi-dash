@@ -51,7 +51,7 @@ async function openTerminal(): Promise<{
 
   await window.getByRole("button", { name: "Create worktree" }).click();
   const worktreeDialog = window.getByRole("dialog", {
-    name: "Create managed worktree",
+    name: "Create worktree",
   });
   await worktreeDialog.getByLabel("Name").fill("Keybindings");
   await worktreeDialog.getByRole("button", { name: "Create worktree" }).click();

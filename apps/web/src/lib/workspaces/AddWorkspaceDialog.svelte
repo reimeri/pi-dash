@@ -206,7 +206,9 @@
       <Dialog.Description>
         {step === "choosing"
           ? "A system directory dialog is active. It may appear behind this window."
-          : "Register an existing local Git worktree. Repository files will not be changed."}
+          : step === "confirm" || step === "saving"
+            ? "Confirm the repository and choose a display name."
+            : "Register an existing local Git repository. Files are not changed."}
       </Dialog.Description>
     </Dialog.Header>
 
@@ -233,19 +235,13 @@
               id="workspace-path"
               bind:ref={pathInput}
               bind:value={path}
-              aria-describedby={error
-                ? "add-workspace-error"
-                : "workspace-path-help"}
+              aria-describedby={error ? "add-workspace-error" : undefined}
               aria-invalid={error ? "true" : undefined}
               autocomplete="off"
               spellcheck="false"
               placeholder="/home/user/src/project"
               disabled={step === "inspecting"}
             />
-            <Field.Description id="workspace-path-help"
-              >The path is canonicalized and validated by Git before it is
-              saved.</Field.Description
-            >
             {#if error}<Field.Error id="add-workspace-error"
                 >{error}</Field.Error
               >{/if}
@@ -287,12 +283,12 @@
       >
     {:else}
       <form class="flex flex-col gap-6" on:submit|preventDefault={create}>
-        <Alert.Root role="note"
-          ><Alert.Title>Repository</Alert.Title><Alert.Description
-            ><code class="break-all">{displayPath(repositoryPath)}</code
-            ></Alert.Description
-          ></Alert.Root
-        >
+        <div class="min-w-0">
+          <p class="text-sm text-muted-foreground">Repository</p>
+          <p class="mt-0.5 break-all font-mono text-sm">
+            {displayPath(repositoryPath)}
+          </p>
+        </div>
         <Field.Group>
           <Field.Field
             data-invalid={error ? "" : undefined}

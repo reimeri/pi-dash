@@ -179,7 +179,7 @@ test("expands a collapsed workspace after creating a worktree", async ({
     .getByRole("button", { name: `New worktree in ${workspaceName}` })
     .click();
   const createDialog = page.getByRole("dialog", {
-    name: "Create managed worktree",
+    name: "Create worktree",
   });
   await createDialog.getByLabel("Name").fill("Visible worktree");
   await createDialog.getByRole("button", { name: "Create worktree" }).click();
@@ -228,10 +228,12 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
     page.getByRole("heading", { name: "Select a workspace" }),
   ).toBeVisible();
   const createDialog = page.getByRole("dialog", {
-    name: "Create managed worktree",
+    name: "Create worktree",
   });
   await expect(createDialog.getByLabel("Base")).toBeEnabled();
   await createDialog.getByLabel("Name").fill("Feature work");
+  await expect(createDialog.getByText("pi-dash/feature-work")).toBeVisible();
+  await createDialog.getByRole("button", { name: "Edit slug" }).click();
   await expect(createDialog.getByLabel("Slug")).toHaveValue("feature-work");
   await createDialog.getByRole("button", { name: "Create worktree" }).click();
   await expect(
@@ -310,6 +312,7 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
   removeDialog = page.getByRole("alertdialog", {
     name: "Remove managed worktree",
   });
+  await removeDialog.getByRole("button", { name: "Show details" }).click();
   await expect(removeDialog).toContainText("refs/heads/pi-dash/feature-work");
   await expect(removeDialog).toContainText("refs/heads/pi-dash/e2e-switched");
   await removeDialog
@@ -347,6 +350,7 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
   const branchDialog = page.getByRole("alertdialog", {
     name: "Delete removed worktree branch",
   });
+  await branchDialog.getByRole("button", { name: "Details" }).click();
   await expect(branchDialog).toContainText("Safety target");
   await branchDialog
     .getByRole("button", { name: "Delete merged branch" })
