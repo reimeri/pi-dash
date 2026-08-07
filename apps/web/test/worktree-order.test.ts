@@ -46,8 +46,8 @@ const newer = worktree(
   "2026-01-02T00:00:00.000Z",
 );
 
-describe("sidebar worktree activity ordering", () => {
-  it("places the most recently active worktree first", () => {
+describe("worktree activity ordering", () => {
+  it("places the most recently active worktree first by default", () => {
     const statuses = {
       [older.id]: status(older.id, "2026-01-04T00:00:00.000Z"),
       [newer.id]: status(newer.id, "2026-01-03T00:00:00.000Z"),
@@ -64,5 +64,23 @@ describe("sidebar worktree activity ordering", () => {
 
     expect(orderWorktreesByActivity(input, {})).toEqual([newer, older]);
     expect(input).toEqual([older, newer]);
+  });
+
+  it("places the oldest activity first when reversed", () => {
+    const statuses = {
+      [older.id]: status(older.id, "2026-01-04T00:00:00.000Z"),
+      [newer.id]: status(newer.id, "2026-01-03T00:00:00.000Z"),
+    };
+
+    expect(
+      orderWorktreesByActivity([newer, older], statuses, "oldest"),
+    ).toEqual([newer, older]);
+  });
+
+  it("places oldest created worktrees first when reversed before status arrives", () => {
+    expect(orderWorktreesByActivity([newer, older], {}, "oldest")).toEqual([
+      older,
+      newer,
+    ]);
   });
 });

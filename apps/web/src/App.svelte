@@ -588,6 +588,7 @@
               <WorkspaceDetail
                 workspace={selectedWorkspace}
                 worktrees={selectedWorktrees}
+                workflowStatuses={$workflowStatusStore.byWorktree}
                 worktreeLoading={!!$worktreeStore.loadingByWorkspace[
                   selectedWorkspace.id
                 ]}

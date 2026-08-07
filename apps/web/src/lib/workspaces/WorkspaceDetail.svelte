@@ -1,5 +1,9 @@
 <script lang="ts">
-  import type { WorkspaceDto, WorktreeDto } from "@pi-dash/contracts";
+  import type {
+    WorkflowStatusDto,
+    WorkspaceDto,
+    WorktreeDto,
+  } from "@pi-dash/contracts";
   import {
     Delete02Icon,
     Edit02Icon,
@@ -22,6 +26,7 @@
 
   export let workspace: WorkspaceDto;
   export let worktrees: WorktreeDto[];
+  export let workflowStatuses: Record<string, WorkflowStatusDto> = {};
   export let worktreeLoading: boolean;
   export let worktreeError: string | undefined;
   export let refreshing: boolean;
@@ -203,6 +208,7 @@
   <WorktreeSection
     {workspace}
     {worktrees}
+    {workflowStatuses}
     loading={worktreeLoading}
     error={worktreeError}
     {reconciling}

@@ -1,20 +1,30 @@
 <script lang="ts">
-  import type { WorkspaceDto, WorktreeDto } from "@pi-dash/contracts";
+  import type {
+    WorkflowStatusDto,
+    WorkspaceDto,
+    WorktreeDto,
+  } from "@pi-dash/contracts";
   import {
     Add01Icon,
     AlertCircleIcon,
     ArrowReloadHorizontalIcon,
     GitBranchIcon,
+    Sorting01Icon,
   } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
   import * as Alert from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
   import * as Empty from "$lib/components/ui/empty";
   import { Spinner } from "$lib/components/ui/spinner";
+  import {
+    orderWorktreesByActivity,
+    type WorktreeActivityOrder,
+  } from "./order.js";
   import WorktreeCard from "./WorktreeCard.svelte";
 
   export let workspace: WorkspaceDto;
   export let worktrees: WorktreeDto[];
+  export let workflowStatuses: Record<string, WorkflowStatusDto> = {};
   export let loading: boolean;
   export let error: string | undefined;
   export let reconciling: boolean;
@@ -23,6 +33,24 @@
   export let onOpen: (worktree: WorktreeDto) => void;
   export let onRemove: (worktree: WorktreeDto) => void;
   export let onDeleteBranch: (worktree: WorktreeDto) => void;
+
+  let activityOrder: WorktreeActivityOrder = "newest";
+
+  $: orderedWorktrees = orderWorktreesByActivity(
+    worktrees,
+    workflowStatuses,
+    activityOrder,
+  );
+  $: sortLabel =
+    activityOrder === "newest" ? "Newest activity" : "Oldest activity";
+  $: sortActionLabel =
+    activityOrder === "newest"
+      ? "Sort by oldest activity"
+      : "Sort by newest activity";
+
+  function toggleActivityOrder() {
+    activityOrder = activityOrder === "newest" ? "oldest" : "newest";
+  }
 </script>
 
 <section class="flex flex-col gap-4" aria-labelledby="worktree-heading">
@@ -33,7 +61,23 @@
       </h3>
       <p class="text-sm text-muted-foreground">Managed worktrees</p>
     </div>
-    <div class="flex gap-2">
+    <div class="flex flex-wrap gap-2">
+      {#if worktrees.length > 1}
+        <Button
+          variant="outline"
+          aria-label={sortActionLabel}
+          title={sortActionLabel}
+          onclick={toggleActivityOrder}
+        >
+          <HugeiconsIcon
+            icon={Sorting01Icon}
+            strokeWidth={2}
+            data-icon="inline-start"
+            class={activityOrder === "oldest" ? "rotate-180" : undefined}
+          />
+          {sortLabel}
+        </Button>
+      {/if}
       <Button variant="outline" disabled={reconciling} onclick={onReconcile}>
         {#if reconciling}<Spinner
             data-icon="inline-start"
@@ -87,7 +131,7 @@
     </Empty.Root>
   {:else}
     <div class="flex flex-col gap-2">
-      {#each worktrees as worktree (worktree.id)}
+      {#each orderedWorktrees as worktree (worktree.id)}
         <WorktreeCard
           {worktree}
           {onOpen}
