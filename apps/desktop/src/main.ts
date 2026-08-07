@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import {
   app,
   BrowserWindow,
-  dialog,
   ipcMain,
   Menu,
   powerMonitor,
@@ -16,6 +15,7 @@ import {
   type WebContents,
 } from "electron";
 import { createDaemonLog, type DaemonLogSink } from "./daemon-log.js";
+import { showFatalErrorDialog } from "./error-dialog.js";
 import {
   assertDesktopRuntimePaths,
   resolveDesktopRuntimePaths,
@@ -50,6 +50,8 @@ let mainWindow: BrowserWindow | undefined;
 let ownedDaemon: DaemonProcess | undefined;
 let activeRuntime: DaemonProcess | undefined;
 let shutdownPromise: Promise<void> | undefined;
+let shutdownExitCode = 0;
+let fatalErrorPromise: Promise<void> | undefined;
 let recoveryPromise: Promise<void> | undefined;
 const terminationPromises = new WeakMap<OwnedDaemonProcess, Promise<void>>();
 let quitting = false;
@@ -303,6 +305,36 @@ async function stopDaemon(): Promise<void> {
   if (current) await terminateDaemon(current);
 }
 
+function beginShutdown(exitCode = 0): Promise<void> {
+  quitting = true;
+  shutdownExitCode = Math.max(shutdownExitCode, exitCode);
+  shutdownPromise ??= stopDaemon()
+    .catch(() => undefined)
+    .finally(() => app.exit(shutdownExitCode));
+  return shutdownPromise;
+}
+
+function reportFatalErrorAndShutdown(
+  title: string,
+  content: string,
+  parent?: BrowserWindow,
+  exitCode = 0,
+): Promise<void> {
+  shutdownExitCode = Math.max(shutdownExitCode, exitCode);
+  if (fatalErrorPromise) return fatalErrorPromise;
+  if (quitting) return beginShutdown(exitCode);
+
+  quitting = true;
+  fatalErrorPromise = (async () => {
+    try {
+      await showFatalErrorDialog(title, content, parent);
+    } finally {
+      await beginShutdown(exitCode);
+    }
+  })();
+  return fatalErrorPromise;
+}
+
 function daemonChildAlive(runtime: DaemonProcess): boolean {
   return !runtime.child.killed && runtime.child.exitCode === null;
 }
@@ -319,7 +351,7 @@ function attachDaemonExitRecovery(runtime: DaemonProcess): void {
     if (quitting || ownedDaemon !== runtime) return;
     void recoverDaemon("The local daemon exited unexpectedly.").catch(
       (error: unknown) => {
-        dialog.showErrorBox(
+        void reportFatalErrorAndShutdown(
           "Pi Dash daemon stopped",
           [
             "The local daemon exited unexpectedly and could not be restarted.",
@@ -330,8 +362,8 @@ function attachDaemonExitRecovery(runtime: DaemonProcess): void {
           ]
             .filter(Boolean)
             .join("\n\n"),
+          mainWindow,
         );
-        app.quit();
       },
     );
   });
@@ -528,8 +560,11 @@ function createWindow(runtime: DaemonProcess): BrowserWindow {
   });
   window.once("ready-to-show", () => window.show());
   void window.loadURL(runtime.bootstrapUrl).catch((error: unknown) => {
-    dialog.showErrorBox("Pi Dash failed to load", (error as Error).message);
-    app.quit();
+    void reportFatalErrorAndShutdown(
+      "Pi Dash failed to load",
+      (error as Error).message,
+      window,
+    );
   });
   return window;
 }
@@ -587,11 +622,8 @@ if (!primaryInstance) {
   });
   app.on("window-all-closed", () => app.quit());
   app.on("before-quit", (event) => {
-    if (quitting) return;
     event.preventDefault();
-    quitting = true;
-    shutdownPromise ??= stopDaemon();
-    void shutdownPromise.finally(() => app.exit());
+    void beginShutdown();
   });
   void app
     .whenReady()
@@ -600,23 +632,20 @@ if (!primaryInstance) {
       powerMonitor.on("resume", () => {
         void ensureDaemonAfterResume().catch((error: unknown) => {
           if (quitting) return;
-          dialog.showErrorBox(
+          void reportFatalErrorAndShutdown(
             "Pi Dash failed to recover",
             (error as Error).message,
+            mainWindow,
           );
-          app.quit();
         });
       });
     })
     .catch((error: unknown) => {
-      if (!quitting) {
-        dialog.showErrorBox(
-          "Pi Dash failed to start",
-          (error as Error).message,
-        );
-      }
-      quitting = true;
-      shutdownPromise ??= stopDaemon();
-      void shutdownPromise.finally(() => app.exit(1));
+      void reportFatalErrorAndShutdown(
+        "Pi Dash failed to start",
+        (error as Error).message,
+        mainWindow,
+        1,
+      );
     });
 }
