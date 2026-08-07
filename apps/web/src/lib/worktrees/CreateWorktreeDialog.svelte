@@ -260,8 +260,9 @@
             <Button
               type="button"
               variant="ghost"
-              size="icon-sm"
+              size="icon-xs"
               aria-label="Edit slug"
+              class="opacity-50 hover:opacity-100"
               disabled={saving}
               onclick={() => void showSlugEditor()}
             >
