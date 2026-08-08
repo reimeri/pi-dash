@@ -16,14 +16,16 @@ export function visibleWorktrees(
   ordered: WorktreeDto[],
   limit: number,
   selectedWorktreeId: string | undefined,
+  workspaceExpanded: boolean,
 ): WorktreeDto[] {
+  const selected = selectedWorktreeId
+    ? ordered.find((worktree) => worktree.id === selectedWorktreeId)
+    : undefined;
+  if (!workspaceExpanded) return selected ? [selected] : [];
+
   const window = ordered.slice(0, Math.max(0, limit));
-  if (!selectedWorktreeId) return window;
-  if (window.some((worktree) => worktree.id === selectedWorktreeId)) {
+  if (!selected || window.some((worktree) => worktree.id === selected.id)) {
     return window;
   }
-  const selected = ordered.find(
-    (worktree) => worktree.id === selectedWorktreeId,
-  );
-  return selected ? [...window, selected] : window;
+  return [...window, selected];
 }

@@ -321,15 +321,25 @@
     };
   }
 
+  function worktreeDiffSummary(
+    worktree: WorktreeDto,
+  ): WorktreeDiffSummary | undefined {
+    return diffSummaries[worktree.id];
+  }
+
+  function worktreeShellActive(worktree: WorktreeDto): boolean {
+    return shellActivities[worktree.id]?.foregroundCommandActive === true;
+  }
+
   function worktreeLabel(worktree: WorktreeDto): string {
     const details: string[] = [];
-    const summary = diffSummaries[worktree.id];
+    const summary = worktreeDiffSummary(worktree);
     if (summary?.hasChanges) {
       details.push(
         `${summary.additions} added lines, ${summary.deletions} deleted lines`,
       );
     }
-    if (shellActivities[worktree.id]?.foregroundCommandActive) {
+    if (worktreeShellActive(worktree)) {
       details.push("terminal command running");
     }
     return details.length > 0
@@ -400,6 +410,7 @@
     );
     const visibleLimit =
       visibleLimitByWorkspace[workspace.id] ?? WORKTREE_VISIBLE_INITIAL;
+    const workspaceExpanded = expanded.has(workspace.id);
     return {
       workspace,
       activity: workspaceAttentionStatuses.find(
@@ -407,24 +418,77 @@
       ),
       orderedWorktrees,
       visibleLimit,
+      workspaceExpanded,
       renderedWorktrees: visibleWorktrees(
         orderedWorktrees,
         visibleLimit,
         selectedWorktreeId,
+        workspaceExpanded,
       ),
     };
   });
 
   $: onVisibleWorktreesChange(
-    sidebarEntries.flatMap(({ workspace, renderedWorktrees }) =>
-      expanded.has(workspace.id)
-        ? renderedWorktrees
-            .filter(canOpenTerminal)
-            .map((worktree) => worktree.id)
-        : [],
+    sidebarEntries.flatMap(({ renderedWorktrees }) =>
+      renderedWorktrees.filter(canOpenTerminal).map((worktree) => worktree.id),
     ),
   );
 </script>
+
+{#snippet worktreeRow(worktree: WorktreeDto)}
+  <Sidebar.MenuSubItem>
+    <Button
+      class="w-full min-w-0 justify-start"
+      variant={selectedWorktreeId === worktree.id ? "secondary" : "ghost"}
+      size="sm"
+      disabled={!canOpenTerminal(worktree)}
+      aria-label={worktreeLabel(worktree)}
+      title={canOpenTerminal(worktree)
+        ? `Open ${worktree.name} terminal`
+        : "Terminal unavailable until this worktree is ready and healthy"}
+      onclick={() => selectWorktree(worktree)}
+    >
+      <WorkflowStatusIndicator
+        status={workflowStatuses[worktree.id]}
+        labelPrefix={`${worktree.name} workflow`}
+        channel={statusChannel}
+      />
+      <span
+        class={cn(
+          "min-w-0 flex-1 truncate text-left",
+          workflowStatuses[worktree.id]?.integration !== "connected" &&
+            "opacity-50",
+        )}>{worktree.name}</span
+      >
+      {#if worktreeDiffSummary(worktree)?.hasChanges || worktreeShellActive(worktree)}
+        <span
+          class="ml-auto flex shrink-0 items-center gap-2 text-[0.625rem] leading-none tabular-nums"
+          aria-hidden="true"
+        >
+          {#if worktreeDiffSummary(worktree)?.hasChanges}
+            <span class="flex items-center gap-1">
+              <span class="text-diff-addition"
+                >+{worktreeDiffSummary(worktree)?.additions}</span
+              >
+              <span class="text-diff-deletion"
+                >−{worktreeDiffSummary(worktree)?.deletions}</span
+              >
+            </span>
+          {/if}
+          {#if worktreeShellActive(worktree)}
+            <span title="Terminal command running">
+              <HugeiconsIcon
+                icon={ComputerTerminal01Icon}
+                strokeWidth={2}
+                class="size-3.5"
+              />
+            </span>
+          {/if}
+        </span>
+      {/if}
+    </Button>
+  </Sidebar.MenuSubItem>
+{/snippet}
 
 <svelte:window
   onpointermove={handleWorkspacePointerMove}
@@ -468,7 +532,7 @@
       </Alert.Root>
     {/if}
     <Sidebar.Menu>
-      {#each sidebarEntries as { workspace, activity, orderedWorktrees, visibleLimit, renderedWorktrees } (workspace.id)}
+      {#each sidebarEntries as { workspace, activity, orderedWorktrees, visibleLimit, workspaceExpanded, renderedWorktrees } (workspace.id)}
         <Collapsible.Root
           open={expanded.has(workspace.id)}
           onOpenChange={(open) => setExpanded(workspace.id, open)}
@@ -563,132 +627,84 @@
               </Button>
             </div>
             <Collapsible.Content id={`workspace-panel-${workspace.id}`}>
-              <Sidebar.MenuSub>
-                {#if workspace.repository.health !== "healthy"}
-                  <li
-                    id={`workspace-health-${workspace.id}`}
-                    class="px-3 py-1 text-xs text-destructive"
-                    role="status"
-                  >
-                    {healthLabel(workspace)}
-                  </li>
-                {/if}
-                {#if worktreeLoadingByWorkspace[workspace.id] && orderedWorktrees.length === 0}
-                  <li
-                    class="flex items-center gap-2 px-3 py-1 text-xs text-muted-foreground"
-                    role="status"
-                  >
-                    <Spinner aria-hidden="true" />
-                    Loading worktrees…
-                  </li>
-                {:else if worktreeErrorsByWorkspace[workspace.id]}
-                  <li class="px-3 py-1 text-xs text-destructive" role="alert">
-                    {worktreeErrorsByWorkspace[workspace.id]}
-                  </li>
-                {:else if orderedWorktrees.length > 0}
-                  {#each renderedWorktrees as worktree (worktree.id)}
-                    {@const diffSummary = diffSummaries[worktree.id]}
-                    {@const shellActive =
-                      shellActivities[worktree.id]?.foregroundCommandActive ===
-                      true}
-                    <Sidebar.MenuSubItem>
-                      <Button
-                        class="w-full min-w-0 justify-start"
-                        variant={selectedWorktreeId === worktree.id
-                          ? "secondary"
-                          : "ghost"}
-                        size="sm"
-                        disabled={!canOpenTerminal(worktree)}
-                        aria-label={worktreeLabel(worktree)}
-                        title={canOpenTerminal(worktree)
-                          ? `Open ${worktree.name} terminal`
-                          : "Terminal unavailable until this worktree is ready and healthy"}
-                        onclick={() => selectWorktree(worktree)}
-                      >
-                        <WorkflowStatusIndicator
-                          status={workflowStatuses[worktree.id]}
-                          labelPrefix={`${worktree.name} workflow`}
-                          channel={statusChannel}
-                        />
-                        <span
-                          class={cn(
-                            "min-w-0 flex-1 truncate text-left",
-                            workflowStatuses[worktree.id]?.integration !==
-                              "connected" && "opacity-50",
-                          )}>{worktree.name}</span
-                        >
-                        {#if diffSummary?.hasChanges || shellActive}
-                          <span
-                            class="ml-auto flex shrink-0 items-center gap-2 text-[0.625rem] leading-none tabular-nums"
-                            aria-hidden="true"
-                          >
-                            {#if diffSummary?.hasChanges}
-                              <span class="flex items-center gap-1">
-                                <span class="text-diff-addition"
-                                  >+{diffSummary.additions}</span
-                                >
-                                <span class="text-diff-deletion"
-                                  >−{diffSummary.deletions}</span
-                                >
-                              </span>
-                            {/if}
-                            {#if shellActive}
-                              <span title="Terminal command running">
-                                <HugeiconsIcon
-                                  icon={ComputerTerminal01Icon}
-                                  strokeWidth={2}
-                                  class="size-3.5"
-                                />
-                              </span>
-                            {/if}
-                          </span>
-                        {/if}
-                      </Button>
-                    </Sidebar.MenuSubItem>
-                  {/each}
-                  {#if orderedWorktrees.length > WORKTREE_VISIBLE_INITIAL || visibleLimit > WORKTREE_VISIBLE_INITIAL}
-                    <li class="flex items-center gap-1 px-1 py-0.5">
-                      {#if orderedWorktrees.length > visibleLimit}
-                        <Button
-                          class="h-7 justify-start px-3 text-xs text-muted-foreground hover:text-foreground"
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`Show more worktrees in ${workspace.name}`}
-                          onclick={() =>
-                            adjustVisibleLimit(
-                              workspace.id,
-                              orderedWorktrees.length,
-                              WORKTREE_VISIBLE_STEP,
-                            )}
-                        >
-                          Show more
-                        </Button>
-                      {/if}
-                      {#if visibleLimit > WORKTREE_VISIBLE_INITIAL}
-                        <Button
-                          class="h-7 justify-start px-3 text-xs text-muted-foreground hover:text-foreground"
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`Show less worktrees in ${workspace.name}`}
-                          onclick={() =>
-                            adjustVisibleLimit(
-                              workspace.id,
-                              orderedWorktrees.length,
-                              -WORKTREE_VISIBLE_STEP,
-                            )}
-                        >
-                          Show less
-                        </Button>
-                      {/if}
+              {#if workspaceExpanded}
+                <Sidebar.MenuSub>
+                  {#if workspace.repository.health !== "healthy"}
+                    <li
+                      id={`workspace-health-${workspace.id}`}
+                      class="px-3 py-1 text-xs text-destructive"
+                      role="status"
+                    >
+                      {healthLabel(workspace)}
                     </li>
                   {/if}
-                {:else}
-                  <li class="px-3 py-1 text-xs text-muted-foreground">
-                    No managed worktrees
-                  </li>
-                {/if}
-              </Sidebar.MenuSub>
+                  {#if worktreeLoadingByWorkspace[workspace.id] && orderedWorktrees.length === 0}
+                    <li
+                      class="flex items-center gap-2 px-3 py-1 text-xs text-muted-foreground"
+                      role="status"
+                    >
+                      <Spinner aria-hidden="true" />
+                      Loading worktrees…
+                    </li>
+                  {:else if worktreeErrorsByWorkspace[workspace.id]}
+                    <li class="px-3 py-1 text-xs text-destructive" role="alert">
+                      {worktreeErrorsByWorkspace[workspace.id]}
+                    </li>
+                  {:else if orderedWorktrees.length > 0}
+                    {#each renderedWorktrees as worktree (worktree.id)}
+                      {@render worktreeRow(worktree)}
+                    {/each}
+                    {#if orderedWorktrees.length > WORKTREE_VISIBLE_INITIAL || visibleLimit > WORKTREE_VISIBLE_INITIAL}
+                      <li class="flex items-center gap-1 px-1 py-0.5">
+                        {#if orderedWorktrees.length > visibleLimit}
+                          <Button
+                            class="h-7 justify-start px-3 text-xs text-muted-foreground hover:text-foreground"
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Show more worktrees in ${workspace.name}`}
+                            onclick={() =>
+                              adjustVisibleLimit(
+                                workspace.id,
+                                orderedWorktrees.length,
+                                WORKTREE_VISIBLE_STEP,
+                              )}
+                          >
+                            Show more
+                          </Button>
+                        {/if}
+                        {#if visibleLimit > WORKTREE_VISIBLE_INITIAL}
+                          <Button
+                            class="h-7 justify-start px-3 text-xs text-muted-foreground hover:text-foreground"
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Show less worktrees in ${workspace.name}`}
+                            onclick={() =>
+                              adjustVisibleLimit(
+                                workspace.id,
+                                orderedWorktrees.length,
+                                -WORKTREE_VISIBLE_STEP,
+                              )}
+                          >
+                            Show less
+                          </Button>
+                        {/if}
+                      </li>
+                    {/if}
+                  {:else}
+                    <li class="px-3 py-1 text-xs text-muted-foreground">
+                      No managed worktrees
+                    </li>
+                  {/if}
+                </Sidebar.MenuSub>
+              {/if}
             </Collapsible.Content>
+            {#if !workspaceExpanded && renderedWorktrees.length > 0}
+              <Sidebar.MenuSub>
+                {#each renderedWorktrees as worktree (worktree.id)}
+                  {@render worktreeRow(worktree)}
+                {/each}
+              </Sidebar.MenuSub>
+            {/if}
           </Sidebar.MenuItem>
         </Collapsible.Root>
       {/each}

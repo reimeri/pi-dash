@@ -166,7 +166,9 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
       `Create dialog remained visible. Page errors: ${pageErrors.join("\n")}`,
     );
   }
-  await page.getByRole("button", { name: "Expand Terminal E2E" }).click();
+  await expect(
+    page.getByRole("button", { name: "Collapse Terminal E2E" }),
+  ).toBeVisible();
   const workspaceSelect = page
     .getByRole("navigation", { name: "Workspaces" })
     .getByRole("button", { name: "Terminal E2E", exact: true });
