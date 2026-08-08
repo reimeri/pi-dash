@@ -8,6 +8,7 @@ import {
   test,
   type ElectronApplication,
 } from "@playwright/test";
+import type { PiDashDesktopBridge } from "../../apps/web/src/lib/desktop-bridge.js";
 import { createGitRepository } from "../fixtures/git-repository.js";
 
 const port = 4324;
@@ -111,13 +112,21 @@ test.afterAll(async () => {
 });
 
 test("desktop delivers Pi keybindings and recovers its daemon", async () => {
-  const { window, inputFrames } = await openTerminal();
+  const { window: page, inputFrames } = await openTerminal();
   await expect(
-    window.evaluate(
-      () =>
-        `${typeof window.piDashDesktop?.reauthenticate}:${typeof window.piDashDesktop?.onRecoveryStatus}`,
-    ),
-  ).resolves.toBe("function:function");
+    page.evaluate(() => {
+      const bridge = window.piDashDesktop as PiDashDesktopBridge | undefined;
+      return `${typeof bridge?.writeClipboardText}:${typeof bridge?.reauthenticate}:${typeof bridge?.onRecoveryStatus}`;
+    }),
+  ).resolves.toBe("function:function:function");
+  const pullRequestUrl = "https://github.com/example/repository/pull/42";
+  await page.evaluate((text) => {
+    const bridge = window.piDashDesktop as PiDashDesktopBridge | undefined;
+    return bridge?.writeClipboardText(text);
+  }, pullRequestUrl);
+  await expect(
+    desktop.evaluate(({ clipboard }) => clipboard.readText()),
+  ).resolves.toBe(pullRequestUrl);
   await desktop.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send(
       "pi-dash:recovery-status",
@@ -125,7 +134,7 @@ test("desktop delivers Pi keybindings and recovers its daemon", async () => {
     );
   });
   await expect(
-    window.getByText("Reconnecting to the local daemon…"),
+    page.getByText("Reconnecting to the local daemon…"),
   ).toBeVisible();
   await desktop.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send(
@@ -133,9 +142,7 @@ test("desktop delivers Pi keybindings and recovers its daemon", async () => {
       "recovered",
     );
   });
-  await expect(
-    window.getByText("Reconnected to the local daemon"),
-  ).toBeVisible();
+  await expect(page.getByText("Reconnected to the local daemon")).toBeVisible();
 
   const cases: Array<[string, string]> = [
     ["Control+w", "\u0017"],
@@ -153,7 +160,7 @@ test("desktop delivers Pi keybindings and recovers its daemon", async () => {
 
   for (const [shortcut, expectedData] of cases) {
     const priorCount = inputFrames.length;
-    await window.keyboard.press(shortcut);
+    await page.keyboard.press(shortcut);
     await expect
       .poll(() => inputFrames.slice(priorCount).includes(expectedData), {
         message: `${shortcut} should reach the PTY as ${JSON.stringify(expectedData)}`,
@@ -171,7 +178,7 @@ test("desktop delivers Pi keybindings and recovers its daemon", async () => {
   ).resolves.toBe(true);
 
   const beforePaste = inputFrames.length;
-  await window.locator(".xterm-helper-textarea").evaluate((element) => {
+  await page.locator(".xterm-helper-textarea").evaluate((element) => {
     const clipboard = new DataTransfer();
     clipboard.setData("text/plain", "desktop-paste");
     element.dispatchEvent(
@@ -188,24 +195,24 @@ test("desktop delivers Pi keybindings and recovers its daemon", async () => {
 
   await desktop.evaluate(({ clipboard }) => clipboard.writeText("unchanged"));
   const priorCount = inputFrames.length;
-  await window.keyboard.press("Control+Shift+c");
-  await window.waitForTimeout(100);
+  await page.keyboard.press("Control+Shift+c");
+  await page.waitForTimeout(100);
   expect(inputFrames).toHaveLength(priorCount);
   await expect(
     desktop.evaluate(({ clipboard }) => clipboard.readText()),
   ).resolves.toBe("unchanged");
   expect(desktop.windows()).toHaveLength(1);
 
-  const pastedRow = window
+  const pastedRow = page
     .locator(".xterm-rows > div")
     .filter({ hasText: "desktop-paste" })
     .first();
   const pastedRowBox = await pastedRow.boundingBox();
   expect(pastedRowBox).not.toBeNull();
-  await window.mouse.click(pastedRowBox!.x + 35, pastedRowBox!.y + 8, {
+  await page.mouse.click(pastedRowBox!.x + 35, pastedRowBox!.y + 8, {
     clickCount: 2,
   });
-  await window.keyboard.press("Control+Shift+c");
+  await page.keyboard.press("Control+Shift+c");
   await expect
     .poll(() => desktop.evaluate(({ clipboard }) => clipboard.readText()))
     .toContain("desktop-paste");
@@ -229,6 +236,6 @@ test("desktop delivers Pi keybindings and recovers its daemon", async () => {
     )
     .not.toBe(originalPid);
   await expect(
-    window.getByRole("status", { name: "Daemon connection" }),
+    page.getByRole("status", { name: "Daemon connection" }),
   ).toHaveAttribute("title", "Connected", { timeout: 45_000 });
 });

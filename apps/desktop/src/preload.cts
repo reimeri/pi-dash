@@ -3,6 +3,9 @@ import { contextBridge, ipcRenderer } from "electron";
 type RecoveryStatus = "retrying" | "recovered" | "restarting";
 
 contextBridge.exposeInMainWorld("piDashDesktop", {
+  writeClipboardText(text: string): Promise<void> {
+    return ipcRenderer.invoke("pi-dash:clipboard-write-text", text);
+  },
   reauthenticate(): Promise<void> {
     return ipcRenderer.invoke("pi-dash:reauthenticate");
   },

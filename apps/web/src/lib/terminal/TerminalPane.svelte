@@ -17,8 +17,10 @@
   import { toast } from "svelte-sonner";
   import * as Alert from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
+  import { writeClipboardText } from "$lib/clipboard.js";
   import { api } from "../../api.js";
   import type { TerminalControlsChange } from "./controls.js";
+  import { showTerminalCopyError } from "./copy-error-toast.js";
   import {
     encodeBinaryInput,
     isTerminalServerFrame,
@@ -442,9 +444,9 @@
     event.preventDefault();
     event.stopPropagation();
     if (terminal?.hasSelection()) {
-      void navigator.clipboard
-        .writeText(terminal.getSelection())
-        .catch(() => (errorMessage = "Unable to copy the terminal selection."));
+      void writeClipboardText(terminal.getSelection()).catch(
+        showTerminalCopyError,
+      );
     }
     return false;
   }
