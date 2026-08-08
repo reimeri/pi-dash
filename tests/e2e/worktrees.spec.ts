@@ -144,7 +144,7 @@ test.afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-test("expands a collapsed workspace after creating a worktree", async ({
+test("keeps the selected worktree visible while its workspace is collapsed", async ({
   page,
 }) => {
   const suffix = randomUUID();
@@ -191,12 +191,27 @@ test("expands a collapsed workspace after creating a worktree", async ({
     name: "Visible worktree",
     exact: true,
   });
+  const expandWorkspaceButton = workspaceNavigation.getByRole("button", {
+    name: `Expand ${workspaceName}`,
+  });
+  const workspaceButton = workspaceNavigation.getByRole("button", {
+    name: workspaceName,
+    exact: true,
+  });
   await expect(collapseWorkspaceButton).toBeVisible();
   await expect(visibleWorktreeButton).toBeVisible();
 
-  await page.reload();
-  await expect(collapseWorkspaceButton).toBeVisible();
+  await collapseWorkspaceButton.click();
+  await expect(expandWorkspaceButton).toBeVisible();
   await expect(visibleWorktreeButton).toBeVisible();
+
+  await workspaceButton.click();
+  await expect(expandWorkspaceButton).toBeVisible();
+  await expect(visibleWorktreeButton).toHaveCount(0);
+
+  await page.reload();
+  await expect(expandWorkspaceButton).toBeVisible();
+  await expect(visibleWorktreeButton).toHaveCount(0);
 });
 
 test("creates, persists, protects dirty state, removes, and safely deletes a branch", async ({

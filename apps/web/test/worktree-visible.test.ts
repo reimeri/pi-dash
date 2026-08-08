@@ -36,50 +36,72 @@ const ordered = Array.from({ length: 25 }, (_, index) =>
 );
 
 describe("visibleWorktrees", () => {
-  it("shows the default window of 5", () => {
+  it("shows the default window of 5 for an expanded workspace", () => {
     expect(
-      visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, undefined),
+      visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, undefined, true),
     ).toEqual(ordered.slice(0, 5));
   });
 
-  it("pins a selected worktree outside the window as the last row", () => {
+  it("pins a selected worktree outside the expanded window as the last row", () => {
     const selected = ordered[11]!;
     expect(
-      visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, selected.id),
+      visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, selected.id, true),
     ).toEqual([...ordered.slice(0, 5), selected]);
   });
 
-  it("does not duplicate a selected worktree already in the window", () => {
+  it("does not duplicate a selected worktree already in the expanded window", () => {
     const selected = ordered[2]!;
     expect(
-      visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, selected.id),
+      visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, selected.id, true),
     ).toEqual(ordered.slice(0, 5));
   });
 
-  it("clears the pin when selection moves to an in-window worktree", () => {
+  it("clears the expanded pin when selection moves into the window", () => {
     const outside = ordered[11]!;
     const inside = ordered[1]!;
     expect(
-      visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, outside.id),
+      visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, outside.id, true),
     ).toHaveLength(6);
     expect(
-      visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, inside.id),
+      visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, inside.id, true),
     ).toEqual(ordered.slice(0, 5));
   });
 
-  it("drops the pin once the window includes the selected worktree", () => {
+  it("drops the expanded pin once the window includes the selected worktree", () => {
     const selected = ordered[11]!;
-    expect(visibleWorktrees(ordered, 15, selected.id)).toEqual(
+    expect(visibleWorktrees(ordered, 15, selected.id, true)).toEqual(
       ordered.slice(0, 15),
     );
   });
 
-  it("ignores a selected id that is not in the ordered list", () => {
+  it("shows only the selected worktree for a collapsed workspace", () => {
+    const selected = ordered[11]!;
+    expect(
+      visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, selected.id, false),
+    ).toEqual([selected]);
+  });
+
+  it("fully hides a collapsed workspace without a matching selection", () => {
+    expect(
+      visibleWorktrees(ordered, WORKTREE_VISIBLE_INITIAL, undefined, false),
+    ).toEqual([]);
     expect(
       visibleWorktrees(
         ordered,
         WORKTREE_VISIBLE_INITIAL,
         "99999999-9999-4999-8999-999999999999",
+        false,
+      ),
+    ).toEqual([]);
+  });
+
+  it("ignores a selected id from another workspace", () => {
+    expect(
+      visibleWorktrees(
+        ordered,
+        WORKTREE_VISIBLE_INITIAL,
+        "99999999-9999-4999-8999-999999999999",
+        true,
       ),
     ).toEqual(ordered.slice(0, 5));
   });
