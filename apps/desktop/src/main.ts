@@ -7,14 +7,14 @@ import { tmpdir } from "node:os";
 import {
   app,
   BrowserWindow,
+  clipboard,
   ipcMain,
   Menu,
   powerMonitor,
-  session,
   type IpcMainInvokeEvent,
-  type WebContents,
 } from "electron";
 import { createDaemonLog, type DaemonLogSink } from "./daemon-log.js";
+import { validateDesktopSenderIdentity } from "./desktop-sender.js";
 import { showFatalErrorDialog } from "./error-dialog.js";
 import {
   assertDesktopRuntimePaths,
@@ -435,7 +435,6 @@ async function performDaemonRecovery(reason: string): Promise<void> {
   }
   activeRuntime = runtime;
   attachDaemonExitRecovery(runtime);
-  configureClipboardPermissions(runtime.origin);
   if (mainWindow && !mainWindow.isDestroyed()) {
     await loadBootstrap(runtime.bootstrapUrl);
   } else {
@@ -485,49 +484,6 @@ async function ensureDaemonAfterResume(): Promise<void> {
   await recoverDaemon("The local daemon did not respond after resume.");
 }
 
-function configureClipboardPermissions(origin: string): void {
-  const clipboardPermission = (
-    webContents: WebContents | null,
-    permission: string,
-    requestingUrl: string,
-    isMainFrame: boolean,
-  ): boolean => {
-    let trustedOrigin = false;
-    try {
-      trustedOrigin = new URL(requestingUrl).origin === origin;
-    } catch {
-      // Reject malformed requesting URLs below.
-    }
-    return (
-      webContents === mainWindow?.webContents &&
-      trustedOrigin &&
-      isMainFrame &&
-      permission === "clipboard-sanitized-write"
-    );
-  };
-  session.defaultSession.setPermissionRequestHandler(
-    (webContents, permission, callback, details) => {
-      callback(
-        clipboardPermission(
-          webContents,
-          permission,
-          details.requestingUrl,
-          details.isMainFrame,
-        ),
-      );
-    },
-  );
-  session.defaultSession.setPermissionCheckHandler(
-    (webContents, permission, requestingOrigin, details) =>
-      clipboardPermission(
-        webContents,
-        permission,
-        details.requestingUrl ?? requestingOrigin,
-        details.isMainFrame,
-      ),
-  );
-}
-
 function createWindow(runtime: DaemonProcess): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
@@ -574,7 +530,6 @@ async function launch(): Promise<void> {
   const runtime = await startDaemon();
   if (quitting) return;
   activeRuntime = runtime;
-  configureClipboardPermissions(runtime.origin);
   attachDaemonExitRecovery(runtime);
   mainWindow = createWindow(runtime);
   mainWindow.on("closed", () => {
@@ -582,30 +537,28 @@ async function launch(): Promise<void> {
   });
 }
 
-function validateReauthenticationSender(event: IpcMainInvokeEvent): void {
+function validateDesktopSender(event: IpcMainInvokeEvent): void {
   const window = mainWindow;
-  const runtime = activeRuntime;
-  const frame = event.senderFrame;
-  let trustedOrigin = false;
-  try {
-    trustedOrigin =
-      !!runtime && new URL(frame?.url ?? "").origin === runtime.origin;
-  } catch {
-    // Reject malformed sender URLs below.
-  }
-  if (
-    !window ||
-    window.isDestroyed() ||
-    event.sender !== window.webContents ||
-    frame !== window.webContents.mainFrame ||
-    !trustedOrigin
-  ) {
-    throw new Error("Desktop reauthentication is unavailable to this sender");
-  }
+  validateDesktopSenderIdentity({
+    sender: event.sender,
+    senderFrame: event.senderFrame,
+    expectedSender: window?.webContents,
+    expectedMainFrame: window?.webContents.mainFrame,
+    expectedOrigin: activeRuntime?.origin,
+    windowAvailable: !!window && !window.isDestroyed(),
+  });
 }
 
+ipcMain.handle("pi-dash:clipboard-write-text", (event, text: unknown) => {
+  validateDesktopSender(event);
+  if (typeof text !== "string") {
+    throw new TypeError("Clipboard text must be a string");
+  }
+  clipboard.writeText(text);
+});
+
 ipcMain.handle("pi-dash:reauthenticate", async (event) => {
-  validateReauthenticationSender(event);
+  validateDesktopSender(event);
   await reauthenticate();
 });
 
