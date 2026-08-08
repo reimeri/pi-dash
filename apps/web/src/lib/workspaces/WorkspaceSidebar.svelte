@@ -438,7 +438,7 @@
 {#snippet worktreeRow(worktree: WorktreeDto)}
   <Sidebar.MenuSubItem>
     <Button
-      class="w-full min-w-0 justify-start"
+      class="w-full min-w-0 justify-start pl-0"
       variant={selectedWorktreeId === worktree.id ? "secondary" : "ghost"}
       size="sm"
       disabled={!canOpenTerminal(worktree)}
@@ -448,11 +448,13 @@
         : "Terminal unavailable until this worktree is ready and healthy"}
       onclick={() => selectWorktree(worktree)}
     >
-      <WorkflowStatusIndicator
-        status={workflowStatuses[worktree.id]}
-        labelPrefix={`${worktree.name} workflow`}
-        channel={statusChannel}
-      />
+      <span class="-ml-0.5 flex shrink-0">
+        <WorkflowStatusIndicator
+          status={workflowStatuses[worktree.id]}
+          labelPrefix={`${worktree.name} workflow`}
+          channel={statusChannel}
+        />
+      </span>
       <span
         class={cn(
           "min-w-0 flex-1 truncate text-left",
@@ -628,7 +630,7 @@
             </div>
             <Collapsible.Content id={`workspace-panel-${workspace.id}`}>
               {#if workspaceExpanded}
-                <Sidebar.MenuSub>
+                <Sidebar.MenuSub class="ml-0 translate-x-0 pl-0">
                   {#if workspace.repository.health !== "healthy"}
                     <li
                       id={`workspace-health-${workspace.id}`}
@@ -699,7 +701,7 @@
               {/if}
             </Collapsible.Content>
             {#if !workspaceExpanded && renderedWorktrees.length > 0}
-              <Sidebar.MenuSub>
+              <Sidebar.MenuSub class="ml-0 translate-x-0 pl-0">
                 {#each renderedWorktrees as worktree (worktree.id)}
                   {@render worktreeRow(worktree)}
                 {/each}
