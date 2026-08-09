@@ -1,4 +1,10 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -65,6 +71,74 @@ describe("desktop runtime paths", () => {
         staticDirectory,
       }),
     ).not.toThrow();
+  });
+
+  it("accepts a Node executable symlink that resolves to a regular file", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-dash-symlinked-runtime-"));
+    temporaryDirectories.push(root);
+    const nodeTarget = join(root, "node-target");
+    const nodeExecutable = join(root, "node");
+    const serverEntry = join(root, "server.js");
+    const staticDirectory = join(root, "web");
+    writeFileSync(nodeTarget, "#!/bin/sh\n");
+    chmodSync(nodeTarget, 0o755);
+    symlinkSync(nodeTarget, nodeExecutable);
+    writeFileSync(serverEntry, "");
+    mkdirSync(staticDirectory);
+
+    expect(() =>
+      assertDesktopRuntimePaths({
+        resourceRoot: root,
+        nodeExecutable,
+        serverEntry,
+        staticDirectory,
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects a Node symlink to a non-executable file", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-dash-non-executable-runtime-"));
+    temporaryDirectories.push(root);
+    const nodeTarget = join(root, "node-target");
+    const nodeExecutable = join(root, "node");
+    const serverEntry = join(root, "server.js");
+    const staticDirectory = join(root, "web");
+    writeFileSync(nodeTarget, "#!/bin/sh\n");
+    chmodSync(nodeTarget, 0o644);
+    symlinkSync(nodeTarget, nodeExecutable);
+    writeFileSync(serverEntry, "");
+    mkdirSync(staticDirectory);
+
+    expect(() =>
+      assertDesktopRuntimePaths({
+        resourceRoot: root,
+        nodeExecutable,
+        serverEntry,
+        staticDirectory,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a Node symlink that resolves to a directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-dash-directory-runtime-"));
+    temporaryDirectories.push(root);
+    const nodeTarget = join(root, "node-target");
+    const nodeExecutable = join(root, "node");
+    const serverEntry = join(root, "server.js");
+    const staticDirectory = join(root, "web");
+    mkdirSync(nodeTarget);
+    symlinkSync(nodeTarget, nodeExecutable);
+    writeFileSync(serverEntry, "");
+    mkdirSync(staticDirectory);
+
+    expect(() =>
+      assertDesktopRuntimePaths({
+        resourceRoot: root,
+        nodeExecutable,
+        serverEntry,
+        staticDirectory,
+      }),
+    ).toThrow("Node executable must resolve to a regular file");
   });
 
   it("validates required runtime files and executable permissions", () => {

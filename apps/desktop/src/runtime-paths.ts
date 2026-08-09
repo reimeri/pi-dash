@@ -1,4 +1,4 @@
-import { constants, accessSync, lstatSync } from "node:fs";
+import { constants, accessSync, lstatSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,8 +39,8 @@ export function resolveDesktopRuntimePaths(options: {
 export function assertDesktopRuntimePaths(paths: DesktopRuntimePaths): void {
   if (paths.nodeExecutable.includes("/")) {
     accessSync(paths.nodeExecutable, constants.X_OK);
-    if (!lstatSync(paths.nodeExecutable).isFile()) {
-      throw new Error("Node executable must be a regular file");
+    if (!statSync(paths.nodeExecutable).isFile()) {
+      throw new Error("Node executable must resolve to a regular file");
     }
   }
   accessSync(paths.serverEntry, constants.R_OK);

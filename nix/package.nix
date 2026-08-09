@@ -51,7 +51,7 @@ buildNpmPackage {
   src = source;
 
   nodejs = nodejs_24;
-  npmDepsHash = "sha256-U6FBtsrjQrL3ID5RFosgaSgNN8c5eJJUfR/ghiAfCRk=";
+  npmDepsHash = "sha256-WFPdr+kgQeHE+NCUu447rp+WIoIZ77nJrys37noP8sY=";
   npm_config_build_from_source = "true";
   npm_config_nodedir = "${nodejs_24}";
   ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
