@@ -100,7 +100,7 @@ test("typed recovery registers, persists, renames, and removes workspace metadat
   await page.goto(bootstrapUrl);
   await expect(
     page.getByRole("status", { name: "Daemon connection" }),
-  ).toContainText("Connected");
+  ).toHaveAttribute("title", "Connected");
 
   await page
     .getByRole("main")

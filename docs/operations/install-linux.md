@@ -11,7 +11,49 @@ Pi Dash currently publishes a portable Linux x64 tarball. It contains Electron, 
 - Pi 0.83.0 or newer
 - `zenity` or `kdialog` for native directory selection; typed-path entry remains available without either picker
 
-The initial portable artifact has not yet completed a distribution compatibility matrix. Do not infer support for a distribution solely from the minimum runtime versions above. This private artifact is marked `UNLICENSED`; do not redistribute it publicly until first-party licensing and the third-party notice inventory are completed.
+The initial portable artifact has not yet completed a distribution compatibility matrix. Do not infer support for a distribution solely from the minimum runtime versions above. Pi Dash is licensed under the MIT License. The third-party notice inventory for the portable artifact is still being completed; review its bundled dependency licenses before redistributing it.
+
+## Install with Nix
+
+The flake builds Pi Dash from source for `x86_64-linux` using its locked Nixpkgs Node.js and Electron packages. Git and Zenity are added to the application launcher. Pi remains an external dependency so the launcher can use the `pi` selected by your user environment or Pi Dash configuration.
+
+Run without installing:
+
+```sh
+nix run github:reimeri/pi-dash
+```
+
+Install into a user profile:
+
+```sh
+nix profile install github:reimeri/pi-dash
+```
+
+For a flake-based NixOS configuration, add the input and package directly:
+
+```nix
+{
+  inputs.pi-dash.url = "github:reimeri/pi-dash";
+
+  outputs = inputs@{ nixpkgs, pi-dash, ... }: {
+    nixosConfigurations.my-host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        ({ pkgs, ... }: {
+          environment.systemPackages = [
+            pi-dash.packages.${pkgs.system}.default
+            pkgs.pi-coding-agent
+          ];
+        })
+      ];
+    };
+  };
+}
+```
+
+Alternatively, add `pi-dash.overlays.default` to `nixpkgs.overlays` and install `pkgs.pi-dash`. The separate `pkgs.pi-coding-agent` entry is optional if `pi` is already available through another user profile or configured executable path.
+
+The Nix package installs a desktop entry and stores application data in the same XDG locations described below. It does not use the bundled Node.js runtime from the portable tarball.
 
 ## Verify and extract
 
@@ -24,7 +66,7 @@ tar -xzf pi-dash-<version>-linux-x64.tar.gz
 
 Run the `pi-dash` executable from the extracted directory. The executable may be launched from any current working directory; all immutable resources are resolved from the application installation.
 
-The portable tarball does not install a desktop entry. A package-manager-integrated artifact will be added separately after the portable release is validated. `SHA256SUMS` detects corruption but is not a signature; provenance depends on obtaining both files through a trusted channel.
+The portable tarball does not install a desktop entry; use the Nix package for desktop integration. `SHA256SUMS` detects corruption but is not a signature; provenance depends on obtaining both files through a trusted channel.
 
 ## Data and upgrades
 
@@ -64,4 +106,4 @@ SHA256SUMS
 
 The build uses the digest-pinned Node 24.18.0 Bullseye image as its compiler and glibc baseline. It downloads the pinned official Node.js sidecar archive and checks its fixed SHA-256 before use. Native addons are rebuilt from source in a clean staging tree, then rejected if they require newer symbols than `GLIBC_2.31` or `GLIBCXX_3.4.28`.
 
-`verify:linux-artifact` validates archive paths and links before extraction, executable modes, first-party `UNLICENSED` metadata, forbidden state/log/database files, selected secret patterns, ELF architecture and symbol floors, SQLite migrations, an actual PTY, and an `fs-ext` lock operation.
+`verify:linux-artifact` validates archive paths and links before extraction, executable modes, the bundled MIT license and first-party license metadata, forbidden state/log/database files, selected secret patterns, ELF architecture and symbol floors, SQLite migrations, an actual PTY, and an `fs-ext` lock operation.

@@ -16,8 +16,7 @@ const workspacePackagePaths = [
 
 const appVersionPath = join(root, "packages/contracts/src/index.ts");
 const versionArgumentPattern = /^(major|minor|patch|\d+\.\d+\.\d+)$/;
-const appVersionPattern =
-  /^export const APP_VERSION = "\d+\.\d+\.\d+";$/m;
+const appVersionPattern = /^export const APP_VERSION = "\d+\.\d+\.\d+";$/m;
 
 function usage() {
   return "Usage: node scripts/bump-version.mjs <major|minor|patch|x.y.z>";
@@ -79,9 +78,7 @@ function setPackageVersion(relativePath, version) {
 function setAppVersion(version) {
   const source = readFileSync(appVersionPath, "utf8");
   if (!appVersionPattern.test(source)) {
-    throw new Error(
-      `Could not find APP_VERSION export in ${appVersionPath}`,
-    );
+    throw new Error(`Could not find APP_VERSION export in ${appVersionPath}`);
   }
   writeFileSync(
     appVersionPath,

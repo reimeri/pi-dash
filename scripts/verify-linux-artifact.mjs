@@ -15,6 +15,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { extractFile } from "@electron/asar";
 import { extract, list } from "tar";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -28,6 +29,7 @@ const requiredFiles = [
   "resources/pi-dash/runtime/VERSION",
   "resources/pi-dash/runtime/NATIVE-COMPATIBILITY",
   "resources/pi-dash/licenses/node-v24.18.0-LICENSE",
+  "resources/pi-dash/licenses/pi-dash-LICENSE",
   "resources/pi-dash/app/apps/server/dist/cli.js",
   "resources/pi-dash/app/apps/web/dist/index.html",
   "resources/pi-dash/app/migrations/0001_foundation.sql",
@@ -261,6 +263,29 @@ function verifyExtractedLayout(extractionRoot, topLevel) {
   auditExtractedElfs(applicationRoot);
 }
 
+function verifyElectronMetadata(applicationRoot) {
+  const sourceMetadata = JSON.parse(
+    readFileSync(join(root, "package.json"), "utf8"),
+  );
+  const metadata = JSON.parse(
+    extractFile(
+      join(applicationRoot, "resources", "app.asar"),
+      "package.json",
+    ).toString("utf8"),
+  );
+  if (metadata.name !== "pi-dash-desktop") {
+    fail("Electron application has an unexpected package name");
+  }
+  if (metadata.version !== sourceMetadata.version) {
+    fail(
+      `Electron application version mismatch: expected ${sourceMetadata.version}, received ${metadata.version}`,
+    );
+  }
+  if (metadata.license !== "MIT") {
+    fail("Electron application must be marked MIT");
+  }
+}
+
 function verifyFirstPartyMetadata(applicationRoot) {
   for (const relative of [
     "package.json",
@@ -271,9 +296,23 @@ function verifyFirstPartyMetadata(applicationRoot) {
     const metadata = JSON.parse(
       readFileSync(join(applicationRoot, relative), "utf8"),
     );
-    if (metadata.license !== "UNLICENSED") {
-      fail(`First-party package must be marked UNLICENSED: ${relative}`);
+    if (metadata.license !== "MIT") {
+      fail(`First-party package must be marked MIT: ${relative}`);
     }
+  }
+}
+
+function verifyProjectLicense(sidecarRoot) {
+  const expected = readFileSync(join(root, "LICENSE"), "utf8");
+  const actual = readFileSync(
+    join(sidecarRoot, "licenses", "pi-dash-LICENSE"),
+    "utf8",
+  );
+  if (actual !== expected) {
+    fail("Packaged Pi Dash license does not match the project LICENSE");
+  }
+  if (!actual.includes("Copyright (c) 2026 OxyAI")) {
+    fail("Packaged Pi Dash license has an unexpected copyright notice");
   }
 }
 
@@ -322,7 +361,9 @@ function smokeTest(extractionRoot, topLevel) {
     "database.js",
   );
   const migrations = join(applicationRoot, "migrations");
+  verifyElectronMetadata(join(extractionRoot, topLevel));
   verifyFirstPartyMetadata(applicationRoot);
+  verifyProjectLicense(sidecarRoot);
   scanFirstPartyContents(sidecarRoot);
 
   const script = [

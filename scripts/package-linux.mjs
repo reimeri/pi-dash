@@ -271,6 +271,7 @@ function stageSidecar(nodeDistribution) {
   mkdirSync(licenses, { recursive: true });
   copyFileSync(join(nodeDistribution, "bin/node"), join(runtimeBin, "node"));
   chmodSync(join(runtimeBin, "node"), 0o755);
+  copyFileSync(join(root, "LICENSE"), join(licenses, "pi-dash-LICENSE"));
   copyFileSync(
     join(nodeDistribution, "LICENSE"),
     join(licenses, `node-v${nodeVersion}-LICENSE`),
@@ -383,8 +384,8 @@ function stageElectronApplication() {
         type: "module",
         main: "dist/main.js",
         description: "Linux-first local dashboard for Pi",
-        author: "reimeri",
-        license: "UNLICENSED",
+        author: "OxyAI",
+        license: "MIT",
         homepage: "https://github.com/reimeri/pi-dash",
       },
       null,

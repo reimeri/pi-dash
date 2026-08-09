@@ -1,6 +1,6 @@
 {
   "name": "@pi-dash/server",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -31,5 +31,5 @@
     "@types/fs-ext": "2.0.3",
     "@types/ws": "8.18.1"
   },
-  "license": "UNLICENSED"
+  "license": "MIT"
 }

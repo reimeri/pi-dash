@@ -11,7 +11,25 @@ Packaged Linux application:
 - Pi 0.83.0 or newer (configurable)
 - `zenity` (preferred) or `kdialog` for native workspace selection
 
-Source builds additionally require Node.js 24+, npm 11+, the native build prerequisites for `node-pty` (C/C++ toolchain and Python), and Chrome/Chromium for browser tests. Linux release packaging uses Podman or Docker to build native addons against the pinned compatibility baseline.
+Source builds additionally require Node.js 24+, npm 11+, the native build prerequisites for `node-pty` (C/C++ toolchain and Python), and Chrome/Chromium for browser tests. Linux release packaging uses Podman or Docker to build native addons against the pinned compatibility baseline. The Nix development shell provides the source-build prerequisites except Pi and the optional Podman/Docker release builder.
+
+## Nix
+
+Enter the reproducible development environment, then install the locked npm dependencies:
+
+```sh
+nix develop
+npm ci
+```
+
+Build or run the Nix desktop package directly:
+
+```sh
+nix build
+nix run
+```
+
+The Nix package includes Git and Zenity but intentionally resolves `pi` from the user environment. Install Pi separately, for example with `pkgs.pi-coding-agent` in NixOS. See [Linux installation](docs/operations/install-linux.md) for `nix profile` and declarative NixOS examples.
 
 ## Commands
 
@@ -35,5 +53,7 @@ Use `npm run desktop` for interactive use from a source checkout. The desktop ho
 The portable Linux artifact instead runs its daemon with a verified, bundled Node.js 24.18.0 runtime and a separately staged production dependency tree. It does not use `node` from `PATH`. See [Linux installation](docs/operations/install-linux.md).
 
 The standalone daemon remains available for development and automation. It opens a short-lived, one-use launch URL in the default browser and also prints it as a fallback. Browser tabs cannot support every Pi keybinding; use the desktop application for terminal interaction. Do not share or persist the launch URL.
+
+Pi Dash is available under the [MIT License](LICENSE).
 
 See [configuration](docs/operations/configuration.md), [terminal runtime](docs/operations/terminal-runtime.md), [terminal protocol](docs/architecture/terminal-protocol.md), [workflow status protocol](docs/architecture/status-protocol.md), [ask-user integration](docs/integrations/ask-user-status.md), [status troubleshooting](docs/operations/status-troubleshooting.md), [native directory dialog](docs/operations/native-directory-dialog.md), [local security](docs/operations/local-security.md), and [testing](docs/testing/README.md).

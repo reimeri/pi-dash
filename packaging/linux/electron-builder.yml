@@ -1,4 +1,4 @@
-appId: io.github.reimeri.pi-dash
+appId: net.oxyai.pi-dash
 productName: Pi Dash
 electronVersion: 43.2.0
 asar: true

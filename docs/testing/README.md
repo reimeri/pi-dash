@@ -7,7 +7,7 @@
 - `npm run check` runs TypeScript and Svelte diagnostics.
 - `npm run lint` and `npm run format:check` enforce source style.
 
-Tests create isolated roots and temporary Git repositories under the system temporary directory and remove them afterward. The E2E suite uses ports `4318`–`4324`; ensure they are free. A local Chrome installation and Linux graphical session are expected by the Playwright configuration and Electron test.
+Tests create isolated roots and temporary Git repositories under the system temporary directory and remove them afterward. The E2E suite uses ports `4318`–`4324`; ensure they are free. A local Chrome installation and Linux graphical session are expected by default. `nix develop` instead supplies Chromium and sets `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`; the Playwright configuration uses that executable without also selecting the Chrome channel. The Electron test uses the Nix Electron executable selected by the development shell.
 
 ## Migration fixtures
 

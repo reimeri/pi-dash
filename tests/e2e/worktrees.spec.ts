@@ -37,6 +37,21 @@ async function waitForServer(outputFile: string): Promise<void> {
   throw new Error(`Timed out waiting for daemon: ${daemonOutput}`);
 }
 
+async function renewBootstrapUrl(): Promise<void> {
+  const outputStart = daemonOutput.length;
+  daemon.kill("SIGUSR1");
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const match = daemonOutput.slice(outputStart).match(/Open Pi Dash: (\S+)/);
+    if (match?.[1]) {
+      bootstrapUrl = match[1];
+      return;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+  }
+  throw new Error(`Timed out renewing bootstrap URL: ${daemonOutput}`);
+}
+
 async function restartDaemon(): Promise<void> {
   daemon.kill("SIGTERM");
   await new Promise<void>((resolveExit) =>
@@ -125,6 +140,10 @@ test.beforeAll(async () => {
     (chunk: Buffer) => (daemonOutput += chunk.toString()),
   );
   await waitForServer(outputFile);
+});
+
+test.beforeEach(async () => {
+  await renewBootstrapUrl();
 });
 
 test.afterAll(async () => {
@@ -218,10 +237,7 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
   page,
 }) => {
   await page.goto(bootstrapUrl);
-  await page
-    .getByRole("main")
-    .getByRole("button", { name: "Add workspace" })
-    .click();
+  await page.getByRole("button", { name: "Add workspace" }).first().click();
   const workspaceDialog = page.getByRole("dialog", { name: "Add workspace" });
   await workspaceDialog.getByLabel("Repository directory").fill(repository);
   await workspaceDialog.getByRole("button", { name: "Continue" }).click();
@@ -260,7 +276,7 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
     .click();
 
   const card = page.getByRole("article", { name: "Feature work" });
-  await expect(card).toContainText("ready");
+  await expect(card.getByRole("button", { name: "Open Pi" })).toBeEnabled();
   const managedPath = (await card
     .getByTestId("worktree-path")
     .textContent())!.trim();
@@ -303,12 +319,15 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
   ).toBeVisible({
     timeout: 15_000,
   });
-  await page.getByRole("button", { name: "Close changes" }).click();
+  await diffButton.click();
+  await expect(page.getByRole("heading", { name: "Changes" })).toHaveCount(0);
   await page
     .getByRole("navigation", { name: "Workspaces" })
     .getByRole("button", { name: "Worktree E2E", exact: true })
     .click();
-  await card.getByRole("button", { name: "Remove", exact: true }).click();
+  await card
+    .getByRole("button", { name: "Remove worktree", exact: true })
+    .click();
   let removeDialog = page.getByRole("alertdialog", {
     name: "Remove managed worktree",
   });
@@ -323,7 +342,9 @@ test("creates, persists, protects dirty state, removes, and safely deletes a bra
     cwd: managedPath,
     stdio: "ignore",
   });
-  await card.getByRole("button", { name: "Remove", exact: true }).click();
+  await card
+    .getByRole("button", { name: "Remove worktree", exact: true })
+    .click();
   removeDialog = page.getByRole("alertdialog", {
     name: "Remove managed worktree",
   });

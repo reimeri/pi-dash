@@ -250,7 +250,9 @@
               autocomplete="off"
               spellcheck="false"
             />
-            <Field.Description>Branch will be <code>{branch}</code></Field.Description>
+            <Field.Description
+              >Branch will be <code>{branch}</code></Field.Description
+            >
           </Field.Field>
         {:else}
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
