@@ -78,41 +78,51 @@ export function createPiResolver(options: {
     if (!key.startsWith("PI_DASH_")) probeEnv[key] = value;
   }
 
+  async function probeUncached(): Promise<ResolvedPi> {
+    const executable = await resolveExecutable(options.executable, probeEnv);
+    let output: string;
+    try {
+      const result = await execFileAsync(executable, ["--version"], {
+        env: probeEnv,
+        encoding: "utf8",
+        timeout: options.timeoutMs ?? 5_000,
+        maxBuffer: 64 * 1024,
+        windowsHide: true,
+      });
+      output = `${result.stdout}\n${result.stderr}`;
+    } catch {
+      throw new PiResolutionError(
+        "PI_UNAVAILABLE",
+        "The configured Pi executable did not complete its version probe",
+      );
+    }
+    const version = output.match(VERSION_PATTERN)?.[1];
+    if (!version || compareVersions(version, options.minimumVersion) < 0) {
+      throw new PiResolutionError(
+        "PI_VERSION_UNSUPPORTED",
+        `Pi ${options.minimumVersion} or newer is required`,
+      );
+    }
+    try {
+      await access(extensionPath, fsConstants.R_OK);
+    } catch {
+      throw new PiResolutionError(
+        "PI_UNAVAILABLE",
+        "The packaged Pi Dash extension resource is unavailable",
+      );
+    }
+    return { executable, version, extensionPath };
+  }
+
+  let cachedProbe: Promise<ResolvedPi> | undefined;
+
   return {
     async probe(): Promise<ResolvedPi> {
-      const executable = await resolveExecutable(options.executable, probeEnv);
-      let output: string;
-      try {
-        const result = await execFileAsync(executable, ["--version"], {
-          env: probeEnv,
-          encoding: "utf8",
-          timeout: options.timeoutMs ?? 5_000,
-          maxBuffer: 64 * 1024,
-          windowsHide: true,
-        });
-        output = `${result.stdout}\n${result.stderr}`;
-      } catch {
-        throw new PiResolutionError(
-          "PI_UNAVAILABLE",
-          "The configured Pi executable did not complete its version probe",
-        );
-      }
-      const version = output.match(VERSION_PATTERN)?.[1];
-      if (!version || compareVersions(version, options.minimumVersion) < 0) {
-        throw new PiResolutionError(
-          "PI_VERSION_UNSUPPORTED",
-          `Pi ${options.minimumVersion} or newer is required`,
-        );
-      }
-      try {
-        await access(extensionPath, fsConstants.R_OK);
-      } catch {
-        throw new PiResolutionError(
-          "PI_UNAVAILABLE",
-          "The packaged Pi Dash extension resource is unavailable",
-        );
-      }
-      return { executable, version, extensionPath };
+      cachedProbe ??= probeUncached().catch((error: unknown) => {
+        cachedProbe = undefined;
+        throw error;
+      });
+      return { ...(await cachedProbe) };
     },
   };
 }
