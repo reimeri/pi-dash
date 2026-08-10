@@ -40,7 +40,7 @@ Runtime states are `stopped`, `starting`, `running`, `stopping`, and `crashed`. 
 
 Pi and the shell inherit the user's ordinary environment, including HOME, PATH, SHELL, locale, XDG locations, SSH agent, and provider credentials. Pi Dash then loads `<registered-repository>/.env` when it exists and applies an optional workspace private override file. Private values override repository values; workspace values override inherited values. No environment file is created in a managed worktree.
 
-Environment sources use dotenv assignment syntax without shell evaluation or variable expansion. Sources must be regular files owned by the daemon user, cannot be writable by another user, and cannot define `PI_DASH_*` names. A configured source that is unreadable or invalid blocks runtime startup rather than launching with a partial environment.
+Environment sources use dotenv assignment syntax without shell evaluation or variable expansion. Sources must be regular files, cannot be final symlinks, and cannot define `PI_DASH_*` names. File ownership and write permissions are not restricted because Pi Dash assumes a personal, trusted machine; every user and process able to modify a source must therefore be trusted. A configured source that is unreadable or invalid blocks runtime startup rather than launching with a partial environment.
 
 Every inherited `PI_DASH_*` value is removed. Only Pi receives these per-runtime status values:
 
@@ -57,7 +57,7 @@ Pi Dash checks effective environment values while running. When they change, the
 
 **PI_VERSION_UNSUPPORTED** — upgrade Pi or deliberately lower the configured minimum only after validating its TUI against the terminal feasibility checklist.
 
-**ENVIRONMENT_SOURCE_INVALID** — inspect the workspace Environment card. Restore or correct the source, ensure it is a normalized absolute regular-file path owned by the daemon user, and remove write access for other users.
+**ENVIRONMENT_SOURCE_INVALID** — inspect the workspace Environment card. Restore or correct the source and ensure it is a readable, normalized absolute regular-file path rather than a final symlink.
 
 **PTY_START_FAILED** — verify native `node-pty` installation, worktree permissions, executable permissions, and available PTYs. Reinstall dependencies after installing native build prerequisites.
 

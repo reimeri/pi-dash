@@ -183,16 +183,6 @@ function readEnvironmentFile(
         "Environment source must be a regular file",
       );
     }
-    if (process.getuid && metadata.uid !== process.getuid()) {
-      throw new WorkspaceEnvironmentError(
-        "Environment source must be owned by the Pi Dash user",
-      );
-    }
-    if ((metadata.mode & 0o022) !== 0) {
-      throw new WorkspaceEnvironmentError(
-        "Environment source cannot be writable by other users",
-      );
-    }
     if (metadata.size > MAX_ENVIRONMENT_BYTES) {
       throw new WorkspaceEnvironmentError(
         "Environment source exceeds the 1 MiB limit",

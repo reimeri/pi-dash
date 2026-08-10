@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -225,6 +226,38 @@ describe("workspace environment", () => {
       variableCount: 0,
       error: null,
     });
+  });
+
+  it("accepts an environment source writable by other users", () => {
+    const target = fixture();
+    mkdirSync(target.repositoryPath, { recursive: true });
+    const repositoryFile = join(target.repositoryPath, ".env");
+    writeFileSync(repositoryFile, "SHARED=world-writable\n");
+    chmodSync(repositoryFile, 0o666);
+
+    expect(target.service.get(workspaceId)).toMatchObject({
+      status: "ready",
+      variableCount: 1,
+      error: null,
+    });
+  });
+
+  it("does not require the environment source to match the daemon user", () => {
+    const target = fixture();
+    mkdirSync(target.repositoryPath, { recursive: true });
+    writeFileSync(join(target.repositoryPath, ".env"), "SHARED=accepted\n");
+    const daemonUid = process.getuid();
+    const getuid = vi.spyOn(process, "getuid").mockReturnValue(daemonUid + 1);
+
+    try {
+      expect(target.service.get(workspaceId)).toMatchObject({
+        status: "ready",
+        variableCount: 1,
+        error: null,
+      });
+    } finally {
+      getuid.mockRestore();
+    }
   });
 
   it("fails closed for malformed, reserved, and symlinked sources", () => {
