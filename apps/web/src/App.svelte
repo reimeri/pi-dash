@@ -602,7 +602,9 @@
 >
   Skip to main content
 </a>
-<div class="grid h-dvh min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
+<div
+  class="grid h-dvh min-h-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden"
+>
   <DashboardHeader
     {diffAvailable}
     {terminalOpen}
