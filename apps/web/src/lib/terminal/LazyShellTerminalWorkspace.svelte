@@ -3,6 +3,7 @@
   import { afterUpdate } from "svelte";
   import * as Alert from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
+  import { loadShellTerminalWorkspace } from "./module-loaders.js";
 
   export let worktree: WorktreeDto;
   export let workspaceName: string;
@@ -17,7 +18,7 @@
     if (WorkspaceComponent || loading) return;
     loading = true;
     loadError = "";
-    void import("./ShellTerminalWorkspace.svelte")
+    void loadShellTerminalWorkspace()
       .then((module) => {
         WorkspaceComponent = module.default;
       })

@@ -42,6 +42,7 @@
   import WorkspaceSidebarAddButton from "./lib/workspaces/WorkspaceSidebarAddButton.svelte";
   import { workspaceStore } from "./lib/workspaces/store.js";
   import type { TerminalControls } from "./lib/terminal/controls.js";
+  import { scheduleTerminalModulePreload } from "./lib/terminal/module-loaders.js";
   import {
     createStatusEventClient,
     type StatusEventClient,
@@ -145,6 +146,7 @@
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let reconnectAttempts = 0;
   let destroyed = false;
+  let cancelTerminalModulePreload: (() => void) | undefined;
 
   function cancelReconnect(): void {
     if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -241,8 +243,10 @@
       if (!(await workspaceStore.load(reconnectSignal()))) {
         throw new Error("Unable to load workspaces from the local daemon");
       }
+      if (destroyed) return;
       reconnectAttempts = 0;
       startup = reduceStartupState(startup, { type: "READY" });
+      cancelTerminalModulePreload ??= scheduleTerminalModulePreload();
       if (selectedId) {
         await worktreeStore.load(selectedId, reconnectSignal());
       }
@@ -583,6 +587,7 @@
   onDestroy(() => {
     destroyed = true;
     cancelReconnect();
+    cancelTerminalModulePreload?.();
     statusEvents?.close();
     diffStore.destroy();
     sidebarDiffSummaryStore.destroy();

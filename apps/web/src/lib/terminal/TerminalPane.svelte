@@ -21,6 +21,7 @@
   import { api } from "../../api.js";
   import type { TerminalControlsChange } from "./controls.js";
   import { showTerminalCopyError } from "./copy-error-toast.js";
+  import { loadFitAddon, loadUnicode11Addon } from "./module-loaders.js";
   import {
     encodeBinaryInput,
     isTerminalServerFrame,
@@ -460,8 +461,8 @@
     try {
       loadedTerminal.attachCustomKeyEventHandler(handleTerminalKey);
       const [{ FitAddon }, { Unicode11Addon }] = await Promise.all([
-        import("@xterm/addon-fit"),
-        import("@xterm/addon-unicode11"),
+        loadFitAddon(),
+        loadUnicode11Addon(),
       ]);
       if (disposed) return;
       fitAddon = new FitAddon();
