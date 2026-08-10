@@ -1,6 +1,7 @@
-import type {
-  ApplicationEventsServerFrame,
-  WorkflowStatusDto,
+import {
+  APPLICATION_EVENTS_PROTOCOL_VERSION,
+  type ApplicationEventsServerFrame,
+  type WorkflowStatusDto,
 } from "@pi-dash/contracts";
 import { describe, expect, it } from "vitest";
 import {
@@ -21,7 +22,7 @@ const status: WorkflowStatusDto = {
 
 function snapshot(): ApplicationEventsServerFrame {
   return {
-    v: 7,
+    v: APPLICATION_EVENTS_PROTOCOL_VERSION,
     type: "snapshot",
     cursor: 4,
     statuses: [status],
@@ -34,6 +35,7 @@ function snapshot(): ApplicationEventsServerFrame {
         exitedAt: null,
         exitCode: null,
         signal: null,
+        launchError: null,
         attachedClients: 0,
       },
     ],
@@ -64,7 +66,7 @@ describe("workflow status store", () => {
       snapshot(),
     ).state;
     const working = reduceWorkflowStatusState(initialized, {
-      v: 7,
+      v: APPLICATION_EVENTS_PROTOCOL_VERSION,
       type: "status",
       cursor: 5,
       status: { ...status, state: "working", reason: "agent", revision: 1 },
@@ -73,7 +75,7 @@ describe("workflow status store", () => {
     expect(working.state.byWorktree[status.worktreeId]?.state).toBe("working");
     expect(
       reduceWorkflowStatusState(working.state, {
-        v: 7,
+        v: APPLICATION_EVENTS_PROTOCOL_VERSION,
         type: "status",
         cursor: 7,
         status: { ...status, state: "done", reason: "settled", revision: 2 },
@@ -94,7 +96,7 @@ describe("workflow status store", () => {
       changedAt: "2026-01-01T00:00:01.000Z",
     } as const;
     const active = reduceWorkflowStatusState(initialized, {
-      v: 7,
+      v: APPLICATION_EVENTS_PROTOCOL_VERSION,
       type: "shellActivity",
       cursor: 5,
       activity,
@@ -109,7 +111,7 @@ describe("workflow status store", () => {
     ).state;
     const workspaceId = "22222222-2222-4222-8222-222222222222";
     const changed = reduceWorkflowStatusState(initialized, {
-      v: 7,
+      v: APPLICATION_EVENTS_PROTOCOL_VERSION,
       type: "workspaceEnvironmentChanged",
       cursor: 5,
       workspaceId,
@@ -146,7 +148,7 @@ describe("workflow status store", () => {
       snapshot(),
     ).state;
     const removed = reduceWorkflowStatusState(initialized, {
-      v: 7,
+      v: APPLICATION_EVENTS_PROTOCOL_VERSION,
       type: "worktreeRemoved",
       cursor: 5,
       worktreeId: status.worktreeId,
@@ -172,7 +174,7 @@ describe("workflow status store", () => {
     ).state;
     const workspaceId = "22222222-2222-4222-8222-222222222222";
     const next = reduceWorkflowStatusState(initialized, {
-      v: 7,
+      v: APPLICATION_EVENTS_PROTOCOL_VERSION,
       type: "status",
       cursor: 5,
       status: {

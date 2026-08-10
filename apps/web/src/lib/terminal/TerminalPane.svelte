@@ -4,6 +4,7 @@
     TERMINAL_MAX_COLS,
     TERMINAL_MAX_ROWS,
     TERMINAL_MIN_COLS,
+    TERMINAL_PROTOCOL_VERSION,
     TERMINAL_MIN_ROWS,
     type RuntimeDto,
     type TerminalServerFrame,
@@ -16,7 +17,9 @@
   import { onDestroy, onMount } from "svelte";
   import { toast } from "svelte-sonner";
   import * as Alert from "$lib/components/ui/alert";
+  import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
+  import { Spinner } from "$lib/components/ui/spinner";
   import { writeClipboardText } from "$lib/clipboard.js";
   import { api } from "../../api.js";
   import type { TerminalControlsChange } from "./controls.js";
@@ -25,6 +28,7 @@
   import {
     encodeBinaryInput,
     isTerminalServerFrame,
+    shouldApplyTerminalStartResponse,
     splitBinaryInput,
     splitUtf8Input,
     translateTerminalKey,
@@ -56,6 +60,7 @@
   let connection: "connecting" | "connected" | "disconnected" = "connecting";
   let runtime: RuntimeDto | undefined;
   let runtimeId: string | undefined;
+  let socketRuntimeRevision = 0;
   let inputOwner = false;
   let inputOwnerKnown = false;
   let busy = false;
@@ -138,18 +143,24 @@
     ) {
       return;
     }
-    send({ v: 1, type: "resize", cols, rows });
+    send({ v: TERMINAL_PROTOCOL_VERSION, type: "resize", cols, rows });
   }
 
   function sendTextInput(data: string): void {
+    if (runtime?.state !== "running") return;
     if (kind === "pi") onAcknowledge(worktree.id);
     const maximum = Math.max(128, Math.min(64 * 1024, maxFrameBytes - 256));
     for (const chunk of splitUtf8Input(data, maximum)) {
-      send({ v: 1, type: "input", data: chunk });
+      send({
+        v: TERMINAL_PROTOCOL_VERSION,
+        type: "input",
+        data: chunk,
+      });
     }
   }
 
   function sendBinaryInput(data: string): void {
+    if (runtime?.state !== "running") return;
     if (kind === "pi") onAcknowledge(worktree.id);
     const maximum = Math.max(
       64,
@@ -157,7 +168,7 @@
     );
     for (const chunk of splitBinaryInput(data, maximum)) {
       send({
-        v: 1,
+        v: TERMINAL_PROTOCOL_VERSION,
         type: "binaryInput",
         dataBase64: encodeBinaryInput(chunk),
       });
@@ -215,9 +226,21 @@
     flushOutput();
   }
 
+  function applyRuntime(next: RuntimeDto): void {
+    runtime = next;
+    if (next.launchError) {
+      errorMessage = `${next.launchError.code}: ${next.launchError.message}`;
+    }
+  }
+
+  function applySocketRuntime(next: RuntimeDto): void {
+    socketRuntimeRevision += 1;
+    applyRuntime(next);
+  }
+
   function handleFrame(frame: TerminalServerFrame): void {
     if (frame.type === "hello") {
-      runtime = frame.runtime;
+      applySocketRuntime(frame.runtime);
       inputOwner = frame.inputOwner;
       inputOwnerKnown = true;
       if (inputOwner) sendTerminalSize();
@@ -233,14 +256,7 @@
         `Older terminal output expired; ${kind === "pi" ? "Pi" : "the shell"} was asked to redraw the current screen.`,
       );
     } else if (frame.type === "runtime") {
-      if (runtime) {
-        runtime = {
-          ...runtime,
-          state: frame.state,
-          exitCode: frame.exitCode,
-          signal: frame.signal,
-        };
-      }
+      applySocketRuntime(frame.runtime);
     } else if (frame.type === "error") {
       errorMessage = `${frame.code}: ${frame.message}`;
     }
@@ -260,9 +276,17 @@
       if (socket !== candidate) return;
       reconnectAttempts = 0;
       connection = "connected";
-      send({ v: 1, type: "attach", afterSeq: lastAppliedSeq });
+      send({
+        v: TERMINAL_PROTOCOL_VERSION,
+        type: "attach",
+        afterSeq: lastAppliedSeq,
+      });
       heartbeatTimer = setInterval(() => {
-        send({ v: 1, type: "ping", nonce: crypto.randomUUID() });
+        send({
+          v: TERMINAL_PROTOCOL_VERSION,
+          type: "ping",
+          nonce: crypto.randomUUID(),
+        });
       }, 20_000);
     });
     candidate.addEventListener("message", (event) => {
@@ -327,18 +351,35 @@
     errorMessage = "";
     try {
       const previousRuntimeId = runtime?.runtimeId;
+      const socketRevisionAtStart = socketRuntimeRevision;
       const response =
         kind === "pi"
           ? await api.startTerminal(worktree.id)
           : await api.startShellTerminal(worktree.id);
-      runtime = response.runtime;
-      if (response.runtime.runtimeId !== previousRuntimeId) {
-        runtimeId = undefined;
-        lastReceivedSeq = 0;
-        lastAppliedSeq = 0;
-        reconnectSocket();
-      } else {
-        connectSocket();
+      const socketStateChanged =
+        socketRuntimeRevision !== socketRevisionAtStart;
+      if (
+        shouldApplyTerminalStartResponse(
+          runtime,
+          response.runtime,
+          socketStateChanged,
+        )
+      ) {
+        applyRuntime(response.runtime);
+      }
+      if (!socketStateChanged) {
+        if (
+          previousRuntimeId &&
+          response.runtime.runtimeId !== previousRuntimeId
+        ) {
+          runtimeId = undefined;
+          lastReceivedSeq = 0;
+          lastAppliedSeq = 0;
+          reconnectSocket();
+        } else {
+          runtimeId = response.runtime.runtimeId ?? undefined;
+          connectSocket();
+        }
       }
     } catch (error) {
       errorMessage =
@@ -346,10 +387,11 @@
           ? error.message
           : `Unable to start ${kind === "pi" ? "Pi" : "the shell"}.`;
       try {
-        runtime =
+        applyRuntime(
           kind === "pi"
             ? (await api.terminal(worktree.id)).runtime
-            : (await api.shellTerminal(worktree.id)).runtime;
+            : (await api.shellTerminal(worktree.id)).runtime,
+        );
       } catch {
         // Keep the sanitized startup error already shown.
       }
@@ -362,10 +404,11 @@
     busy = true;
     errorMessage = "";
     try {
-      runtime =
+      applyRuntime(
         kind === "pi"
           ? (await api.stopTerminal(worktree.id)).runtime
-          : (await api.stopShellTerminal(worktree.id)).runtime;
+          : (await api.stopShellTerminal(worktree.id)).runtime,
+      );
     } catch (error) {
       errorMessage =
         error instanceof Error
@@ -381,7 +424,7 @@
     errorMessage = "";
     try {
       restartKey ??= crypto.randomUUID();
-      runtime =
+      applyRuntime(
         kind === "pi"
           ? (
               await api.restartTerminal(
@@ -396,7 +439,8 @@
                 restartKey,
                 runtime?.runtimeId ?? null,
               )
-            ).runtime;
+            ).runtime,
+      );
       restartKey = undefined;
       runtimeId = undefined;
       lastReceivedSeq = 0;
@@ -484,6 +528,7 @@
   onMount(() => {
     window.addEventListener("keydown", handleHostKeydown, { capture: true });
     if (worktree.lifecycle === "ready" && worktree.health === "healthy") {
+      connectSocket();
       void startRuntime();
     } else {
       errorMessage = `This worktree must be ready and healthy before ${kind === "pi" ? "Pi" : "the shell"} can start.`;
@@ -541,7 +586,7 @@
   {/if}
 
   <div
-    class="terminal-region min-h-0 flex-1 overflow-hidden bg-background p-2 focus-within:ring-2 focus-within:ring-ring focus-within:ring-inset"
+    class="terminal-region relative min-h-0 flex-1 overflow-hidden bg-background p-2 focus-within:ring-2 focus-within:ring-ring focus-within:ring-inset"
     bind:this={host}
     role="application"
     aria-label={`${workspaceName} ${worktree.name} interactive ${kind === "pi" ? "Pi" : "shell"} terminal`}
@@ -561,6 +606,14 @@
         ? "Pi terminal emulator"
         : "Shell terminal emulator"}
     />
+    {#if (runtime?.state ?? "starting") === "starting"}
+      <div class="pointer-events-none absolute right-3 top-3">
+        <Badge variant="secondary" role="status" aria-live="polite">
+          <Spinner data-icon="inline-start" />
+          Starting {kind === "pi" ? "Pi" : "shell"}…
+        </Badge>
+      </div>
+    {/if}
   </div>
 </section>
 

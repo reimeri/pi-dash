@@ -10,6 +10,7 @@ function stopped(worktreeId: string): RuntimeDto {
     exitedAt: null,
     exitCode: null,
     signal: null,
+    launchError: null,
     attachedClients: 0,
   };
 }
@@ -30,7 +31,7 @@ export function createUnavailableTerminalManager(): TerminalManager {
         runtime: stopped(worktreeId),
       };
     },
-    attach() {
+    async attach() {
       return () => undefined;
     },
     input() {},

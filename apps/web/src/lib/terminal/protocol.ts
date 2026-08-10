@@ -1,4 +1,10 @@
-import type { TerminalServerFrame } from "@pi-dash/contracts";
+import {
+  RuntimeSchema,
+  TERMINAL_PROTOCOL_VERSION,
+  type RuntimeDto,
+  type TerminalServerFrame,
+} from "@pi-dash/contracts";
+import { Value } from "@sinclair/typebox/value";
 
 export const SHIFT_ENTER_SEQUENCE = "\u001b[13;2u";
 export const ALT_ENTER_SEQUENCE = "\u001b[13;3u";
@@ -77,14 +83,35 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isRuntimeDto(value: unknown): value is RuntimeDto {
+  return Value.Check(RuntimeSchema, value);
+}
+
+export function shouldApplyTerminalStartResponse(
+  current: RuntimeDto | undefined,
+  response: RuntimeDto,
+  socketStateChanged: boolean,
+): boolean {
+  if (socketStateChanged) return false;
+  return !(
+    current?.runtimeId === response.runtimeId &&
+    current.state !== "starting" &&
+    response.state === "starting"
+  );
+}
+
 export function isTerminalServerFrame(
   value: unknown,
 ): value is TerminalServerFrame {
-  if (!record(value) || value.v !== 1 || typeof value.type !== "string")
+  if (
+    !record(value) ||
+    value.v !== TERMINAL_PROTOCOL_VERSION ||
+    typeof value.type !== "string"
+  )
     return false;
   if (value.type === "hello") {
     return (
-      record(value.runtime) &&
+      isRuntimeDto(value.runtime) &&
       typeof value.connectionId === "string" &&
       typeof value.inputOwner === "boolean" &&
       Number.isSafeInteger(value.earliestSeq) &&
@@ -104,15 +131,7 @@ export function isTerminalServerFrame(
       Number.isSafeInteger(value.latestSeq)
     );
   }
-  if (value.type === "runtime") {
-    return (
-      ["stopped", "starting", "running", "stopping", "crashed"].includes(
-        String(value.state),
-      ) &&
-      (value.exitCode === null || Number.isInteger(value.exitCode)) &&
-      (value.signal === null || Number.isInteger(value.signal))
-    );
-  }
+  if (value.type === "runtime") return isRuntimeDto(value.runtime);
   if (value.type === "pong") return typeof value.nonce === "string";
   if (value.type === "error") {
     return typeof value.code === "string" && typeof value.message === "string";

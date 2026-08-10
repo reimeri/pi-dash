@@ -3,6 +3,7 @@
   import { afterUpdate } from "svelte";
   import * as Alert from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
+  import { Spinner } from "$lib/components/ui/spinner";
   import type { TerminalControlsChange } from "./controls.js";
   import { loadPiTerminalWorkspace } from "./module-loaders.js";
 
@@ -58,4 +59,13 @@
       <Button variant="outline" size="sm" onclick={load}>Retry</Button>
     </Alert.Action>
   </Alert.Root>
+{:else if selected}
+  <section
+    class="flex size-full min-h-0 items-center justify-center gap-2 bg-background text-sm text-muted-foreground"
+    aria-label="Pi terminal"
+    role="status"
+  >
+    <Spinner data-icon="inline-start" />
+    Loading terminal…
+  </section>
 {/if}

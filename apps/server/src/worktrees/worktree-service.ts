@@ -184,7 +184,7 @@ export interface WorktreeService {
   get(id: string): WorktreeDto;
   diffSummary(id: string, signal?: AbortSignal): Promise<WorktreeDiffSummary>;
   diff(id: string, signal?: AbortSignal): Promise<WorktreeDiff>;
-  verifyTerminalStart(id: string): Promise<WorktreeDto>;
+  verifyTerminalStart(id: string, signal?: AbortSignal): Promise<WorktreeDto>;
   create(
     workspaceId: string,
     input: CreateWorktreeRequest,
@@ -938,7 +938,7 @@ export function createWorktreeService(options: {
         checkedAt: now().toISOString(),
       };
     },
-    async verifyTerminalStart(id) {
+    async verifyTerminalStart(id, signal) {
       const record = requireRecord(id);
       if (record.lifecycle !== "ready" || record.health !== "healthy") {
         throw new WorktreeServiceError(
@@ -950,7 +950,11 @@ export function createWorktreeService(options: {
         );
       }
       const workspace = requireWorkspace(record.workspaceId);
-      const entry = await inspectExactManagedWorktree(record, workspace);
+      const entry = await inspectExactManagedWorktree(
+        record,
+        workspace,
+        signal,
+      );
       if (!entry || entry.locked) {
         throw new WorktreeServiceError(
           409,

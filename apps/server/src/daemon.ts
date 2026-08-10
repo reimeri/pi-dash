@@ -287,9 +287,12 @@ export async function createDaemon(
       runtimeKind: "pi",
       lifecycle,
       getWorktree: (id) => worktrees!.get(id),
-      verifyWorktree: (id) => worktrees!.verifyTerminalStart(id),
-      resolveLaunch: async ({ worktreeId, runtimeId, statusToken }) => {
+      verifyWorktree: (id, signal) =>
+        worktrees!.verifyTerminalStart(id, signal),
+      resolveLaunch: async ({ worktreeId, runtimeId, statusToken, signal }) => {
+        signal.throwIfAborted();
         const resolved = await pi.probe();
+        signal.throwIfAborted();
         const worktree = worktreeRepository.get(worktreeId);
         if (!worktree) {
           throw new TerminalManagerError(
@@ -353,8 +356,10 @@ export async function createDaemon(
       runtimeKind: "shell",
       lifecycle,
       getWorktree: (id) => worktrees!.get(id),
-      verifyWorktree: (id) => worktrees!.verifyTerminalStart(id),
-      resolveLaunch: async ({ worktreeId, runtimeId }) => {
+      verifyWorktree: (id, signal) =>
+        worktrees!.verifyTerminalStart(id, signal),
+      resolveLaunch: async ({ worktreeId, runtimeId, signal }) => {
+        signal.throwIfAborted();
         const worktree = worktreeRepository.get(worktreeId);
         if (!worktree) {
           throw new TerminalManagerError(
@@ -380,8 +385,10 @@ export async function createDaemon(
               : "Workspace environment is invalid",
           );
         }
+        const executable = await resolveUserShell(env);
+        signal.throwIfAborted();
         return {
-          executable: await resolveUserShell(env),
+          executable,
           args: [],
           env: createShellTerminalEnvironment(env, workspaceEnvironment),
         };

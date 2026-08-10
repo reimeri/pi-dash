@@ -1,8 +1,10 @@
-import type {
-  RuntimeDto,
-  ShellActivityDto,
-  TerminalRuntimeState,
-  TerminalServerFrame,
+import {
+  TERMINAL_PROTOCOL_VERSION,
+  type RuntimeDto,
+  type RuntimeLaunchError,
+  type ShellActivityDto,
+  type TerminalRuntimeState,
+  type TerminalServerFrame,
 } from "@pi-dash/contracts";
 import type { IDisposable, IPty } from "node-pty";
 import { OutputRing } from "./output-ring.js";
@@ -81,12 +83,20 @@ export class TerminalRuntime {
       exitedAt: null,
       exitCode: null,
       signal: null,
+      launchError: null,
       attachedClients: 0,
     };
   }
 
   get ptyPid(): number | undefined {
     return this.#pty?.pid;
+  }
+
+  get snapshot(): RuntimeDto {
+    return {
+      ...this.dto,
+      launchError: this.dto.launchError ? { ...this.dto.launchError } : null,
+    };
   }
 
   #setState(
@@ -98,21 +108,21 @@ export class TerminalRuntime {
     this.dto.state = state;
     Object.assign(this.dto, fields);
     try {
-      this.options.onState?.({ ...this.dto });
+      this.options.onState?.(this.snapshot);
     } catch {
       // Status/event observers must never interfere with the PTY lifecycle.
     }
     this.#broadcast({
-      v: 1,
+      v: TERMINAL_PROTOCOL_VERSION,
       type: "runtime",
-      state,
-      exitCode: this.dto.exitCode,
-      signal: this.dto.signal,
+      runtime: this.snapshot,
     });
   }
 
-  async start(launch: TerminalLaunchSpec): Promise<void> {
+  async start(launch: TerminalLaunchSpec, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     const { spawn } = await import("node-pty");
+    signal?.throwIfAborted();
     const pty = spawn(launch.executable, launch.args, {
       name: "xterm-256color",
       cols: this.#dimensions.cols,
@@ -126,7 +136,7 @@ export class TerminalRuntime {
       for (const client of this.clients.values()) {
         if (client.replayReady) {
           this.#send(client, {
-            v: 1,
+            v: TERMINAL_PROTOCOL_VERSION,
             type: "output",
             seq: entry.seq,
             data: entry.data,
@@ -141,13 +151,13 @@ export class TerminalRuntime {
 
     if (process.platform === "linux") {
       this.#leader = await readProcessIdentity(pty.pid);
+      signal?.throwIfAborted();
       if (
         !this.#leader ||
         this.#leader.processGroup !== pty.pid ||
         (this.options.processScope === "session" &&
           this.#leader.session !== pty.pid)
       ) {
-        this.#stopRequested = true;
         try {
           pty.kill("SIGKILL");
         } catch {
@@ -165,20 +175,33 @@ export class TerminalRuntime {
         this.trackedProcesses,
         this.options.processScope,
       );
+      signal?.throwIfAborted();
       this.#tracker = setInterval(() => this.#trackProcesses(), 250);
       this.#tracker.unref?.();
     }
+    signal?.throwIfAborted();
     this.#setState("running", {
       startedAt: this.options.now().toISOString(),
     });
   }
 
-  failStart(): void {
-    this.#setState("crashed", {
-      exitedAt: this.options.now().toISOString(),
-      exitCode: null,
-      signal: null,
-    });
+  async failStart(error: RuntimeLaunchError): Promise<void> {
+    this.dto.launchError = { ...error };
+    this.#stopRequested = true;
+    const cleaned = await this.#stopOwnedProcessTree();
+    this.#setForegroundCommandActive(false);
+    if (this.dto.state !== "crashed") {
+      this.#setState("crashed", {
+        exitedAt: this.dto.exitedAt ?? this.options.now().toISOString(),
+        exitCode: null,
+        signal: null,
+      });
+    }
+    if (!cleaned) {
+      throw new Error(
+        "Owned terminal process tree did not exit after launch failure",
+      );
+    }
   }
 
   #setForegroundCommandActive(active: boolean): void {
@@ -239,7 +262,11 @@ export class TerminalRuntime {
     this.#dataListener = undefined;
     this.#exitListener = undefined;
     this.#pty = undefined;
-    const state = this.#stopRequested || exitCode === 0 ? "stopped" : "crashed";
+    const state = this.dto.launchError
+      ? "crashed"
+      : this.#stopRequested || exitCode === 0
+        ? "stopped"
+        : "crashed";
     this.#setForegroundCommandActive(false);
     this.#setState(state, {
       exitedAt: this.options.now().toISOString(),
@@ -287,9 +314,9 @@ export class TerminalRuntime {
     this.#inputOwner ??= connectionId;
     this.dto.attachedClients = this.clients.size;
     this.#send(client, {
-      v: 1,
+      v: TERMINAL_PROTOCOL_VERSION,
       type: "hello",
-      runtime: { ...this.dto },
+      runtime: this.snapshot,
       connectionId,
       inputOwner: this.#inputOwner === connectionId,
       earliestSeq: this.output.earliestSeq,
@@ -300,7 +327,7 @@ export class TerminalRuntime {
     const replayExpired = !this.output.canReplayAfter(afterSeq);
     if (replayExpired) {
       this.#send(client, {
-        v: 1,
+        v: TERMINAL_PROTOCOL_VERSION,
         type: "replayReset",
         earliestSeq: this.output.earliestSeq,
         latestSeq: this.output.latestSeq,
@@ -312,7 +339,7 @@ export class TerminalRuntime {
       if (entry.seq > cutoff) break;
       if (
         !this.#send(client, {
-          v: 1,
+          v: TERMINAL_PROTOCOL_VERSION,
           type: "output",
           seq: entry.seq,
           data: entry.data,
@@ -326,7 +353,7 @@ export class TerminalRuntime {
     for (const entry of this.output.replayAfter(cutoff)) {
       if (
         !this.#send(client, {
-          v: 1,
+          v: TERMINAL_PROTOCOL_VERSION,
           type: "output",
           seq: entry.seq,
           data: entry.data,
@@ -367,17 +394,8 @@ export class TerminalRuntime {
     return true;
   }
 
-  async stop(): Promise<void> {
-    this.#stopRequested = true;
-    if (!this.#pty && this.trackedProcesses.size === 0) {
-      if (this.dto.state !== "stopped") {
-        this.#setState("stopped", {
-          exitedAt: this.dto.exitedAt ?? this.options.now().toISOString(),
-        });
-      }
-      return;
-    }
-    this.#setState("stopping");
+  async #stopOwnedProcessTree(): Promise<boolean> {
+    if (!this.#pty && this.trackedProcesses.size === 0) return true;
     if (this.#tracker) clearInterval(this.#tracker);
     await this.#trackerInFlight;
     const cleaned = await stopOwnedProcesses({
@@ -387,12 +405,27 @@ export class TerminalRuntime {
       timeoutMs: this.options.stopGraceMs,
       scope: this.options.processScope,
     });
-    if (!cleaned) {
+    if (cleaned) this.trackedProcesses.clear();
+    return cleaned;
+  }
+
+  async stop(): Promise<void> {
+    this.#stopRequested = true;
+    this.dto.launchError = null;
+    if (!this.#pty && this.trackedProcesses.size === 0) {
+      if (this.dto.state !== "stopped") {
+        this.#setState("stopped", {
+          exitedAt: this.dto.exitedAt ?? this.options.now().toISOString(),
+        });
+      }
+      return;
+    }
+    this.#setState("stopping");
+    if (!(await this.#stopOwnedProcessTree())) {
       throw new Error(
         "Owned terminal process tree did not exit before deadline",
       );
     }
-    this.trackedProcesses.clear();
     this.#setForegroundCommandActive(false);
     this.#setState("stopped", {
       exitedAt: this.dto.exitedAt ?? this.options.now().toISOString(),

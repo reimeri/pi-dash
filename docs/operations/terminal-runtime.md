@@ -1,6 +1,6 @@
 # Terminal runtime operations
 
-Selecting a ready, healthy managed worktree lazily starts Pi directly under a `node-pty` pseudoterminal with that worktree as its exact working directory. The top-bar terminal button also opens a separate shell runtime in a right sidebar. The shell executable is fixed from the daemon user's absolute, executable `$SHELL` path with `/bin/sh` as a validated fallback; browser requests cannot choose an executable, arguments, environment, or working directory. One daemon owns at most one Pi runtime and one shell runtime per worktree.
+Selecting a ready, healthy managed worktree presents the terminal surface immediately and starts Pi directly under a `node-pty` pseudoterminal with that worktree as its exact working directory. Terminal modules are preloaded while the dashboard is idle; a first open that outruns preloading still shows a bounded loading state rather than an empty panel. The top-bar terminal button opens a separate shell runtime in a right sidebar. The shell executable is fixed from the daemon user's absolute, executable `$SHELL` path with `/bin/sh` as a validated fallback; browser requests cannot choose an executable, arguments, environment, or working directory. One daemon owns at most one Pi runtime and one shell runtime per worktree.
 
 ## Requirements
 
@@ -25,15 +25,17 @@ Linux desktop or compositor-level global shortcuts remain outside application co
 
 ## Lifecycle
 
-Runtime states are `stopped`, `starting`, `running`, `stopping`, and `crashed`. A clean `/quit` is stopped; an unexpected nonzero exit is crashed. Exit code and signal remain visible until a start/restart replaces the runtime.
+Runtime states are `stopped`, `starting`, `running`, `stopping`, and `crashed`. A clean `/quit` is stopped; an unexpected nonzero exit is crashed. Exit code, signal, and any sanitized launch error remain visible until a stop or replacement runtime clears them.
 
-- **Start** is resource-idempotent; concurrent requests return the sole runtime.
-- **Stop** is idempotent. Linux stop captures owned process identities, sends SIGTERM, waits for the configured grace interval, then safely escalates exact surviving identities to SIGKILL. Pi is tracked by process group; interactive shell jobs are tracked across the shell's PTY session because foreground jobs use separate process groups.
-- **Restart** requires a UUID `Idempotency-Key`; daemon-lifetime retries return the original operation and changed-input reuse fails.
+- **Start** is resource-idempotent and asynchronous. `POST .../start` reserves and returns the sole `starting` runtime immediately; concurrent requests return the same runtime ID. Path/Git verification, environment preparation, executable resolution, and PTY creation continue in a daemon-owned launch operation.
+- **Attach** also atomically ensures a runtime exists, so the WebSocket can receive `hello` while launch preparation is in progress. The terminal pane opens the socket and start request concurrently, accepts resize while starting, and withholds input until running.
+- **Launch failure** transitions the reserved runtime to `crashed` and retains only a sanitized `launchError { code, message }`. REST reads, application events, WebSocket `hello`, and runtime snapshots expose that same error; raw exceptions remain private.
+- **Stop** is idempotent. During `starting`, it aborts launch preparation, prevents a late PTY spawn or running transition, waits for cancellation cleanup, and ends stopped. For a live PTY, Linux stop captures owned process identities, sends SIGTERM, waits for the configured grace interval, then safely escalates exact surviving identities to SIGKILL. Pi is tracked by process group; interactive shell jobs are tracked across the shell's PTY session because foreground jobs use separate process groups.
+- **Restart** requires a UUID `Idempotency-Key`; daemon-lifetime retries return the original operation and changed-input reuse fails. Its response may contain the replacement runtime in `starting`.
 - Hiding, switching away, evicting a browser pane, or refreshing does not stop Pi or the shell. Selecting another worktree closes the shell sidebar without terminating its session.
 - Diff and shell right panels are mutually exclusive on desktop and mobile.
-- Worktree removal first claims `removing`, awaits disposal of both terminal kinds, then performs Git removal.
-- Daemon shutdown drains every runtime. Runtime processes do not survive daemon restart.
+- Worktree removal atomically claims `removing`, which blocks new starts, then disposes both terminal kinds. Disposal and shutdown abort pending launches and await cancellation cleanup before filesystem mutation or daemon exit.
+- Daemon shutdown drains every running or starting runtime. Runtime processes do not survive daemon restart.
 - The sidebar worktree row shows a terminal indicator only while the shell PTY has a foreground job. Detection uses Linux terminal process-group metadata and never parses or reports command text.
 
 ## Environment
@@ -52,6 +54,8 @@ Every inherited `PI_DASH_*` value is removed. Only Pi receives these per-runtime
 Pi Dash checks effective environment values while running. When they change, the dashboard persistently identifies runtimes using older values and offers a confirmed restart action. Restarting terminates each affected process tree; foreground shell commands are called out before confirmation. Source contents, status tokens, and terminal bytes are never logged or returned through the environment configuration API.
 
 ## Recovery and troubleshooting
+
+Launch errors discovered after runtime reservation appear in the terminal alert and remain available on the crashed runtime. Errors discovered before reservation are returned by the start/attach request.
 
 **PI_UNAVAILABLE** — verify `pi --version` works for the daemon user, or set `PI_DASH_PI_EXECUTABLE`/`--pi-executable` to an executable path.
 

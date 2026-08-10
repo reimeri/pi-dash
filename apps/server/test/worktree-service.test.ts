@@ -77,15 +77,16 @@ async function fixture(
   const worktreeRepository = createWorktreeRepository(database.sqlite);
   const manager = await createGitWorktreeManager();
   const diffs = await createGitDiffInspector();
+  const lifecycle = createWorktreeLifecycleCoordinator({
+    repository: worktreeRepository,
+  });
   const service = createWorktreeService({
     repository: worktreeRepository,
     workspaces: workspaceRepository,
     git: manager,
     diffs,
     lock,
-    lifecycle: createWorktreeLifecycleCoordinator({
-      repository: worktreeRepository,
-    }),
+    lifecycle,
     snapshots: createBaseSnapshotSigner({ key: Buffer.alloc(32, 7) }),
     removalConfirmations: createRemovalConfirmationSigner({
       key: Buffer.alloc(32, 8),
@@ -101,6 +102,7 @@ async function fixture(
     workspace,
     service,
     manager,
+    lifecycle,
     worktreeRepository,
     workspaceService,
   };
@@ -323,6 +325,40 @@ describe("WorktreeService integration", () => {
       health: "healthy",
     });
     database.close();
+  });
+
+  it("claims removing and cancels a runtime that is still starting", async () => {
+    let worktreeId = "";
+    let startClaimDuringStop: unknown;
+    const context: { target?: Awaited<ReturnType<typeof fixture>> } = {};
+    const target = await fixture({
+      stopRuntime: async () => {
+        const active = context.target!;
+        expect(active.service.get(worktreeId).lifecycle).toBe("removing");
+        startClaimDuringStop = active.lifecycle.claimTerminalStart(worktreeId);
+      },
+    });
+    context.target = target;
+    const snapshot = (await target.service.refs(target.workspace.id)).head!;
+    const created = await target.service.create(
+      target.workspace.id,
+      {
+        name: "Starting runtime removal",
+        slug: "starting-runtime-removal",
+        baseRef: snapshot.fullName,
+        baseCommit: snapshot.commit,
+        baseSnapshotToken: snapshot.baseSnapshotToken,
+      },
+      crypto.randomUUID(),
+    );
+    worktreeId = created.worktree.id;
+    expect(target.lifecycle.claimTerminalStart(worktreeId)).toBeDefined();
+
+    await expect(
+      removePrepared(target.service, worktreeId, crypto.randomUUID()),
+    ).resolves.toMatchObject({ worktree: { lifecycle: "removed" } });
+    expect(startClaimDuringStop).toBeUndefined();
+    target.database.close();
   });
 
   it("does not let a losing concurrent removal restore the winner to ready", async () => {

@@ -6,6 +6,7 @@ import {
   RestartRuntimeRequestSchema,
   RestartRuntimeResponseSchema,
   RuntimeResponseSchema,
+  TERMINAL_PROTOCOL_VERSION,
   WorktreeIdParamsSchema,
   type RestartRuntimeRequest,
   type TerminalServerFrame,
@@ -188,6 +189,9 @@ export async function registerTerminalRoutes(
       const connectionId = randomUUID();
       let detach: (() => void) | undefined;
       let attached = false;
+      let attaching = false;
+      let closed = false;
+      const connectionAbort = new AbortController();
       let lastHeartbeat = Date.now();
       const attachDeadline = setTimeout(() => {
         if (!attached) socket.close(1008, "Attach frame required");
@@ -201,7 +205,53 @@ export async function registerTerminalRoutes(
       heartbeat.unref?.();
 
       const sendError = (code: string, message: string) =>
-        sendSocket(socket, { v: 1, type: "error", code, message });
+        sendSocket(socket, {
+          v: TERMINAL_PROTOCOL_VERSION,
+          type: "error",
+          code,
+          message,
+        });
+
+      const reportError = (error: unknown): void => {
+        if (error instanceof TerminalManagerError) {
+          sendError(error.code, error.message);
+        } else {
+          request.log.error(
+            { errorName: (error as Error).name, connectionId },
+            "Terminal WebSocket message failed",
+          );
+          sendError("INTERNAL_ERROR", "Terminal request failed");
+        }
+      };
+
+      const attach = async (afterSeq: number): Promise<void> => {
+        try {
+          const attachedRuntime = await options.terminals.attach(
+            worktreeId,
+            connectionId,
+            afterSeq,
+            {
+              get bufferedAmount() {
+                return socket.bufferedAmount;
+              },
+              send: (serverFrame) => sendSocket(socket, serverFrame),
+              close: (code, reason) => socket.close(code, reason),
+            },
+            connectionAbort.signal,
+          );
+          if (closed) {
+            attachedRuntime();
+            return;
+          }
+          detach = attachedRuntime;
+          attached = true;
+          clearTimeout(attachDeadline);
+        } catch (error) {
+          if (!connectionAbort.signal.aborted) reportError(error);
+        } finally {
+          attaching = false;
+        }
+      };
 
       socket.on("message", (raw: RawData, isBinary: boolean) => {
         if (isBinary) {
@@ -230,24 +280,12 @@ export async function registerTerminalRoutes(
         const frame = parsed.frame;
         try {
           if (frame.type === "attach") {
-            if (attached) {
-              sendError("VALIDATION_ERROR", "Connection is already attached");
+            if (attached || attaching) {
+              sendError("VALIDATION_ERROR", "Connection is already attaching");
               return;
             }
-            detach = options.terminals.attach(
-              worktreeId,
-              connectionId,
-              frame.afterSeq,
-              {
-                get bufferedAmount() {
-                  return socket.bufferedAmount;
-                },
-                send: (serverFrame) => sendSocket(socket, serverFrame),
-                close: (code, reason) => socket.close(code, reason),
-              },
-            );
-            attached = true;
-            clearTimeout(attachDeadline);
+            attaching = true;
+            void attach(frame.afterSeq);
             return;
           }
           if (!attached) {
@@ -271,22 +309,20 @@ export async function registerTerminalRoutes(
             );
           } else if (frame.type === "ping") {
             lastHeartbeat = Date.now();
-            sendSocket(socket, { v: 1, type: "pong", nonce: frame.nonce });
+            sendSocket(socket, {
+              v: TERMINAL_PROTOCOL_VERSION,
+              type: "pong",
+              nonce: frame.nonce,
+            });
           }
         } catch (error) {
-          if (error instanceof TerminalManagerError) {
-            sendError(error.code, error.message);
-          } else {
-            request.log.error(
-              { errorName: (error as Error).name, connectionId },
-              "Terminal WebSocket message failed",
-            );
-            sendError("INTERNAL_ERROR", "Terminal request failed");
-          }
+          reportError(error);
         }
       });
 
       const cleanup = () => {
+        closed = true;
+        connectionAbort.abort();
         clearTimeout(attachDeadline);
         clearInterval(heartbeat);
         detach?.();

@@ -43,12 +43,12 @@ A matching done revision becomes idle. A late request receives `409 STATUS_REVIS
 
 ## Browser event stream
 
-Authenticated clients connect to `/api/v1/events/socket` and send:
+The browser event stream is version 8, independently from the extension side-channel version in this document. Authenticated clients connect to `/api/v1/events/socket` and send:
 
 ```json
-{ "v": 1, "type": "subscribe", "afterCursor": 410 }
+{ "v": 8, "type": "subscribe", "afterCursor": 410 }
 ```
 
-The first server frame is always an atomic snapshot with one cursor, all workflow statuses, runtime DTOs, and workspace aggregates. Ordered `status` and `runtime` frames then advance the cursor by one. A gap causes the client to reconnect for a fresh snapshot, avoiding REST/WebSocket races.
+The first server frame is always an atomic snapshot with one cursor, all workflow statuses, complete runtime DTOs (including nullable sanitized launch errors), and workspace aggregates. Ordered `status` and `runtime` frames then advance the cursor by one. A gap causes the client to reconnect for a fresh snapshot, avoiding REST/WebSocket races.
 
 Indicators expose textual accessible names and tooltips. Working and blocked animation is disabled under `prefers-reduced-motion`; shape and text still distinguish every state.

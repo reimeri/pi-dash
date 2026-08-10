@@ -1,6 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 
-export const TERMINAL_PROTOCOL_VERSION = 1 as const;
+export const TERMINAL_PROTOCOL_VERSION = 2 as const;
 export const TERMINAL_MIN_COLS = 2;
 export const TERMINAL_MAX_COLS = 500;
 export const TERMINAL_MIN_ROWS = 1;
@@ -21,6 +21,15 @@ export const TerminalRuntimeStateSchema = Type.Union([
 ]);
 export type TerminalRuntimeState = Static<typeof TerminalRuntimeStateSchema>;
 
+export const RuntimeLaunchErrorSchema = Type.Object(
+  {
+    code: Type.String({ minLength: 1, maxLength: 64 }),
+    message: Type.String({ minLength: 1, maxLength: 500 }),
+  },
+  { additionalProperties: false },
+);
+export type RuntimeLaunchError = Static<typeof RuntimeLaunchErrorSchema>;
+
 export const RuntimeSchema = Type.Object(
   {
     worktreeId: UuidSchema,
@@ -30,6 +39,7 @@ export const RuntimeSchema = Type.Object(
     exitedAt: Type.Union([TimestampSchema, Type.Null()]),
     exitCode: Type.Union([Type.Integer(), Type.Null()]),
     signal: Type.Union([Type.Integer(), Type.Null()]),
+    launchError: Type.Union([RuntimeLaunchErrorSchema, Type.Null()]),
     attachedClients: Type.Integer({ minimum: 0 }),
   },
   { additionalProperties: false },
@@ -124,7 +134,7 @@ export type TerminalClientFrame = Static<typeof TerminalClientFrameSchema>;
 
 export type TerminalServerFrame =
   | {
-      v: 1;
+      v: typeof TERMINAL_PROTOCOL_VERSION;
       type: "hello";
       runtime: RuntimeDto;
       connectionId: string;
@@ -132,14 +142,28 @@ export type TerminalServerFrame =
       earliestSeq: number;
       latestSeq: number;
     }
-  | { v: 1; type: "output"; seq: number; data: string; replay: boolean }
-  | { v: 1; type: "replayReset"; earliestSeq: number; latestSeq: number }
   | {
-      v: 1;
-      type: "runtime";
-      state: TerminalRuntimeState;
-      exitCode: number | null;
-      signal: number | null;
+      v: typeof TERMINAL_PROTOCOL_VERSION;
+      type: "output";
+      seq: number;
+      data: string;
+      replay: boolean;
     }
-  | { v: 1; type: "pong"; nonce: string }
-  | { v: 1; type: "error"; code: string; message: string };
+  | {
+      v: typeof TERMINAL_PROTOCOL_VERSION;
+      type: "replayReset";
+      earliestSeq: number;
+      latestSeq: number;
+    }
+  | {
+      v: typeof TERMINAL_PROTOCOL_VERSION;
+      type: "runtime";
+      runtime: RuntimeDto;
+    }
+  | { v: typeof TERMINAL_PROTOCOL_VERSION; type: "pong"; nonce: string }
+  | {
+      v: typeof TERMINAL_PROTOCOL_VERSION;
+      type: "error";
+      code: string;
+      message: string;
+    };

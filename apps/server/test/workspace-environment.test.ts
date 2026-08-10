@@ -88,6 +88,7 @@ function runtime(runtimeId: string): RuntimeDto {
     exitedAt: null,
     exitCode: null,
     signal: null,
+    launchError: null,
     attachedClients: 0,
   };
 }

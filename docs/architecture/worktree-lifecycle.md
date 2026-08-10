@@ -31,7 +31,7 @@ An exact, clean, unlocked worktree uses safe removal. Any mismatch, dirt, or loc
 
 ## Removal execution
 
-The shared lifecycle coordinator claims `ready → removing` before stopping runtimes. Pi and shell startup leases remain held through path verification and PTY spawn, and removal cannot claim the worktree while either kind is starting. After removal is claimed, no new runtime may start. Both the Pi process group and the shell PTY session are disposed before filesystem mutation. Recoverable `error` records may also enter `removing` through the explicitly confirmed force path. Once filesystem mutation starts, client cancellation no longer aborts cleanup; the durable operation journal is finalized immediately or by reconciliation.
+The shared lifecycle coordinator atomically claims `ready → removing` before stopping runtimes. That transition blocks every new Pi or shell start. Existing background launch operations are then aborted and awaited, preventing a late PTY spawn or running transition, before both terminal kinds are disposed and filesystem mutation begins. Recoverable `error` records may also enter `removing` through the explicitly confirmed force path. Once filesystem mutation starts, client cancellation no longer aborts cleanup; the durable operation journal is finalized immediately or by reconciliation.
 
 For a worktree still proven to belong to the recorded Git common directory, Pi Dash delegates deletion and metadata cleanup to Git:
 

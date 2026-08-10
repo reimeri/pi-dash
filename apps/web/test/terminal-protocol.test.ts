@@ -3,6 +3,7 @@ import {
   ALT_ENTER_SEQUENCE,
   SHIFT_ENTER_SEQUENCE,
   isTerminalServerFrame,
+  shouldApplyTerminalStartResponse,
   splitBinaryInput,
   splitUtf8Input,
   translateTerminalKey,
@@ -88,10 +89,43 @@ describe("terminal browser protocol", () => {
     expect(splitBinaryInput(binary, 127).join("")).toBe(binary);
   });
 
+  it("does not let a delayed starting response replace a newer socket state", () => {
+    const starting = {
+      worktreeId: "11111111-1111-4111-8111-111111111111",
+      runtimeId: "22222222-2222-4222-8222-222222222222",
+      state: "starting",
+      startedAt: null,
+      exitedAt: null,
+      exitCode: null,
+      signal: null,
+      launchError: null,
+      attachedClients: 0,
+    } as const;
+    const running = {
+      ...starting,
+      state: "running",
+      startedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+
+    expect(shouldApplyTerminalStartResponse(running, starting, false)).toBe(
+      false,
+    );
+    expect(shouldApplyTerminalStartResponse(starting, running, false)).toBe(
+      true,
+    );
+    expect(
+      shouldApplyTerminalStartResponse(
+        { ...running, runtimeId: "33333333-3333-4333-8333-333333333333" },
+        starting,
+        true,
+      ),
+    ).toBe(false);
+  });
+
   it("rejects malformed daemon frames", () => {
     expect(
       isTerminalServerFrame({
-        v: 1,
+        v: 2,
         type: "output",
         seq: 1,
         data: "hello",
@@ -99,10 +133,38 @@ describe("terminal browser protocol", () => {
       }),
     ).toBe(true);
     expect(
-      isTerminalServerFrame({ v: 1, type: "output", seq: 1, data: "hello" }),
+      isTerminalServerFrame({ v: 2, type: "output", seq: 1, data: "hello" }),
     ).toBe(false);
-    expect(isTerminalServerFrame({ v: 2, type: "pong", nonce: "n" })).toBe(
+    expect(isTerminalServerFrame({ v: 1, type: "pong", nonce: "n" })).toBe(
       false,
     );
+    const validRuntimeFrame = {
+      v: 2,
+      type: "runtime",
+      runtime: {
+        worktreeId: "11111111-1111-4111-8111-111111111111",
+        runtimeId: "22222222-2222-4222-8222-222222222222",
+        state: "crashed",
+        startedAt: null,
+        exitedAt: "2026-01-01T00:00:00.000Z",
+        exitCode: null,
+        signal: null,
+        launchError: { code: "PTY_START_FAILED", message: "Launch failed" },
+        attachedClients: 1,
+      },
+    } as const;
+    expect(isTerminalServerFrame(validRuntimeFrame)).toBe(true);
+    expect(
+      isTerminalServerFrame({
+        ...validRuntimeFrame,
+        runtime: { ...validRuntimeFrame.runtime, worktreeId: "invalid" },
+      }),
+    ).toBe(false);
+    expect(
+      isTerminalServerFrame({
+        ...validRuntimeFrame,
+        runtime: { ...validRuntimeFrame.runtime, unexpected: true },
+      }),
+    ).toBe(false);
   });
 });

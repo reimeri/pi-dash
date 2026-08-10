@@ -1,10 +1,10 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { WorkspaceSchema } from "./workspaces.js";
-import { ShellActivitySchema } from "./terminal.js";
+import { RuntimeSchema, ShellActivitySchema } from "./terminal.js";
 
 export const STATUS_PROTOCOL_VERSION = 1 as const;
 export const STATUS_MAX_FRAME_BYTES = 16 * 1024;
-export const APPLICATION_EVENTS_PROTOCOL_VERSION = 7 as const;
+export const APPLICATION_EVENTS_PROTOCOL_VERSION = 8 as const;
 
 const UuidSchema = Type.String({
   pattern:
@@ -187,27 +187,7 @@ export const ApplicationEventsServerFrameSchema = Type.Union([
       type: Type.Literal("snapshot"),
       cursor: Type.Integer({ minimum: 0 }),
       statuses: Type.Array(WorkflowStatusSchema),
-      runtimes: Type.Array(
-        Type.Object(
-          {
-            worktreeId: UuidSchema,
-            runtimeId: Type.Union([UuidSchema, Type.Null()]),
-            state: Type.Union([
-              Type.Literal("stopped"),
-              Type.Literal("starting"),
-              Type.Literal("running"),
-              Type.Literal("stopping"),
-              Type.Literal("crashed"),
-            ]),
-            startedAt: Type.Union([TimestampSchema, Type.Null()]),
-            exitedAt: Type.Union([TimestampSchema, Type.Null()]),
-            exitCode: Type.Union([Type.Integer(), Type.Null()]),
-            signal: Type.Union([Type.Integer(), Type.Null()]),
-            attachedClients: Type.Integer({ minimum: 0 }),
-          },
-          { additionalProperties: false },
-        ),
-      ),
+      runtimes: Type.Array(RuntimeSchema),
       shellActivities: Type.Array(ShellActivitySchema),
       workspaceAttention: Type.Array(WorkspaceAttentionSchema),
       environmentChanges: Type.Array(WorkspaceEnvironmentChangeSchema),
@@ -277,25 +257,7 @@ export const ApplicationEventsServerFrameSchema = Type.Union([
       v: Type.Literal(APPLICATION_EVENTS_PROTOCOL_VERSION),
       type: Type.Literal("runtime"),
       cursor: Type.Integer({ minimum: 1 }),
-      runtime: Type.Object(
-        {
-          worktreeId: UuidSchema,
-          runtimeId: Type.Union([UuidSchema, Type.Null()]),
-          state: Type.Union([
-            Type.Literal("stopped"),
-            Type.Literal("starting"),
-            Type.Literal("running"),
-            Type.Literal("stopping"),
-            Type.Literal("crashed"),
-          ]),
-          startedAt: Type.Union([TimestampSchema, Type.Null()]),
-          exitedAt: Type.Union([TimestampSchema, Type.Null()]),
-          exitCode: Type.Union([Type.Integer(), Type.Null()]),
-          signal: Type.Union([Type.Integer(), Type.Null()]),
-          attachedClients: Type.Integer({ minimum: 0 }),
-        },
-        { additionalProperties: false },
-      ),
+      runtime: RuntimeSchema,
     },
     { additionalProperties: false },
   ),

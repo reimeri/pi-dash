@@ -4,6 +4,7 @@ import type {
   ApiErrorCode,
   RestartRuntimeResponse,
   RuntimeDto,
+  RuntimeLaunchError,
   ShellActivityDto,
 } from "@pi-dash/contracts";
 import { PiResolutionError } from "../pi/pi-resolver.js";
@@ -32,17 +33,24 @@ interface RestartOperation {
   promise: Promise<RestartRuntimeResponse>;
 }
 
+interface LaunchOperation {
+  runtimeId: string;
+  controller: AbortController;
+  promise: Promise<void>;
+}
+
 export interface TerminalLaunchContext {
   worktreeId: string;
   runtimeId: string;
   statusToken: string;
+  signal: AbortSignal;
 }
 
 export interface TerminalManagerOptions {
   runtimeKind: "pi" | "shell";
   lifecycle: WorktreeLifecycleCoordinator;
   getWorktree(id: string): { id: string };
-  verifyWorktree(id: string): Promise<{ id: string }>;
+  verifyWorktree(id: string, signal: AbortSignal): Promise<{ id: string }>;
   resolveLaunch(context: TerminalLaunchContext): Promise<TerminalLaunchSpec>;
   processScope?: ProcessScope;
   initialCols: number;
@@ -69,6 +77,7 @@ function stoppedRuntime(worktreeId: string): RuntimeDto {
     exitedAt: null,
     exitCode: null,
     signal: null,
+    launchError: null,
     attachedClients: 0,
   };
 }
@@ -79,6 +88,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
   const runtimes = new Map<string, TerminalRuntime>();
   const shellActivities = new Map<string, ShellActivityDto>();
   const locks = new Map<string, Promise<void>>();
+  const launches = new Map<string, LaunchOperation>();
   const restartOperations = new Map<string, RestartOperation>();
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | undefined;
@@ -104,7 +114,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
   }
 
   function runtimeDto(worktreeId: string): RuntimeDto {
-    return { ...(runtimes.get(worktreeId)?.dto ?? stoppedRuntime(worktreeId)) };
+    return runtimes.get(worktreeId)?.snapshot ?? stoppedRuntime(worktreeId);
   }
 
   function publishShellActivity(activity: ShellActivityDto): void {
@@ -116,7 +126,77 @@ export function createTerminalManager(options: TerminalManagerOptions) {
     }
   }
 
-  async function startLocked(worktreeId: string): Promise<RuntimeDto> {
+  function sanitizeLaunchError(error: unknown): RuntimeLaunchError {
+    if (error instanceof TerminalManagerError) {
+      return { code: error.code, message: error.message };
+    }
+    if (error instanceof PiResolutionError) {
+      return { code: error.code, message: error.message };
+    }
+    if (error instanceof WorktreeServiceError) {
+      return { code: error.code, message: error.message };
+    }
+    return {
+      code: "PTY_START_FAILED",
+      message: `${options.runtimeKind === "pi" ? "Pi" : "The shell"} could not be started in the managed worktree`,
+    };
+  }
+
+  async function launchRuntime(
+    worktreeId: string,
+    claimedPath: string,
+    runtime: TerminalRuntime,
+    statusToken: string,
+    operation: LaunchOperation,
+  ): Promise<void> {
+    const { signal } = operation.controller;
+    try {
+      const [canonicalPath, metadata, launch] = await Promise.all([
+        realpath(claimedPath),
+        stat(claimedPath),
+        options.resolveLaunch({
+          worktreeId,
+          runtimeId: operation.runtimeId,
+          statusToken,
+          signal,
+        }),
+        options.verifyWorktree(worktreeId, signal),
+      ]);
+      signal.throwIfAborted();
+      if (canonicalPath !== claimedPath || !metadata.isDirectory()) {
+        throw new TerminalManagerError(
+          409,
+          "WORKTREE_UNHEALTHY",
+          "The managed worktree path is no longer an exact directory",
+        );
+      }
+      await runtime.start(launch, signal);
+    } catch (error) {
+      if (signal.aborted) {
+        try {
+          await runtime.stop();
+        } catch {
+          // The operation that requested cancellation reports cleanup failure.
+        }
+        return;
+      }
+      try {
+        await runtime.failStart(sanitizeLaunchError(error));
+      } catch {
+        // The retained sanitized launch error remains authoritative.
+      }
+    } finally {
+      if (launches.get(worktreeId) === operation) {
+        launches.delete(worktreeId);
+      }
+    }
+  }
+
+  async function startLocked(
+    worktreeId: string,
+    signal?: AbortSignal,
+  ): Promise<RuntimeDto> {
+    signal?.throwIfAborted();
     if (shuttingDown) {
       throw new TerminalManagerError(
         503,
@@ -132,12 +212,18 @@ export function createTerminalManager(options: TerminalManagerOptions) {
         "The managed worktree is not ready for a terminal runtime",
       );
     }
-    const existing = runtimes.get(worktreeId);
+    let existing = runtimes.get(worktreeId);
     if (
       existing?.dto.state === "running" ||
       existing?.dto.state === "starting"
     ) {
-      return { ...existing.dto };
+      return existing.snapshot;
+    }
+    const priorLaunch = launches.get(worktreeId);
+    if (priorLaunch) {
+      await priorLaunch.promise;
+      signal?.throwIfAborted();
+      existing = runtimes.get(worktreeId);
     }
     if (existing) {
       try {
@@ -149,8 +235,10 @@ export function createTerminalManager(options: TerminalManagerOptions) {
           "The prior terminal process tree could not be stopped safely",
         );
       }
+      signal?.throwIfAborted();
     }
 
+    signal?.throwIfAborted();
     const claimed = options.lifecycle.claimTerminalStart(worktreeId);
     if (!claimed) {
       throw new TerminalManagerError(
@@ -160,8 +248,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
       );
     }
 
-    let runtime: TerminalRuntime | undefined;
-    try {
+    {
       if (claimed.health !== "healthy") {
         throw new TerminalManagerError(
           409,
@@ -171,7 +258,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
       }
       const runtimeId = createId();
       const statusToken = randomBytes(32).toString("base64url");
-      runtime = new TerminalRuntime({
+      const runtime = new TerminalRuntime({
         worktreeId,
         runtimeId,
         cwd: claimed.path,
@@ -208,53 +295,25 @@ export function createTerminalManager(options: TerminalManagerOptions) {
         // Workflow status is fail-open and must not prevent Pi startup.
       }
       try {
-        options.onRuntimeState?.({ ...runtime.dto });
+        options.onRuntimeState?.(runtime.snapshot);
       } catch {
         // Application event fan-out is independent from terminal startup.
       }
 
-      try {
-        const [canonicalPath, metadata, launch] = await Promise.all([
-          realpath(claimed.path),
-          stat(claimed.path),
-          options.resolveLaunch({ worktreeId, runtimeId, statusToken }),
-          options.verifyWorktree(worktreeId),
-        ]);
-        if (canonicalPath !== claimed.path || !metadata.isDirectory()) {
-          throw new TerminalManagerError(
-            409,
-            "WORKTREE_UNHEALTHY",
-            "The managed worktree path is no longer an exact directory",
-          );
-        }
-        await runtime.start(launch);
-        return { ...runtime.dto };
-      } catch (error) {
-        try {
-          await runtime.stop();
-        } catch {
-          // Preserve the original sanitized startup failure.
-        }
-        runtime.failStart();
-        if (error instanceof TerminalManagerError) throw error;
-        if (error instanceof PiResolutionError) {
-          throw new TerminalManagerError(503, error.code, error.message);
-        }
-        if (error instanceof WorktreeServiceError) {
-          throw new TerminalManagerError(
-            error.statusCode,
-            error.code,
-            error.message,
-          );
-        }
-        throw new TerminalManagerError(
-          503,
-          "PTY_START_FAILED",
-          `${options.runtimeKind === "pi" ? "Pi" : "The shell"} could not be started in the managed worktree`,
-        );
-      }
-    } finally {
-      options.lifecycle.releaseTerminalStart(worktreeId);
+      const operation: LaunchOperation = {
+        runtimeId,
+        controller: new AbortController(),
+        promise: Promise.resolve(),
+      };
+      launches.set(worktreeId, operation);
+      operation.promise = launchRuntime(
+        worktreeId,
+        claimed.path,
+        runtime,
+        statusToken,
+        operation,
+      );
+      return runtime.snapshot;
     }
   }
 
@@ -262,6 +321,9 @@ export function createTerminalManager(options: TerminalManagerOptions) {
     options.getWorktree(worktreeId);
     const runtime = runtimes.get(worktreeId);
     if (!runtime) return stoppedRuntime(worktreeId);
+    const launch = launches.get(worktreeId);
+    launch?.controller.abort();
+    if (launch) await launch.promise;
     try {
       await runtime.stop();
     } catch {
@@ -271,7 +333,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
         "The owned terminal process tree could not be stopped safely",
       );
     }
-    return { ...runtime.dto };
+    return runtime.snapshot;
   }
 
   return {
@@ -340,17 +402,22 @@ export function createTerminalManager(options: TerminalManagerOptions) {
       connectionId: string,
       afterSeq: number,
       socket: TerminalSocketTransport,
-    ): () => void {
-      options.getWorktree(worktreeId);
-      const runtime = runtimes.get(worktreeId);
-      if (!runtime) {
-        throw new TerminalManagerError(
-          409,
-          "WORKTREE_NOT_READY",
-          "Start the terminal runtime before attaching",
-        );
-      }
-      return runtime.attach(connectionId, afterSeq, socket);
+      signal?: AbortSignal,
+    ): Promise<() => void> {
+      return exclusive(worktreeId, async () => {
+        signal?.throwIfAborted();
+        await startLocked(worktreeId, signal);
+        signal?.throwIfAborted();
+        const runtime = runtimes.get(worktreeId);
+        if (!runtime) {
+          throw new TerminalManagerError(
+            503,
+            "PTY_START_FAILED",
+            "The terminal runtime could not be reserved",
+          );
+        }
+        return runtime.attach(connectionId, afterSeq, socket);
+      });
     },
 
     input(
@@ -431,7 +498,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
     },
 
     runtimes(): RuntimeDto[] {
-      return [...runtimes.values()].map((runtime) => ({ ...runtime.dto }));
+      return [...runtimes.values()].map((runtime) => runtime.snapshot);
     },
 
     diagnostics() {

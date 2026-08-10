@@ -40,6 +40,7 @@ const runtime: RuntimeDto = {
   exitedAt: null,
   exitCode: null,
   signal: null,
+  launchError: null,
   attachedClients: 0,
 };
 
@@ -83,7 +84,7 @@ describe("application event stream", () => {
       "workspaceEnvironmentChanged",
       "worktreeRemoved",
     ]);
-    expect(received.map((frame) => frame.v)).toEqual([7, 7, 7, 7, 7, 7, 7, 7]);
+    expect(received.map((frame) => frame.v)).toEqual([8, 8, 8, 8, 8, 8, 8, 8]);
     expect(received.map((frame) => "cursor" in frame && frame.cursor)).toEqual([
       0, 1, 2, 3, 4, 5, 6, 7,
     ]);
