@@ -26,6 +26,10 @@
   import { showTerminalCopyError } from "./copy-error-toast.js";
   import { loadFitAddon, loadUnicode11Addon } from "./module-loaders.js";
   import {
+    terminalStartupStatus,
+    type TerminalInterfaceState,
+  } from "./startup-status.js";
+  import {
     encodeBinaryInput,
     isTerminalServerFrame,
     shouldApplyTerminalStartResponse,
@@ -58,6 +62,7 @@
   let disposed = false;
   let intentionalClose = false;
   let connection: "connecting" | "connected" | "disconnected" = "connecting";
+  let interfaceState: TerminalInterfaceState = "loading";
   let runtime: RuntimeDto | undefined;
   let runtimeId: string | undefined;
   let socketRuntimeRevision = 0;
@@ -90,6 +95,17 @@
       selectionBackground: "#3f3f46",
     },
   };
+
+  $: startupStatus = terminalStartupStatus({
+    kind,
+    enabled:
+      worktree.lifecycle === "ready" &&
+      worktree.health === "healthy" &&
+      !errorMessage,
+    interfaceState,
+    socketState: connection,
+    runtimeState: runtime?.state,
+  });
 
   $: if (visible) {
     onControlsChange(worktree.id, {
@@ -516,11 +532,14 @@
       loadedTerminal.unicode.activeVersion = "11";
       resizeObserver = new ResizeObserver(() => scheduleFit());
       resizeObserver.observe(host);
+      interfaceState = "fonts";
       await document.fonts?.ready;
       scheduleFit();
       flushOutput();
+      interfaceState = "ready";
       if (visible) loadedTerminal.focus();
     } catch (error) {
+      interfaceState = "error";
       errorMessage = `Terminal initialization failed: ${error instanceof Error ? error.message : String(error)}`;
     }
   }
@@ -606,11 +625,18 @@
         ? "Pi terminal emulator"
         : "Shell terminal emulator"}
     />
-    {#if (runtime?.state ?? "starting") === "starting"}
-      <div class="pointer-events-none absolute right-3 top-3">
-        <Badge variant="secondary" role="status" aria-live="polite">
-          <Spinner data-icon="inline-start" />
-          Starting {kind === "pi" ? "Pi" : "shell"}…
+    {#if startupStatus}
+      <div
+        class="pointer-events-none absolute inset-0 flex items-center justify-center"
+      >
+        <Badge
+          variant="secondary"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <Spinner data-icon="inline-start" aria-hidden="true" />
+          {startupStatus.label} · {startupStatus.detail}…
         </Badge>
       </div>
     {/if}

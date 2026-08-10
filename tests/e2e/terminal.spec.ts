@@ -106,6 +106,10 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
 }) => {
   const pageErrors: string[] = [];
   const terminalClientFrames: Array<Record<string, unknown>> = [];
+  let releaseTerminalSocket: (() => void) | undefined;
+  const terminalSocketGate = new Promise<void>((resolveGate) => {
+    releaseTerminalSocket = resolveGate;
+  });
   page.on("pageerror", (error) =>
     pageErrors.push(error.stack ?? error.message),
   );
@@ -125,6 +129,7 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     await expect
       .poll(async () => (await screen.boundingBox())?.width ?? 0)
       .toBeGreaterThan(800);
+    await terminalSocketGate;
     socketRoute.connectToServer();
   });
   await page.goto(bootstrapUrl);
@@ -196,6 +201,31 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     await page.getByRole("button", { name: "Expand Terminal E2E" }).click();
     await expect(workspaceActivity).toHaveCount(0);
   }
+  const startupStatus = terminal.getByRole("status");
+  await expect(startupStatus).toContainText(
+    "Opening Pi terminal · Connecting to terminal…",
+  );
+  const [startupStatusBox, startupTerminalBox] = await Promise.all([
+    startupStatus.boundingBox(),
+    terminal.boundingBox(),
+  ]);
+  expect(startupStatusBox).not.toBeNull();
+  expect(startupTerminalBox).not.toBeNull();
+  expect(
+    Math.abs(
+      startupStatusBox!.x +
+        startupStatusBox!.width / 2 -
+        (startupTerminalBox!.x + startupTerminalBox!.width / 2),
+    ),
+  ).toBeLessThanOrEqual(2);
+  expect(
+    Math.abs(
+      startupStatusBox!.y +
+        startupStatusBox!.height / 2 -
+        (startupTerminalBox!.y + startupTerminalBox!.height / 2),
+    ),
+  ).toBeLessThanOrEqual(2);
+  releaseTerminalSocket?.();
   await expect(terminal).toContainText("FAKE_PI_READY");
   const workflowIndicator = sidebarWorktree.getByRole("img");
   await expect(workflowIndicator).toHaveAccessibleName(
