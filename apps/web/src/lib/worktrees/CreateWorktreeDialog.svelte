@@ -4,16 +4,22 @@
     WorkspaceDto,
     WorktreeDto,
   } from "@pi-dash/contracts";
-  import { Edit02Icon } from "@hugeicons/core-free-icons";
+  import {
+    Edit02Icon,
+    Tick02Icon,
+    UnfoldMoreIcon,
+  } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
   import { afterUpdate, onMount, tick } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { Button } from "$lib/components/ui/button";
+  import * as Command from "$lib/components/ui/command";
   import * as Dialog from "$lib/components/ui/dialog";
   import * as Field from "$lib/components/ui/field";
   import { Input } from "$lib/components/ui/input";
-  import * as NativeSelect from "$lib/components/ui/native-select";
+  import * as Popover from "$lib/components/ui/popover";
   import { Spinner } from "$lib/components/ui/spinner";
+  import { cn } from "$lib/utils";
   import { ApiClientError, api } from "../../api.js";
   import WorkspaceSyncNotice from "../workspaces/WorkspaceSyncNotice.svelte";
 
@@ -37,11 +43,30 @@
   let nameInput: HTMLInputElement | null = null;
   let slugInput: HTMLInputElement | null = null;
   let returnFocus: HTMLElement | null = null;
+  let baseOpen = false;
+  let baseTrigger: HTMLButtonElement | null = null;
   let loadedHeadCommit = workspace.repository.headCommit;
   $: selected = refs.find(
     (ref) => `${ref.fullName}:${ref.commit}` === selectedKey,
   );
+  $: selectedLabel = selected
+    ? `${selected.kind === "tag" ? "tag: " : ""}${selected.name}`
+    : "";
   $: branch = slug ? `pi-dash/${slug}` : "pi-dash/…";
+
+  function refKey(ref: GitRefDto): string {
+    return `${ref.fullName}:${ref.commit}`;
+  }
+
+  function refLabel(ref: GitRefDto): string {
+    return `${ref.kind === "tag" ? "tag: " : ""}${ref.name}`;
+  }
+
+  function selectBase(ref: GitRefDto): void {
+    selectedKey = refKey(ref);
+    baseOpen = false;
+    void tick().then(() => baseTrigger?.focus());
+  }
 
   afterUpdate(() => {
     const headCommit = workspace.repository.headCommit;
@@ -219,20 +244,72 @@
             data-disabled={saving || refs.length === 0 ? "" : undefined}
           >
             <Field.Label for="worktree-base">Base</Field.Label>
-            <NativeSelect.Root
-              id="worktree-base"
-              bind:value={selectedKey}
-              disabled={saving || refs.length === 0}
-            >
-              {#each refs as ref (`${ref.fullName}:${ref.commit}`)}
-                <NativeSelect.Option value={`${ref.fullName}:${ref.commit}`}>
-                  {ref.kind === "tag" ? "tag: " : ""}{ref.name} — {ref.commit.slice(
-                    0,
-                    12,
-                  )}
-                </NativeSelect.Option>
-              {/each}
-            </NativeSelect.Root>
+            <Popover.Root bind:open={baseOpen}>
+              <Popover.Trigger bind:ref={baseTrigger}>
+                {#snippet child({ props })}
+                  <Button
+                    {...props}
+                    id="worktree-base"
+                    variant="outline"
+                    class="w-full justify-between font-normal"
+                    role="combobox"
+                    aria-expanded={baseOpen}
+                    disabled={saving || refs.length === 0}
+                  >
+                    {#if selected}
+                      <span class="min-w-0 truncate">{selectedLabel}</span>
+                      <span class="text-xs text-muted-foreground">
+                        {selected.commit.slice(0, 12)}
+                      </span>
+                    {:else}
+                      <span class="text-muted-foreground">Select base…</span>
+                    {/if}
+                    <HugeiconsIcon
+                      icon={UnfoldMoreIcon}
+                      strokeWidth={2}
+                      class="opacity-50"
+                      aria-hidden
+                    />
+                  </Button>
+                {/snippet}
+              </Popover.Trigger>
+              <Popover.Content
+                align="start"
+                class="w-(--bits-popover-anchor-width) p-0"
+              >
+                <Command.Root>
+                  <Command.Input
+                    autofocus
+                    placeholder="Search branch or tag…"
+                  />
+                  <Command.List>
+                    <Command.Empty>No matching refs.</Command.Empty>
+                    <Command.Group>
+                      {#each refs as ref (refKey(ref))}
+                        <Command.Item
+                          value={`${ref.name} ${ref.commit}`}
+                          keywords={[ref.fullName, ref.kind]}
+                          onSelect={() => selectBase(ref)}
+                        >
+                          <HugeiconsIcon
+                            icon={Tick02Icon}
+                            strokeWidth={2}
+                            class={cn(
+                              selectedKey !== refKey(ref) && "text-transparent",
+                            )}
+                            aria-hidden
+                          />
+                          <span class="truncate">{refLabel(ref)}</span>
+                          <span class="ml-auto text-xs text-muted-foreground">
+                            {ref.commit.slice(0, 12)}
+                          </span>
+                        </Command.Item>
+                      {/each}
+                    </Command.Group>
+                  </Command.List>
+                </Command.Root>
+              </Popover.Content>
+            </Popover.Root>
           </Field.Field>
         </Field.Group>
 
