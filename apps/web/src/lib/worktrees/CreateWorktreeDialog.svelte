@@ -39,6 +39,7 @@
   let slugInput: HTMLInputElement | null = null;
   let returnFocus: HTMLElement | null = null;
   let baseOpen = false;
+  let baseValue = "";
   let baseTrigger: HTMLButtonElement | null = null;
   let loadedHeadCommit = workspace.repository.headCommit;
   $: selected = refs.find(
@@ -57,11 +58,17 @@
     return `${ref.kind === "tag" ? "tag: " : ""}${ref.name}`;
   }
 
+  function refValue(ref: GitRefDto): string {
+    return `${ref.name} ${ref.commit}`;
+  }
+
   function selectBase(ref: GitRefDto): void {
     selectedKey = refKey(ref);
     baseOpen = false;
     void tick().then(() => baseTrigger?.focus());
   }
+
+  $: if (baseOpen && selected) baseValue = refValue(selected);
 
   afterUpdate(() => {
     const headCommit = workspace.repository.headCommit;
@@ -269,7 +276,7 @@
                 align="start"
                 class="w-(--bits-popover-anchor-width) p-0"
               >
-                <Command.Root>
+                <Command.Root bind:value={baseValue}>
                   <Command.Input
                     autofocus
                     placeholder="Search branch or tag…"
@@ -279,7 +286,7 @@
                     <Command.Group>
                       {#each refs as ref (refKey(ref))}
                         <Command.Item
-                          value={`${ref.name} ${ref.commit}`}
+                          value={refValue(ref)}
                           keywords={[ref.fullName, ref.kind]}
                           onSelect={() => selectBase(ref)}
                         >
