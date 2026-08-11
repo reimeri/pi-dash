@@ -4,11 +4,7 @@
     WorkspaceDto,
     WorktreeDto,
   } from "@pi-dash/contracts";
-  import {
-    Edit02Icon,
-    Tick02Icon,
-    UnfoldMoreIcon,
-  } from "@hugeicons/core-free-icons";
+  import { Edit02Icon, UnfoldMoreIcon } from "@hugeicons/core-free-icons";
   import { HugeiconsIcon } from "@hugeicons/svelte";
   import { afterUpdate, onMount, tick } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
@@ -19,7 +15,6 @@
   import { Input } from "$lib/components/ui/input";
   import * as Popover from "$lib/components/ui/popover";
   import { Spinner } from "$lib/components/ui/spinner";
-  import { cn } from "$lib/utils";
   import { ApiClientError, api } from "../../api.js";
   import WorkspaceSyncNotice from "../workspaces/WorkspaceSyncNotice.svelte";
 
@@ -258,9 +253,6 @@
                   >
                     {#if selected}
                       <span class="min-w-0 truncate">{selectedLabel}</span>
-                      <span class="text-xs text-muted-foreground">
-                        {selected.commit.slice(0, 12)}
-                      </span>
                     {:else}
                       <span class="text-muted-foreground">Select base…</span>
                     {/if}
@@ -291,16 +283,10 @@
                           keywords={[ref.fullName, ref.kind]}
                           onSelect={() => selectBase(ref)}
                         >
-                          <HugeiconsIcon
-                            icon={Tick02Icon}
-                            strokeWidth={2}
-                            class={cn(
-                              selectedKey !== refKey(ref) && "text-transparent",
-                            )}
-                            aria-hidden
-                          />
-                          <span class="truncate">{refLabel(ref)}</span>
-                          <span class="ml-auto text-xs text-muted-foreground">
+                          <span class="min-w-0 flex-1 truncate">
+                            {refLabel(ref)}
+                          </span>
+                          <span class="shrink-0 text-xs text-muted-foreground">
                             {ref.commit.slice(0, 12)}
                           </span>
                         </Command.Item>
