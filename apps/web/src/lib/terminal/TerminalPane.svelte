@@ -122,17 +122,53 @@
     scheduleFit();
   }
 
+  let fitScheduled = false;
+  let fitSettleFrames = 0;
+  let lastFitWidth = -1;
+  let lastFitHeight = -1;
+
+  // Fit until the container size stops changing. A single rAF fit races with
+  // async font loading, in-flight terminal.write callbacks (whose completion
+  // triggers xterm's own reflow), and transient sizes from window show /
+  // sidebar transitions — any of which can leave the grid stuck at stale
+  // dimensions. Re-fitting while the size is still moving makes the terminal
+  // converge on the final layout instead of whichever size it saw first.
   function scheduleFit(): void {
-    requestAnimationFrame(() => {
-      if (
-        !disposed &&
-        visible &&
-        host?.clientWidth > 0 &&
-        host.clientHeight > 0
-      ) {
-        fitAddon?.fit();
-      }
-    });
+    if (fitScheduled || disposed || !visible) return;
+    fitScheduled = true;
+    fitSettleFrames = 0;
+    lastFitWidth = -1;
+    lastFitHeight = -1;
+    requestAnimationFrame(runFit);
+  }
+
+  function runFit(): void {
+    if (disposed) {
+      fitScheduled = false;
+      return;
+    }
+    if (!visible || !host || host.clientWidth <= 0 || host.clientHeight <= 0) {
+      fitScheduled = false;
+      return;
+    }
+    fitAddon?.fit();
+    const width = host.clientWidth;
+    const height = host.clientHeight;
+    if (width === lastFitWidth && height === lastFitHeight) {
+      fitSettleFrames += 1;
+    } else {
+      fitSettleFrames = 0;
+      lastFitWidth = width;
+      lastFitHeight = height;
+    }
+    // Keep re-fitting while the container is still resizing (transitions,
+    // window show), plus a couple of stable frames to absorb font/write
+    // reflows, then stop.
+    if (fitSettleFrames < 3) {
+      requestAnimationFrame(runFit);
+    } else {
+      fitScheduled = false;
+    }
   }
 
   function send(frame: object): boolean {
@@ -216,6 +252,12 @@
       lastAppliedSeq = entry.seq;
       writeActive = false;
       flushOutput();
+      // A completed write batch can change the grid (xterm reflows on resize
+      // after the write); re-fit so the final layout wins over any mid-write
+      // fit. Only when the queue is fully drained — flushOutput() may have
+      // already started the next entry, so a single-entry queue still reads
+      // empty here while a write is active.
+      if (!writeActive && pendingOutput.length === 0) scheduleFit();
     });
   }
 
@@ -530,8 +572,7 @@
       loadedTerminal.loadAddon(fitAddon);
       loadedTerminal.loadAddon(unicodeAddon);
       loadedTerminal.unicode.activeVersion = "11";
-      resizeObserver = new ResizeObserver(() => scheduleFit());
-      resizeObserver.observe(host);
+      observeHostResize();
       interfaceState = "fonts";
       await document.fonts?.ready;
       scheduleFit();
@@ -544,8 +585,23 @@
     }
   }
 
+  function observeHostResize(): void {
+    if (resizeObserver || !host) return;
+    resizeObserver = new ResizeObserver(() => scheduleFit());
+    resizeObserver.observe(host);
+  }
+
+  function handleWindowResize(): void {
+    scheduleFit();
+  }
+
   onMount(() => {
     window.addEventListener("keydown", handleHostKeydown, { capture: true });
+    // Observe from mount (before xterm finishes loading) so resizes during
+    // startup — e.g. the OS restoring/resizing the window on show — still
+    // trigger a fit once the FitAddon is ready.
+    observeHostResize();
+    window.addEventListener("resize", handleWindowResize);
     if (worktree.lifecycle === "ready" && worktree.health === "healthy") {
       connectSocket();
       void startRuntime();
@@ -560,6 +616,7 @@
     outputGeneration += 1;
     pendingOutput.length = 0;
     window.removeEventListener("keydown", handleHostKeydown, { capture: true });
+    window.removeEventListener("resize", handleWindowResize);
     if (reconnectTimer) clearTimeout(reconnectTimer);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     reconnectTimer = undefined;
