@@ -100,6 +100,17 @@ export function shouldApplyTerminalStartResponse(
   );
 }
 
+export function shouldReconnectTerminalAfterStart(
+  previousRuntimeId: string | null | undefined,
+  responseRuntimeId: string | null,
+): boolean {
+  return (
+    previousRuntimeId !== undefined &&
+    previousRuntimeId !== null &&
+    responseRuntimeId !== previousRuntimeId
+  );
+}
+
 export function isTerminalServerFrame(
   value: unknown,
 ): value is TerminalServerFrame {

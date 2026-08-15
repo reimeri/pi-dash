@@ -21,6 +21,7 @@
   import { Button } from "$lib/components/ui/button";
   import { Spinner } from "$lib/components/ui/spinner";
   import { writeClipboardText } from "$lib/clipboard.js";
+  import { CLIENT_RECONNECT_CLOSE_CODE } from "$lib/websocket-close-codes.js";
   import { api } from "../../api.js";
   import type { TerminalControlsChange } from "./controls.js";
   import { showTerminalCopyError } from "./copy-error-toast.js";
@@ -34,6 +35,7 @@
     encodeBinaryInput,
     isTerminalServerFrame,
     shouldApplyTerminalStartResponse,
+    shouldReconnectTerminalAfterStart,
     splitBinaryInput,
     splitUtf8Input,
     translateTerminalKey,
@@ -236,7 +238,7 @@
     if (seq <= lastReceivedSeq) return;
     if (seq !== lastReceivedSeq + 1) {
       errorMessage = `Terminal output sequence gap at ${seq}; reconnecting.`;
-      socket?.close(1013, "Output sequence gap");
+      socket?.close(CLIENT_RECONNECT_CLOSE_CODE, "Output sequence gap");
       return;
     }
     const bytes = encoder.encode(data).byteLength;
@@ -249,7 +251,7 @@
       pendingOutput.length = 0;
       pendingBytes = activeBytes;
       lastReceivedSeq = lastAppliedSeq;
-      socket?.close(1013, "Renderer backlog exceeded");
+      socket?.close(CLIENT_RECONNECT_CLOSE_CODE, "Renderer backlog exceeded");
       return;
     }
     flushOutput();
@@ -319,6 +321,7 @@
       }, 20_000);
     });
     candidate.addEventListener("message", (event) => {
+      if (socket !== candidate) return;
       let value: unknown;
       try {
         value = JSON.parse(String(event.data));
@@ -358,14 +361,16 @@
       }
     });
     candidate.addEventListener("error", () => {
+      if (socket !== candidate) return;
       connection = "disconnected";
     });
   }
 
   function reconnectSocket(): void {
     intentionalClose = true;
-    socket?.close(1012, "Runtime changed");
+    const previousSocket = socket;
     socket = undefined;
+    previousSocket?.close(CLIENT_RECONNECT_CLOSE_CODE, "Runtime changed");
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     heartbeatTimer = undefined;
     if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -396,19 +401,18 @@
       ) {
         applyRuntime(response.runtime);
       }
-      if (!socketStateChanged) {
-        if (
-          previousRuntimeId &&
-          response.runtime.runtimeId !== previousRuntimeId
-        ) {
-          runtimeId = undefined;
-          lastReceivedSeq = 0;
-          lastAppliedSeq = 0;
-          reconnectSocket();
-        } else {
-          runtimeId = response.runtime.runtimeId ?? undefined;
-          connectSocket();
-        }
+      if (
+        shouldReconnectTerminalAfterStart(
+          previousRuntimeId,
+          response.runtime.runtimeId,
+        )
+      ) {
+        runtimeId = undefined;
+        resetOutput(0);
+        reconnectSocket();
+      } else if (!socketStateChanged) {
+        runtimeId = response.runtime.runtimeId ?? undefined;
+        connectSocket();
       }
     } catch (error) {
       errorMessage =
@@ -472,8 +476,7 @@
       );
       restartKey = undefined;
       runtimeId = undefined;
-      lastReceivedSeq = 0;
-      lastAppliedSeq = 0;
+      resetOutput(0);
       reconnectSocket();
     } catch (error) {
       errorMessage =

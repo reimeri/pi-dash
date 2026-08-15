@@ -4,6 +4,7 @@ import {
   SHIFT_ENTER_SEQUENCE,
   isTerminalServerFrame,
   shouldApplyTerminalStartResponse,
+  shouldReconnectTerminalAfterStart,
   splitBinaryInput,
   splitUtf8Input,
   translateTerminalKey,
@@ -118,6 +119,27 @@ describe("terminal browser protocol", () => {
         { ...running, runtimeId: "33333333-3333-4333-8333-333333333333" },
         starting,
         true,
+      ),
+    ).toBe(false);
+  });
+
+  it("reconnects when start replaces the runtime despite socket activity", () => {
+    expect(
+      shouldReconnectTerminalAfterStart(
+        "22222222-2222-4222-8222-222222222222",
+        "33333333-3333-4333-8333-333333333333",
+      ),
+    ).toBe(true);
+    expect(
+      shouldReconnectTerminalAfterStart(
+        "22222222-2222-4222-8222-222222222222",
+        "22222222-2222-4222-8222-222222222222",
+      ),
+    ).toBe(false);
+    expect(
+      shouldReconnectTerminalAfterStart(
+        undefined,
+        "22222222-2222-4222-8222-222222222222",
       ),
     ).toBe(false);
   });

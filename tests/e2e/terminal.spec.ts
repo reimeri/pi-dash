@@ -503,8 +503,10 @@ test("starts, interacts with, reconnects to, stops, and restarts a terminal", as
     .getByRole("button", { name: "Start", exact: true })
     .click();
   await expect(terminalControls).toContainText("running");
+  await expect(terminalControls).toContainText("connected");
   await page.keyboard.press("Escape");
   await expect(terminalControls).not.toBeVisible();
+  await expect(terminal).not.toContainText("echo-terminal");
   await terminal.click();
   await page.keyboard.type("after-restart");
   await expect(terminal).toContainText("after-restart");
