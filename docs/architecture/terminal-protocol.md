@@ -1,6 +1,6 @@
 # Terminal protocol v2
 
-Pi Dash exposes authenticated Pi and shell WebSockets per managed worktree at `/api/v1/worktrees/:id/terminal/socket` and `/api/v1/worktrees/:id/shell-terminal/socket`. Both use the same bounded protocol and independent runtime/output state. The browser must already hold the HttpOnly dashboard session cookie and send an allowed same-origin `Origin`; Host and worktree authorization are checked before attachment. WebSocket compression is disabled and the configured payload limit is enforced by both the upgrade server and frame parser.
+Pi Dash exposes authenticated Pi and shell WebSockets per managed worktree at `/api/v1/worktrees/:id/terminal/socket` and `/api/v1/worktrees/:id/shell-terminal/socket`. Both use the same bounded protocol and independent runtime/output state. The browser must already hold the HttpOnly dashboard session cookie and send an allowed same-origin `Origin`; Host and worktree authorization are checked before attachment. Tailscale sessions additionally require the exact authenticated Serve identity on every upgrade, are channel-bound to the configured public origin, and close when the 12-hour session expires. WebSocket compression is disabled and the configured payload limit is enforced by both the upgrade server and frame parser.
 
 All application frames are JSON text with `v: 2`. Raw WebSocket binary frames are rejected. Binary terminal reports use canonical Base64 in `binaryInput`, preserving every byte without treating it as text.
 

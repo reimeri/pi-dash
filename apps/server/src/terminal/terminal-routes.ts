@@ -170,13 +170,17 @@ export async function registerTerminalRoutes(
       websocket: true,
       schema: { params: WorktreeIdParamsSchema },
       preValidation: async (request) => {
-        if (!options.auth.authenticateUpgrade({ headers: request.headers })) {
+        const session = options.auth.authenticateUpgrade({
+          headers: request.headers,
+        });
+        if (!session) {
           throw new ApiHttpError(
             401,
             "UNAUTHORIZED",
             "Authenticated same-origin WebSocket access is required",
           );
         }
+        request.piDashSession = session;
         try {
           options.worktrees.get(request.params.id);
         } catch (error) {
@@ -185,6 +189,10 @@ export async function registerTerminalRoutes(
       },
     },
     (socket, request) => {
+      const unregisterSocket = options.auth.registerSocket(
+        request.piDashSession!,
+        socket,
+      );
       const worktreeId = request.params.id;
       const connectionId = randomUUID();
       let detach: (() => void) | undefined;
@@ -322,6 +330,7 @@ export async function registerTerminalRoutes(
 
       const cleanup = () => {
         closed = true;
+        unregisterSocket();
         connectionAbort.abort();
         clearTimeout(attachDeadline);
         clearInterval(heartbeat);

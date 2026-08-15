@@ -94,12 +94,20 @@ export async function registerWorkspaceRoutes(
         body: Type.Object({}, { additionalProperties: false }),
         response: {
           200: DirectoryDialogResponseSchema,
+          403: ApiErrorEnvelopeSchema,
           409: ApiErrorEnvelopeSchema,
           503: ApiErrorEnvelopeSchema,
         },
       },
     },
     async (request) => {
+      if (request.piDashSession?.channel === "tailscale") {
+        throw new ApiHttpError(
+          403,
+          ApiErrorCodes.DIALOG_UNAVAILABLE,
+          "Native directory dialogs are unavailable over remote access",
+        );
+      }
       try {
         const result = await withRequestAbort(request, (signal) =>
           options.dialogs.chooseDirectory({ signal }),

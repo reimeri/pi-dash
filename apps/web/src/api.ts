@@ -132,6 +132,15 @@ export const api = {
     csrfToken = session.csrfToken;
     return session;
   },
+  async tailscaleSession(signal?: AbortSignal) {
+    const session = await requestJson(
+      "/auth/tailscale/session",
+      SessionResponseSchema,
+      { method: "POST", body: {}, signal },
+    );
+    csrfToken = session.csrfToken;
+    return session;
+  },
   workspaces: (signal?: AbortSignal) =>
     requestJson("/api/v1/workspaces", WorkspaceListResponseSchema, { signal }),
   chooseWorkspaceDirectory: (signal?: AbortSignal) =>

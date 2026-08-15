@@ -1,4 +1,8 @@
 import { createDaemon } from "./daemon.js";
+import {
+  desktopOwnerFileDescriptor,
+  watchDesktopOwner,
+} from "./desktop-owner.js";
 import { listenAndLaunchDashboard } from "./startup.js";
 
 process.on("uncaughtExceptionMonitor", (error, origin) => {
@@ -7,11 +11,17 @@ process.on("uncaughtExceptionMonitor", (error, origin) => {
 });
 
 async function main(): Promise<void> {
+  const desktopOwner = desktopOwnerFileDescriptor();
   const daemon = await createDaemon();
   let stopping: Promise<void> | undefined;
-  const stop = (signal: NodeJS.Signals): Promise<void> => {
+  let stopWatchingDesktopOwner: (() => void) | undefined;
+  const stop = (
+    reason: NodeJS.Signals | "desktop-owner-closed",
+  ): Promise<void> => {
     if (!stopping) {
-      daemon.app.log.info({ signal }, "Shutting down");
+      stopWatchingDesktopOwner?.();
+      stopWatchingDesktopOwner = undefined;
+      daemon.app.log.info({ reason }, "Shutting down");
       stopping = daemon.shutdown();
     }
     return stopping;
@@ -38,6 +48,17 @@ async function main(): Promise<void> {
       );
     }
   });
+
+  if (desktopOwner !== undefined) {
+    stopWatchingDesktopOwner = watchDesktopOwner(desktopOwner, () => {
+      void stop("desktop-owner-closed").catch((error: unknown) => {
+        process.stderr.write(
+          `pi-dash owner-loss shutdown failed: ${(error as Error).message}\n`,
+        );
+        process.exitCode = 1;
+      });
+    });
+  }
 
   try {
     await listenAndLaunchDashboard(daemon);

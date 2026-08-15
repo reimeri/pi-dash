@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { desktopOwnerFileDescriptor } from "./desktop-owner.js";
 import type { NativeDialogMode } from "./platform/native-directory-dialog.js";
 
 export const LOG_LEVELS = [
@@ -14,6 +15,12 @@ export const LOG_LEVELS = [
   "silent",
 ] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
+
+export interface TailscaleRemoteAccessConfig {
+  provider: "tailscale";
+  origin: string;
+  allowedUsers: readonly string[];
+}
 
 export interface AppConfig {
   host: string;
@@ -36,6 +43,7 @@ export interface AppConfig {
   staticDir?: string;
   bootstrapOutput?: string;
   desktopControlToken?: string;
+  remoteAccess?: TailscaleRemoteAccessConfig;
   openBrowser: boolean;
   mode: "development" | "production" | "test";
 }
@@ -59,8 +67,13 @@ interface ConfigFile {
   uiOrigin?: string;
   staticDir?: string;
   bootstrapOutput?: string;
+  remoteAccess?: TailscaleRemoteAccessConfig;
 }
 type CliValues = Record<string, string>;
+interface ParsedCli {
+  values: CliValues;
+  tailscaleUsers: string[];
+}
 
 const configFileKeys = new Set([
   "host",
@@ -81,6 +94,7 @@ const configFileKeys = new Set([
   "uiOrigin",
   "staticDir",
   "bootstrapOutput",
+  "remoteAccess",
 ]);
 
 const cliNames = new Set([
@@ -103,6 +117,8 @@ const cliNames = new Set([
   "ui-origin",
   "static-dir",
   "bootstrap-output",
+  "tailscale-origin",
+  "tailscale-user",
   "no-open",
 ]);
 
@@ -114,8 +130,9 @@ function expandPath(value: string): string {
   return resolve(value);
 }
 
-function parseCli(args: readonly string[]): CliValues {
+function parseCli(args: readonly string[]): ParsedCli {
   const values: CliValues = {};
+  const tailscaleUsers: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (!argument?.startsWith("--"))
@@ -133,10 +150,11 @@ function parseCli(args: readonly string[]): CliValues {
     if (!value || (inlineValue === undefined && value.startsWith("--"))) {
       throw new Error(`Missing value for --${rawName}`);
     }
-    values[rawName] = value;
+    if (rawName === "tailscale-user") tailscaleUsers.push(value);
+    else values[rawName] = value;
     if (inlineValue === undefined) index += 1;
   }
-  return values;
+  return { values, tailscaleUsers };
 }
 
 function readConfigFile(configDir: string): ConfigFile {
@@ -180,6 +198,38 @@ function readConfigFile(configDir: string): ConfigFile {
           !["auto", "zenity", "kdialog", "disabled"].includes(value)
         ) {
           throw new Error("config nativeDialog is invalid");
+        }
+      } else if (key === "remoteAccess") {
+        if (
+          typeof value !== "object" ||
+          value === null ||
+          Array.isArray(value)
+        ) {
+          throw new Error("config remoteAccess must be an object");
+        }
+        const remote = value as Record<string, unknown>;
+        const keys = Object.keys(remote);
+        if (
+          keys.some(
+            (remoteKey) =>
+              !["provider", "origin", "allowedUsers"].includes(remoteKey),
+          )
+        ) {
+          throw new Error("config remoteAccess has an unknown key");
+        }
+        if (remote.provider !== "tailscale") {
+          throw new Error("config remoteAccess provider must be tailscale");
+        }
+        if (typeof remote.origin !== "string" || !remote.origin) {
+          throw new Error("config remoteAccess origin must be a string");
+        }
+        if (
+          !Array.isArray(remote.allowedUsers) ||
+          remote.allowedUsers.some((user) => typeof user !== "string")
+        ) {
+          throw new Error(
+            "config remoteAccess allowedUsers must be a string array",
+          );
         }
       } else if (typeof value !== "string" || value.length === 0) {
         throw new Error(`config ${key} must be a non-empty string`);
@@ -267,6 +317,87 @@ function parseBooleanEnvironment(
   }
 }
 
+function parseTailscaleUsersEnvironment(value: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("PI_DASH_TAILSCALE_USERS must be a JSON string array");
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.some((user) => typeof user !== "string")
+  ) {
+    throw new Error("PI_DASH_TAILSCALE_USERS must be a JSON string array");
+  }
+  return parsed;
+}
+
+function validateTailscaleRemoteAccess(options: {
+  origin: string | undefined;
+  allowedUsers: readonly string[] | undefined;
+  desktopOwned: boolean;
+}): TailscaleRemoteAccessConfig | undefined {
+  if (options.origin === undefined && options.allowedUsers === undefined) {
+    return undefined;
+  }
+  if (!options.desktopOwned) {
+    throw new Error(
+      "Tailscale remote access is available only through Pi Dash Desktop",
+    );
+  }
+  if (!options.origin || !options.allowedUsers) {
+    throw new Error(
+      "Tailscale remote access requires both origin and allowed users",
+    );
+  }
+  let url: URL;
+  try {
+    url = new URL(options.origin);
+  } catch {
+    throw new Error("Tailscale origin must be an absolute HTTPS URL");
+  }
+  if (
+    url.protocol !== "https:" ||
+    !url.hostname.toLowerCase().endsWith(".ts.net") ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      "Tailscale origin must be a root HTTPS *.ts.net origin on port 443",
+    );
+  }
+  if (options.allowedUsers.length === 0) {
+    throw new Error("Tailscale allowed users must not be empty");
+  }
+  const allowedUsers = [...options.allowedUsers];
+  for (const user of allowedUsers) {
+    if (
+      !user ||
+      user.length > 512 ||
+      user.trim() !== user ||
+      [...user].some((character) => {
+        const codePoint = character.codePointAt(0)!;
+        return codePoint <= 0x1f || codePoint === 0x7f;
+      })
+    ) {
+      throw new Error("Tailscale allowed users must be exact login strings");
+    }
+  }
+  if (new Set(allowedUsers).size !== allowedUsers.length) {
+    throw new Error("Tailscale allowed users must not contain duplicates");
+  }
+  return {
+    provider: "tailscale",
+    origin: url.origin,
+    allowedUsers: Object.freeze(allowedUsers),
+  };
+}
+
 export function defaultConfigDirectory(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
@@ -279,8 +410,10 @@ export function defaultConfigDirectory(
 export function loadConfig(
   args: readonly string[] = process.argv.slice(2),
   env: NodeJS.ProcessEnv = process.env,
+  context: { desktopOwned?: boolean } = {},
 ): AppConfig {
-  const cli = parseCli(args);
+  const parsedCli = parseCli(args);
+  const cli = parsedCli.values;
   const configDir =
     optionalPath(cli["config-dir"] ?? env.PI_DASH_CONFIG_DIR) ??
     defaultConfigDirectory(env);
@@ -314,6 +447,23 @@ export function loadConfig(
       : modeValue === "development"
         ? "development"
         : "production";
+  const remoteOrigin = pick(
+    cli["tailscale-origin"],
+    env.PI_DASH_TAILSCALE_ORIGIN,
+    file.remoteAccess?.origin,
+  );
+  const remoteUsers =
+    parsedCli.tailscaleUsers.length > 0
+      ? parsedCli.tailscaleUsers
+      : env.PI_DASH_TAILSCALE_USERS !== undefined
+        ? parseTailscaleUsersEnvironment(env.PI_DASH_TAILSCALE_USERS)
+        : file.remoteAccess?.allowedUsers;
+  const remoteAccess = validateTailscaleRemoteAccess({
+    origin: remoteOrigin === undefined ? undefined : String(remoteOrigin),
+    allowedUsers: remoteUsers,
+    desktopOwned:
+      context.desktopOwned ?? desktopOwnerFileDescriptor(env) !== undefined,
+  });
   return {
     host,
     port: parsePort(pick(cli.port, env.PI_DASH_PORT, file.port)),
@@ -450,6 +600,7 @@ export function loadConfig(
         );
       return token;
     })(),
+    remoteAccess,
     openBrowser:
       cli["no-open"] !== "true" &&
       !parseBooleanEnvironment("PI_DASH_NO_OPEN", env.PI_DASH_NO_OPEN),

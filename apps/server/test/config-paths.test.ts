@@ -112,6 +112,106 @@ describe("configuration", () => {
       loadConfig(["--config-dir", root, "--host", "0.0.0.0"], {}),
     ).toThrow("Refusing non-loopback");
   });
+
+  it("loads desktop-only Tailscale access with repeatable exact users", () => {
+    const root = temporaryRoot();
+    const config = loadConfig(
+      [
+        "--config-dir",
+        root,
+        "--tailscale-origin",
+        "https://pi-dash-host.example-tailnet.ts.net",
+        "--tailscale-user",
+        "owner@example.com",
+        "--tailscale-user=second@example.com",
+      ],
+      {},
+      { desktopOwned: true },
+    );
+    expect(config.remoteAccess).toEqual({
+      provider: "tailscale",
+      origin: "https://pi-dash-host.example-tailnet.ts.net",
+      allowedUsers: ["owner@example.com", "second@example.com"],
+    });
+  });
+
+  it("applies remote CLI and environment precedence over JSON", () => {
+    const root = temporaryRoot();
+    writeFileSync(
+      join(root, "config.json"),
+      JSON.stringify({
+        remoteAccess: {
+          provider: "tailscale",
+          origin: "https://file.example.ts.net",
+          allowedUsers: ["file@example.com"],
+        },
+      }),
+    );
+    const config = loadConfig(
+      [
+        "--config-dir",
+        root,
+        "--tailscale-origin",
+        "https://cli.example.ts.net",
+      ],
+      { PI_DASH_TAILSCALE_USERS: '["environment@example.com"]' },
+      { desktopOwned: true },
+    );
+    expect(config.remoteAccess).toEqual({
+      provider: "tailscale",
+      origin: "https://cli.example.ts.net",
+      allowedUsers: ["environment@example.com"],
+    });
+  });
+
+  it("rejects standalone, partial, and malformed remote access", () => {
+    const root = temporaryRoot();
+    const args = [
+      "--config-dir",
+      root,
+      "--tailscale-origin",
+      "https://pi-dash-host.example-tailnet.ts.net",
+      "--tailscale-user",
+      "owner@example.com",
+    ];
+    expect(() => loadConfig(args, {})).toThrow(
+      "available only through Pi Dash Desktop",
+    );
+    expect(() => loadConfig(args, { PI_DASH_DESKTOP: "true" })).toThrow(
+      "available only through Pi Dash Desktop",
+    );
+    expect(() =>
+      loadConfig(args.slice(0, 4), {}, { desktopOwned: true }),
+    ).toThrow("requires both origin and allowed users");
+    expect(() =>
+      loadConfig(
+        [
+          "--config-dir",
+          root,
+          "--tailscale-origin",
+          "https://example.com",
+          "--tailscale-user",
+          "owner@example.com",
+        ],
+        {},
+        { desktopOwned: true },
+      ),
+    ).toThrow("root HTTPS *.ts.net origin");
+    expect(() =>
+      loadConfig(
+        args,
+        { PI_DASH_TAILSCALE_USERS: "not-json" },
+        { desktopOwned: true },
+      ),
+    ).not.toThrow();
+    expect(() =>
+      loadConfig(
+        ["--config-dir", root, "--tailscale-origin", args[3]!],
+        { PI_DASH_TAILSCALE_USERS: "not-json" },
+        { desktopOwned: true },
+      ),
+    ).toThrow("must be a JSON string array");
+  });
 });
 
 describe("private paths", () => {

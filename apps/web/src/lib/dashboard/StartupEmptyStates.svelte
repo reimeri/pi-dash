@@ -18,11 +18,11 @@
         ><HugeiconsIcon icon={ExternalLinkIcon} strokeWidth={2} /></Empty.Media
       >
       <Empty.Title role="heading" aria-level={2}
-        >Open Pi Dash from its launch link</Empty.Title
+        >Authenticate with Pi Dash</Empty.Title
       >
       <Empty.Description
-        >Return to the terminal running Pi Dash and open a fresh one-time launch
-        link. Send SIGUSR1 to the daemon to print a new link without restarting.</Empty.Description
+        >Open a fresh local launch link, or verify that your current Tailscale
+        identity is allowed to access this Pi Dash instance.</Empty.Description
       >
     </Empty.Header>
   </Empty.Root>
@@ -31,7 +31,7 @@
     <Empty.Header>
       <Empty.Media variant="icon"><Spinner /></Empty.Media>
       <Empty.Title role="heading" aria-level={2}
-        >Connecting to your local daemon</Empty.Title
+        >Connecting to Pi Dash</Empty.Title
       >
       <Empty.Description
         >Pi Dash is checking its database and secure browser session.</Empty.Description

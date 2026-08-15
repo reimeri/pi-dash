@@ -4,6 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { Writable } from "node:stream";
 import {
   app,
   BrowserWindow,
@@ -39,6 +40,7 @@ interface OwnedDaemonProcess {
   closed: Promise<void>;
   log: DaemonLogSink;
   controlToken: string;
+  ownerPipe: Writable;
 }
 
 interface DaemonProcess extends OwnedDaemonProcess {
@@ -130,12 +132,12 @@ async function startDaemon(): Promise<DaemonProcess> {
           ...process.env,
           NODE_ENV: "production",
           PI_DASH_RESOURCE_ROOT: runtime.resourceRoot,
-          PI_DASH_DESKTOP: "true",
           PI_DASH_DESKTOP_CONTROL_TOKEN: controlToken,
+          PI_DASH_DESKTOP_OWNER_FD: "3",
           PI_DASH_NO_OPEN: "true",
           PI_DASH_UI_ORIGIN: "",
         },
-        stdio: ["pipe", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe", "pipe"],
       },
     );
   } catch (error) {
@@ -148,6 +150,13 @@ async function startDaemon(): Promise<DaemonProcess> {
     throw error;
   }
   child.stdin.end();
+  const ownerPipe = child.stdio[3];
+  if (!(ownerPipe instanceof Writable)) {
+    child.kill("SIGKILL");
+    daemonLog.close();
+    rmSync(bootstrapDirectory, { recursive: true, force: true });
+    throw new Error("Unable to create the private daemon ownership pipe");
+  }
   let resolveClosed!: () => void;
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve;
@@ -158,6 +167,7 @@ async function startDaemon(): Promise<DaemonProcess> {
     closed,
     log: daemonLog,
     controlToken,
+    ownerPipe,
     bootstrapUrl: "",
     origin: "",
   };
@@ -172,6 +182,7 @@ async function startDaemon(): Promise<DaemonProcess> {
     );
   });
   child.once("close", (code, signal) => {
+    ownerPipe.destroy();
     daemonLog.write(
       "desktop",
       `Daemon exited (${signal ?? code ?? "unknown"})\n`,
@@ -269,6 +280,7 @@ function terminateDaemon(current: OwnedDaemonProcess): Promise<void> {
   const pending = (async () => {
     try {
       if (current.child.exitCode === null) {
+        current.ownerPipe.end();
         try {
           current.child.kill("SIGTERM");
         } catch {

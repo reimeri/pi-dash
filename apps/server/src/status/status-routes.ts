@@ -93,16 +93,24 @@ export async function registerStatusRoutes(
     {
       websocket: true,
       preValidation: async (request) => {
-        if (!options.auth.authenticateUpgrade({ headers: request.headers })) {
+        const session = options.auth.authenticateUpgrade({
+          headers: request.headers,
+        });
+        if (!session) {
           throw new ApiHttpError(
             401,
             "UNAUTHORIZED",
             "Authenticated same-origin WebSocket access is required",
           );
         }
+        request.piDashSession = session;
       },
     },
-    (socket) => {
+    (socket, request) => {
+      const unregisterSocket = options.auth.registerSocket(
+        request.piDashSession!,
+        socket,
+      );
       let unsubscribe: (() => void) | undefined;
       const deadline = setTimeout(() => {
         if (!unsubscribe) socket.close(1008, "Subscribe frame required");
@@ -147,6 +155,7 @@ export async function registerStatusRoutes(
 
       const cleanup = () => {
         clearTimeout(deadline);
+        unregisterSocket();
         unsubscribe?.();
         unsubscribe = undefined;
       };

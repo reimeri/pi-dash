@@ -19,6 +19,7 @@ import Fastify, { type FastifyError, type FastifyRequest } from "fastify";
 import type { Logger } from "pino";
 import {
   equalSecret,
+  REMOTE_SESSION_TTL_MS,
   SESSION_COOKIE,
   type AuthService,
   type Session,
@@ -26,7 +27,7 @@ import {
 import type { AppConfig } from "./config.js";
 import type { DatabaseService } from "./database.js";
 import { ApiHttpError } from "./errors.js";
-import type { OriginPolicy } from "./security.js";
+import type { OriginPolicy, RequestAccess } from "./security.js";
 import type { ApplicationEvents } from "./events/application-events.js";
 import type { NativeDirectoryDialogService } from "./platform/native-directory-dialog.js";
 import type { TerminalManager } from "./terminal/terminal-manager.js";
@@ -41,6 +42,7 @@ import { registerWorktreeRoutes } from "./worktrees/worktree-routes.js";
 
 declare module "fastify" {
   interface FastifyRequest {
+    piDashAccess?: RequestAccess;
     piDashSession?: Session;
   }
 }
@@ -48,6 +50,7 @@ declare module "fastify" {
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const BOOTSTRAP_PATH = "/auth/bootstrap";
 const DESKTOP_REBOOTSTRAP_PATH = "/auth/desktop/rebootstrap";
+const TAILSCALE_SESSION_PATH = "/auth/tailscale/session";
 
 function cleanBootstrapFailure(message: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pi Dash launch failed</title></head><body><main><h1>Unable to launch Pi Dash</h1><p>${message}</p></main><script>history.replaceState(null,"",${JSON.stringify(BOOTSTRAP_PATH)})</script></body></html>`;
@@ -146,6 +149,32 @@ export async function buildHttpServer(options: HttpServerOptions) {
 
   app.addHook("onRequest", async (request, reply) => {
     const path = requestPath(request);
+    const connectSources = [
+      "'self'",
+      options.policy.serverOrigin.replace(/^http:/u, "ws:"),
+      ...(options.policy.remoteOrigin
+        ? [options.policy.remoteOrigin.replace(/^https:/u, "wss:")]
+        : []),
+    ];
+    void reply
+      .header("Referrer-Policy", "no-referrer")
+      .header("X-Content-Type-Options", "nosniff")
+      .header("X-Frame-Options", "DENY")
+      .header("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
+      .header(
+        "Content-Security-Policy",
+        [
+          "default-src 'self'",
+          "base-uri 'none'",
+          `connect-src ${connectSources.join(" ")}`,
+          "font-src 'self' data:",
+          "frame-ancestors 'none'",
+          "img-src 'self' data:",
+          "object-src 'none'",
+          "script-src 'self'",
+          "style-src 'self' 'unsafe-inline'",
+        ].join("; "),
+      );
     if (path === BOOTSTRAP_PATH) {
       void reply
         .header("Cache-Control", "no-store")
@@ -156,26 +185,23 @@ export async function buildHttpServer(options: HttpServerOptions) {
         )
         .header("X-Content-Type-Options", "nosniff");
     }
-    if (!options.policy.validateHost(request.headers)) {
+    const access = options.policy.classifyRequest(request.headers);
+    if (!access) {
       throw new ApiHttpError(
         403,
         ApiErrorCodes.FORBIDDEN_ORIGIN,
-        "Request host is not allowed",
+        "Request host, origin, or remote identity is not allowed",
       );
     }
-    if (!options.policy.validateOrigin(request.headers)) {
-      throw new ApiHttpError(
-        403,
-        ApiErrorCodes.FORBIDDEN_ORIGIN,
-        "Request origin is not allowed",
-      );
-    }
+    request.piDashAccess = access;
   });
 
   app.addHook("preParsing", async (request) => {
     const path = requestPath(request);
     if (!path.startsWith("/api/v1/") || path === "/api/v1/health") return;
-    const session = options.auth.getSession(request.cookies[SESSION_COOKIE]);
+    const session = options.auth.authenticateRequest({
+      headers: request.headers,
+    });
     if (!session)
       throw new ApiHttpError(
         401,
@@ -185,7 +211,10 @@ export async function buildHttpServer(options: HttpServerOptions) {
     request.piDashSession = session;
 
     if (MUTATING_METHODS.has(request.method)) {
-      if (!options.policy.validateOrigin(request.headers, true)) {
+      if (
+        options.auth.authenticateRequest({ headers: request.headers }, true) !==
+        session
+      ) {
         throw new ApiHttpError(
           403,
           ApiErrorCodes.FORBIDDEN_ORIGIN,
@@ -216,16 +245,18 @@ export async function buildHttpServer(options: HttpServerOptions) {
   app.get(
     "/api/v1/health",
     { schema: { response: { 200: HealthResponseSchema } } },
-    async (): Promise<HealthResponse> => ({
+    async (request): Promise<HealthResponse> => ({
       status: "ready",
       version: APP_VERSION,
       schemaVersion: options.database.schemaVersion,
       capabilities: {
         git: options.capabilities.git ? "available" : "unavailable",
         pi: options.capabilities.pi ? "available" : "unavailable",
-        nativeDirectoryDialog: options.capabilities.nativeDirectoryDialog
-          ? "available"
-          : "unavailable",
+        nativeDirectoryDialog:
+          request.piDashAccess?.channel === "local" &&
+          options.capabilities.nativeDirectoryDialog
+            ? "available"
+            : "unavailable",
         pty: options.capabilities.pty ? "available" : "unavailable",
       },
       settings: {
@@ -279,11 +310,54 @@ export async function buildHttpServer(options: HttpServerOptions) {
     maxFrameBytes: options.config.terminalMaxFrameBytes,
   });
 
+  if (options.config.remoteAccess) {
+    app.post(
+      TAILSCALE_SESSION_PATH,
+      {
+        schema: {
+          response: {
+            200: SessionResponseSchema,
+            401: ApiErrorEnvelopeSchema,
+            403: ApiErrorEnvelopeSchema,
+          },
+        },
+      },
+      async (request, reply) => {
+        const session = options.auth.exchangeTailscale({
+          headers: request.headers,
+        });
+        if (!session) {
+          throw new ApiHttpError(
+            401,
+            ApiErrorCodes.UNAUTHORIZED,
+            "Tailscale authentication is required",
+          );
+        }
+        void reply
+          .header("Cache-Control", "no-store")
+          .setCookie(SESSION_COOKIE, session.id, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "strict",
+            path: "/",
+            maxAge: REMOTE_SESSION_TTL_MS / 1000,
+          });
+        return {
+          authenticated: true as const,
+          csrfToken: session.csrfToken,
+        };
+      },
+    );
+  }
+
   app.get<{ Querystring: BootstrapQuery }>(
     BOOTSTRAP_PATH,
     { schema: { querystring: BootstrapQuerySchema } },
     async (request, reply) => {
-      const session = options.auth.exchangeBootstrap(request.query.token);
+      const session =
+        request.piDashAccess?.channel === "local"
+          ? options.auth.exchangeBootstrap(request.query.token)
+          : undefined;
       if (!session) {
         return reply
           .code(401)
@@ -317,6 +391,13 @@ export async function buildHttpServer(options: HttpServerOptions) {
         },
       },
       async (request): Promise<DesktopRebootstrapResponse> => {
+        if (request.piDashAccess?.channel !== "local") {
+          throw new ApiHttpError(
+            403,
+            ApiErrorCodes.FORBIDDEN_ORIGIN,
+            "Desktop control is available only on loopback",
+          );
+        }
         const candidate = bearerToken(request.headers.authorization);
         if (!candidate || !equalSecret(candidate, controlToken)) {
           throw new ApiHttpError(

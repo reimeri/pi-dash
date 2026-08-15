@@ -5,6 +5,7 @@ import { buildHttpServer, bootstrapLaunchUrl, type HttpServer } from "./app.js";
 import { createAuthService, type AuthService } from "./auth.js";
 import { loadConfig, type AppConfig } from "./config.js";
 import { openDatabase, type DatabaseService } from "./database.js";
+import { desktopOwnerFileDescriptor } from "./desktop-owner.js";
 import { acquireDaemonLock, type DaemonLock } from "./lock.js";
 import { createLogger } from "./logger.js";
 import {
@@ -90,8 +91,10 @@ export async function createDaemon(
   } = {},
 ): Promise<Daemon> {
   const env = options.env ?? process.env;
-  const desktopHost = env.PI_DASH_DESKTOP === "true";
-  const config = loadConfig(options.args ?? process.argv.slice(2), env);
+  const desktopHost = desktopOwnerFileDescriptor(env) !== undefined;
+  const config = loadConfig(options.args ?? process.argv.slice(2), env, {
+    desktopOwned: desktopHost,
+  });
   const resources = resolveAppResources(env);
   const logger = options.logger ?? createLogger(config.logLevel);
   const paths = resolveAppPaths(config, env);

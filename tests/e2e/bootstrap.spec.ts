@@ -176,12 +176,10 @@ test("unauthenticated and wrong-origin API requests are denied", async ({
 
   await page.goto(`http://127.0.0.1:${port}/`);
   await expect(
-    page.getByRole("heading", { name: "Open Pi Dash from its launch link" }),
+    page.getByRole("heading", { name: "Authenticate with Pi Dash" }),
   ).toBeVisible();
   await expect(
-    page.getByText("Send SIGUSR1 to the daemon to print a new link", {
-      exact: false,
-    }),
+    page.getByText("Open a fresh local launch link", { exact: false }),
   ).toBeVisible();
 });
 

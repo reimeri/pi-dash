@@ -37,6 +37,12 @@ const resources: Array<{
 
 async function fixture(
   overrides: Partial<AppConfig> = {},
+  capabilityOverrides: Partial<{
+    git: boolean;
+    pi: boolean;
+    nativeDirectoryDialog: boolean;
+    pty: boolean;
+  }> = {},
 ): Promise<{ app: HttpServer; auth: AuthService }> {
   const root = mkdtempSync(join(tmpdir(), "pi-dash-app-"));
   const config: AppConfig = {
@@ -97,6 +103,7 @@ async function fixture(
       pi: false,
       nativeDirectoryDialog: false,
       pty: false,
+      ...capabilityOverrides,
     },
   });
   resources.push({ root, app, database });
@@ -105,6 +112,23 @@ async function fixture(
 
 function headers(extra: Record<string, string> = {}): Record<string, string> {
   return { host: "127.0.0.1:4317", ...extra };
+}
+
+const remoteAccess = {
+  provider: "tailscale" as const,
+  origin: "https://pi-dash-host.example-tailnet.ts.net",
+  allowedUsers: ["owner@example.com"],
+};
+
+function remoteHeaders(
+  extra: Record<string, string> = {},
+): Record<string, string> {
+  return {
+    host: "pi-dash-host.example-tailnet.ts.net",
+    origin: remoteAccess.origin,
+    "tailscale-user-login": "owner@example.com",
+    ...extra,
+  };
 }
 
 afterEach(async () => {
@@ -142,6 +166,12 @@ describe("Fastify foundation API", () => {
       },
     });
     expect(response.body).not.toContain("/tmp");
+    expect(response.headers["x-content-type-options"]).toBe("nosniff");
+    expect(response.headers["referrer-policy"]).toBe("no-referrer");
+    expect(response.headers["x-frame-options"]).toBe("DENY");
+    expect(response.headers["content-security-policy"]).toContain(
+      "object-src 'none'",
+    );
   });
 
   it("exchanges a one-use token for a strict HttpOnly session", async () => {
@@ -183,6 +213,131 @@ describe("Fastify foundation API", () => {
     expect(replay.headers["content-type"]).toContain("text/html");
     expect(replay.body).toContain("history.replaceState");
     expect(replay.body).not.toContain(auth.bootstrapToken);
+  });
+
+  it("creates a secure principal-bound Tailscale session", async () => {
+    const { app } = await fixture({ remoteAccess });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/tailscale/session",
+      headers: remoteHeaders(),
+    });
+    expect(login.statusCode).toBe(200);
+    expect(login.json()).toMatchObject({ authenticated: true });
+    const cookie = login.cookies.find(
+      (candidate) => candidate.name === SESSION_COOKIE,
+    );
+    expect(cookie).toMatchObject({
+      httpOnly: true,
+      secure: true,
+      sameSite: "Strict",
+      path: "/",
+      maxAge: 12 * 60 * 60,
+    });
+
+    const session = await app.inject({
+      method: "GET",
+      url: "/api/v1/session",
+      headers: remoteHeaders({
+        cookie: `${SESSION_COOKIE}=${cookie!.value}`,
+      }),
+    });
+    expect(session.statusCode).toBe(200);
+
+    const missingIdentity = await app.inject({
+      method: "GET",
+      url: "/api/v1/session",
+      headers: {
+        host: "pi-dash-host.example-tailnet.ts.net",
+        origin: remoteAccess.origin,
+        cookie: `${SESSION_COOKIE}=${cookie!.value}`,
+      },
+    });
+    expect(missingIdentity.statusCode).toBe(403);
+
+    const changedIdentity = await app.inject({
+      method: "GET",
+      url: "/api/v1/session",
+      headers: remoteHeaders({
+        "tailscale-user-login": "other@example.com",
+        cookie: `${SESSION_COOKIE}=${cookie!.value}`,
+      }),
+    });
+    expect(changedIdentity.statusCode).toBe(403);
+  });
+
+  it("hides and denies the host directory dialog over Tailscale", async () => {
+    const { app } = await fixture(
+      { remoteAccess },
+      { nativeDirectoryDialog: true },
+    );
+    const localHealth = await app.inject({
+      method: "GET",
+      url: "/api/v1/health",
+      headers: headers(),
+    });
+    expect(localHealth.json().capabilities.nativeDirectoryDialog).toBe(
+      "available",
+    );
+    const remoteHealth = await app.inject({
+      method: "GET",
+      url: "/api/v1/health",
+      headers: remoteHeaders(),
+    });
+    expect(remoteHealth.json().capabilities.nativeDirectoryDialog).toBe(
+      "unavailable",
+    );
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/tailscale/session",
+      headers: remoteHeaders(),
+    });
+    const cookie = login.cookies.find(
+      (candidate) => candidate.name === SESSION_COOKIE,
+    )!;
+    const denied = await app.inject({
+      method: "POST",
+      url: "/api/v1/dialogs/workspace-directory",
+      headers: remoteHeaders({
+        cookie: `${SESSION_COOKIE}=${cookie.value}`,
+        "content-type": "application/json",
+        "x-csrf-token": login.json().csrfToken as string,
+      }),
+      payload: {},
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error.code).toBe("DIALOG_UNAVAILABLE");
+  });
+
+  it("keeps local bootstrap and desktop control routes off the remote channel", async () => {
+    const controlToken = "d".repeat(43);
+    const { app, auth } = await fixture({
+      remoteAccess,
+      desktopControlToken: controlToken,
+    });
+    const bootstrap = await app.inject({
+      method: "GET",
+      url: `/auth/bootstrap?token=${encodeURIComponent(auth.bootstrapToken)}`,
+      headers: remoteHeaders(),
+    });
+    expect(bootstrap.statusCode).toBe(401);
+    const control = await app.inject({
+      method: "POST",
+      url: "/auth/desktop/rebootstrap",
+      headers: remoteHeaders({ authorization: `Bearer ${controlToken}` }),
+    });
+    expect(control.statusCode).toBe(403);
+  });
+
+  it("hides Tailscale authentication when remote access is disabled", async () => {
+    const { app } = await fixture();
+    const response = await app.inject({
+      method: "POST",
+      url: "/auth/tailscale/session",
+      headers: headers({ origin: "http://127.0.0.1:4317" }),
+    });
+    expect(response.statusCode).toBe(404);
   });
 
   it("enforces same-origin JSON and CSRF checks on state-changing APIs", async () => {

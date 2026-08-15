@@ -52,6 +52,11 @@ describe("desktop daemon log", () => {
       "stderr",
       "PI_DASH_DESKTOP_CONTROL_TOKEN=desktop-control-secret\n",
     );
+    log.write(
+      "stdout",
+      `${JSON.stringify({ headers: { "tailscale-user-login": "identity-secret", "tailscale-user-name": "name-secret", "tailscale-user-profile-pic": "picture-secret" } })}\n`,
+    );
+    log.write("stderr", "Tailscale-User-Login=plain-identity-secret\n");
     const unicode = Buffer.from("split 🙂 character\n", "utf8");
     log.write("stdout", unicode.subarray(0, 8));
     log.write("stdout", unicode.subarray(8));
@@ -73,6 +78,10 @@ describe("desktop daemon log", () => {
     expect(output).not.toContain("token-secret");
     expect(output).not.toContain("environment-secret");
     expect(output).not.toContain("desktop-control-secret");
+    expect(output).not.toContain("identity-secret");
+    expect(output).not.toContain("name-secret");
+    expect(output).not.toContain("picture-secret");
+    expect(output).not.toContain("plain-identity-secret");
     expect(output).not.toContain("boundary-secret");
     expect(output).toContain("[oversized line omitted]");
     expect(output).toContain("split 🙂 character");

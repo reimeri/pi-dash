@@ -8,7 +8,7 @@ export type StartupState =
 export type StartupEvent =
   | { type: "CONNECT" }
   | { type: "READY" }
-  | { type: "UNAUTHORIZED" }
+  | { type: "UNAUTHORIZED"; message?: string }
   | { type: "MIGRATION_FAILED"; message?: string }
   | { type: "DISCONNECTED"; message?: string };
 
@@ -29,7 +29,9 @@ export function reduceStartupState(
     case "UNAUTHORIZED":
       return {
         status: "unauthorized",
-        message: "Launch authentication is required",
+        message:
+          event.message ??
+          "Local launch or Tailscale authentication is required",
       };
     case "MIGRATION_FAILED":
       return {

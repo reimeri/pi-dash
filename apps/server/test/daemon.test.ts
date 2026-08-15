@@ -35,6 +35,53 @@ function options(root: string) {
 }
 
 describe("daemon lifecycle", () => {
+  it("detects loss of the private desktop ownership pipe", async () => {
+    const holder = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        fileURLToPath(new URL("./desktop-owner-holder.ts", import.meta.url)),
+      ],
+      {
+        env: { ...process.env, PI_DASH_DESKTOP_OWNER_FD: "3" },
+        stdio: ["ignore", "pipe", "pipe", "pipe"],
+      },
+    );
+    let output = "";
+    holder.stdout.on("data", (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    await new Promise<void>((resolveReady, rejectReady) => {
+      const timeout = setTimeout(
+        () => rejectReady(new Error("Desktop owner helper did not start")),
+        5_000,
+      );
+      holder.stdout.on("data", () => {
+        if (!output.includes("ready")) return;
+        clearTimeout(timeout);
+        resolveReady();
+      });
+      holder.once("exit", (code) => {
+        clearTimeout(timeout);
+        rejectReady(new Error(`Desktop owner helper exited ${code}`));
+      });
+    });
+    holder.stdio[3]!.end();
+    await new Promise<void>((resolveExit, rejectExit) => {
+      const timeout = setTimeout(() => {
+        holder.kill("SIGKILL");
+        rejectExit(new Error("Desktop owner helper did not exit on EOF"));
+      }, 5_000);
+      holder.once("exit", (code) => {
+        clearTimeout(timeout);
+        if (code === 0) resolveExit();
+        else rejectExit(new Error(`Desktop owner helper exited ${code}`));
+      });
+    });
+    expect(output).toContain("owner-lost");
+  });
+
   it("rejects a second process while the kernel lock is held", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-dash-daemon-process-"));
     roots.push(root);

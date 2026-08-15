@@ -22,6 +22,7 @@ export function createStatusEventClient(
     onWorkspaceOrderUpdated?: (workspaceIds: string[]) => void;
     onWorkspaceEnvironmentChanged?: (workspaceId: string) => void;
     onSnapshot?: () => void;
+    onAuthenticationRequired?: () => void;
   } = {},
 ): StatusEventClient {
   const url =
@@ -83,11 +84,15 @@ export function createStatusEventClient(
         options.onSnapshot?.();
       }
     });
-    candidate.addEventListener("close", () => {
+    candidate.addEventListener("close", (event) => {
       if (socket !== candidate) return;
       socket = undefined;
       workflowStatusStore.setChannel("disconnected");
       if (closed || reconnectTimer) return;
+      if (event.code === 4001 && options.onAuthenticationRequired) {
+        options.onAuthenticationRequired();
+        return;
+      }
       const delay = Math.min(10_000, reconnectBaseMs * 2 ** attempts);
       attempts += 1;
       reconnectTimer = setTimeout(() => {

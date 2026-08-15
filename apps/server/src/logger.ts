@@ -1,6 +1,12 @@
 import pino, { type Logger, type LoggerOptions } from "pino";
 import type { LogLevel } from "./config.js";
 
+const TAILSCALE_IDENTITY_HEADERS = [
+  "tailscale-user-login",
+  "tailscale-user-name",
+  "tailscale-user-profile-pic",
+] as const;
+
 const REDACT_PATHS = [
   "req.headers.authorization",
   "req.headers.cookie",
@@ -31,6 +37,14 @@ const REDACT_PATHS = [
   "*.*.desktopControlToken",
   "*.*.sessionId",
   "*.*.csrfToken",
+  ...TAILSCALE_IDENTITY_HEADERS.flatMap((header) => [
+    `["${header}"]`,
+    `req.headers["${header}"]`,
+    `request.headers["${header}"]`,
+    `headers["${header}"]`,
+    `*.headers["${header}"]`,
+    `*.*.headers["${header}"]`,
+  ]),
 ];
 
 export function sanitizeRequestUrl(rawUrl: string): string {

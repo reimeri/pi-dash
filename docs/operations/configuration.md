@@ -21,11 +21,27 @@ Configuration precedence is **CLI → environment → JSON file → defaults**. 
 | Native dialog                | `--native-dialog`                      | `PI_DASH_NATIVE_DIALOG`                      | `nativeDialog`                   | `auto`                                          |
 | Log level                    | `--log-level`                          | `PI_DASH_LOG_LEVEL`                          | `logLevel`                       | `info`                                          |
 | UI origin                    | `--ui-origin`                          | `PI_DASH_UI_ORIGIN`                          | `uiOrigin`                       | daemon origin                                   |
+| Tailscale origin             | `--tailscale-origin`                   | `PI_DASH_TAILSCALE_ORIGIN`                   | `remoteAccess.origin`            | unset                                           |
+| Tailscale allowed users      | `--tailscale-user` (repeatable)        | `PI_DASH_TAILSCALE_USERS` (JSON array)       | `remoteAccess.allowedUsers`      | unset                                           |
 | Static assets                | `--static-dir`                         | `PI_DASH_STATIC_DIR`                         | `staticDir`                      | `apps/web/dist`                                 |
 | Launch URL file              | `--bootstrap-output`                   | `PI_DASH_BOOTSTRAP_OUTPUT`                   | `bootstrapOutput`                | unset                                           |
 | Suppress browser launch      | `--no-open`                            | `PI_DASH_NO_OPEN`                            | —                                | `false`                                         |
 
 Only numeric loopback addresses are accepted. `0.0.0.0`, LAN addresses, and hostnames are rejected. `uiOrigin` is intended for the loopback Vite development server and must also be an HTTP loopback origin.
+
+Remote access is enabled only by a complete nested configuration:
+
+```json
+{
+  "remoteAccess": {
+    "provider": "tailscale",
+    "origin": "https://host.example-tailnet.ts.net",
+    "allowedUsers": ["user@example.com"]
+  }
+}
+```
+
+The origin must be an exact root HTTPS `*.ts.net` origin on port 443. Allowed users are distinct, exact, case-sensitive Tailscale login strings. Remote access is accepted only when Electron supplies a live private ownership pipe; standalone server launches fail instead of becoming a remote service, and the daemon shuts down if Electron ownership is lost. CLI and environment values can supply the origin and users, but partial configuration is invalid. Pi Dash never changes the loopback bind or manages Tailscale Serve. See [remote access with Tailscale](remote-access.md).
 
 The Electron desktop host accepts the ordinary daemon CLI options, but owns `--bootstrap-output`, `--static-dir`, and `--ui-origin`; passing those options to `npm run desktop -- ...` is rejected. Source-tree launches use `node` from `PATH` for the daemon so native modules use the installation's Node ABI. `PI_DASH_NODE_EXECUTABLE` can select another ABI-compatible Node.js 24+ executable during source development.
 

@@ -188,17 +188,22 @@
     statusEvents = undefined;
     if (authRecoveryPromise) return authRecoveryPromise;
     const desktop = desktopBridge();
-    if (!desktop) {
-      startup = reduceStartupState(startup, { type: "UNAUTHORIZED" });
-      return Promise.resolve(false);
-    }
     startup = reduceStartupState(startup, { type: "CONNECT" });
-    const pending = desktop
-      .reauthenticate()
+    const pending = (
+      desktop
+        ? desktop.reauthenticate()
+        : api.tailscaleSession(reconnectSignal())
+    )
       .then(() => true)
-      .catch(() => {
-        startup = reduceStartupState(startup, { type: "UNAUTHORIZED" });
-        scheduleReconnect();
+      .catch((error) => {
+        startup = reduceStartupState(startup, {
+          type: "UNAUTHORIZED",
+          message:
+            !desktop && error instanceof ApiClientError && error.status === 403
+              ? "This Tailscale identity is not authorized"
+              : undefined,
+        });
+        if (desktop) scheduleReconnect();
         return false;
       })
       .finally(() => {
@@ -237,6 +242,11 @@
           for (const workspaceId of Object.keys($worktreeStore.byWorkspace)) {
             void worktreeStore.load(workspaceId);
           }
+        },
+        onAuthenticationRequired: () => {
+          void handleUnauthorized().then((recovered) => {
+            if (recovered) scheduleReconnect(true);
+          });
         },
       });
       statusEvents.start();
@@ -708,7 +718,7 @@
           >
           <Alert.Description>
             {startup.status === "unauthorized"
-              ? `${startup.message}. Open a fresh launch link or try again.`
+              ? `${startup.message}. Verify your local launch link or Tailscale access, then try again.`
               : `${startup.message}. Check the daemon output for an actionable diagnostic.`}
           </Alert.Description>
           <Alert.Action>
