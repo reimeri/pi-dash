@@ -24,6 +24,7 @@
   import { api } from "../../api.js";
   import type { TerminalControlsChange } from "./controls.js";
   import { showTerminalCopyError } from "./copy-error-toast.js";
+  import { createTerminalFitScheduler } from "./fit-scheduler.js";
   import { loadFitAddon, loadUnicode11Addon } from "./module-loaders.js";
   import {
     terminalStartupStatus,
@@ -122,53 +123,23 @@
     scheduleFit();
   }
 
-  let fitScheduled = false;
-  let fitSettleFrames = 0;
-  let lastFitWidth = -1;
-  let lastFitHeight = -1;
+  // Fit until the container size stops changing. The scheduler only consumes
+  // frames once FitAddon is ready, and every later resize/font/write signal
+  // restarts settling so an in-flight startup cycle cannot suppress the final
+  // layout. This covers async module/font loading and transient sizes from
+  // window show or sidebar transitions.
+  const fitScheduler = createTerminalFitScheduler({
+    canFit: () => !disposed && visible && fitAddon !== undefined,
+    getDimensions: () => ({
+      width: host?.clientWidth ?? 0,
+      height: host?.clientHeight ?? 0,
+    }),
+    fit: () => fitAddon?.fit(),
+    requestFrame: (callback) => requestAnimationFrame(callback),
+  });
 
-  // Fit until the container size stops changing. A single rAF fit races with
-  // async font loading, in-flight terminal.write callbacks (whose completion
-  // triggers xterm's own reflow), and transient sizes from window show /
-  // sidebar transitions — any of which can leave the grid stuck at stale
-  // dimensions. Re-fitting while the size is still moving makes the terminal
-  // converge on the final layout instead of whichever size it saw first.
   function scheduleFit(): void {
-    if (fitScheduled || disposed || !visible) return;
-    fitScheduled = true;
-    fitSettleFrames = 0;
-    lastFitWidth = -1;
-    lastFitHeight = -1;
-    requestAnimationFrame(runFit);
-  }
-
-  function runFit(): void {
-    if (disposed) {
-      fitScheduled = false;
-      return;
-    }
-    if (!visible || !host || host.clientWidth <= 0 || host.clientHeight <= 0) {
-      fitScheduled = false;
-      return;
-    }
-    fitAddon?.fit();
-    const width = host.clientWidth;
-    const height = host.clientHeight;
-    if (width === lastFitWidth && height === lastFitHeight) {
-      fitSettleFrames += 1;
-    } else {
-      fitSettleFrames = 0;
-      lastFitWidth = width;
-      lastFitHeight = height;
-    }
-    // Keep re-fitting while the container is still resizing (transitions,
-    // window show), plus a couple of stable frames to absorb font/write
-    // reflows, then stop.
-    if (fitSettleFrames < 3) {
-      requestAnimationFrame(runFit);
-    } else {
-      fitScheduled = false;
-    }
+    fitScheduler.schedule();
   }
 
   function send(frame: object): boolean {
@@ -573,8 +544,10 @@
       loadedTerminal.loadAddon(unicodeAddon);
       loadedTerminal.unicode.activeVersion = "11";
       observeHostResize();
+      scheduleFit();
       interfaceState = "fonts";
       await document.fonts?.ready;
+      if (disposed || terminal !== loadedTerminal) return;
       scheduleFit();
       flushOutput();
       interfaceState = "ready";

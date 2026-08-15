@@ -6,7 +6,7 @@ export * from "./terminal.js";
 export * from "./workspaces.js";
 export * from "./worktrees.js";
 
-export const APP_VERSION = "2.1.0";
+export const APP_VERSION = "2.1.1";
 export const API_VERSION = 1;
 export const CURRENT_SCHEMA_VERSION = 8;
 
