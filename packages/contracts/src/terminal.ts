@@ -1,6 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 
-export const TERMINAL_PROTOCOL_VERSION = 2 as const;
+export const TERMINAL_PROTOCOL_VERSION = 3 as const;
 export const TERMINAL_MIN_COLS = 2;
 export const TERMINAL_MAX_COLS = 500;
 export const TERMINAL_MIN_ROWS = 1;
@@ -63,8 +63,29 @@ export const RuntimeResponseSchema = Type.Object(
 );
 export type RuntimeResponse = Static<typeof RuntimeResponseSchema>;
 
+export const TerminalDimensionsSchema = Type.Object(
+  {
+    cols: Type.Integer({
+      minimum: TERMINAL_MIN_COLS,
+      maximum: TERMINAL_MAX_COLS,
+    }),
+    rows: Type.Integer({
+      minimum: TERMINAL_MIN_ROWS,
+      maximum: TERMINAL_MAX_ROWS,
+    }),
+  },
+  { additionalProperties: false },
+);
+export type TerminalDimensions = Static<typeof TerminalDimensionsSchema>;
+
+export const StartRuntimeRequestSchema = TerminalDimensionsSchema;
+export type StartRuntimeRequest = Static<typeof StartRuntimeRequestSchema>;
+
 export const RestartRuntimeRequestSchema = Type.Object(
-  { expectedRuntimeId: Type.Union([UuidSchema, Type.Null()]) },
+  {
+    expectedRuntimeId: Type.Union([UuidSchema, Type.Null()]),
+    dimensions: Type.Optional(TerminalDimensionsSchema),
+  },
   { additionalProperties: false },
 );
 export type RestartRuntimeRequest = Static<typeof RestartRuntimeRequestSchema>;
@@ -87,6 +108,7 @@ export const TerminalClientFrameSchema = Type.Union([
       v: Type.Literal(TERMINAL_PROTOCOL_VERSION),
       type: Type.Literal("attach"),
       afterSeq: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+      ...TerminalDimensionsSchema.properties,
     },
     { additionalProperties: false },
   ),
@@ -110,14 +132,7 @@ export const TerminalClientFrameSchema = Type.Union([
     {
       v: Type.Literal(TERMINAL_PROTOCOL_VERSION),
       type: Type.Literal("resize"),
-      cols: Type.Integer({
-        minimum: TERMINAL_MIN_COLS,
-        maximum: TERMINAL_MAX_COLS,
-      }),
-      rows: Type.Integer({
-        minimum: TERMINAL_MIN_ROWS,
-        maximum: TERMINAL_MAX_ROWS,
-      }),
+      ...TerminalDimensionsSchema.properties,
     },
     { additionalProperties: false },
   ),

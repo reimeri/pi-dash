@@ -66,6 +66,7 @@
   let intentionalClose = false;
   let connection: "connecting" | "connected" | "disconnected" = "connecting";
   let interfaceState: TerminalInterfaceState = "loading";
+  let terminalGridSettled = false;
   let runtime: RuntimeDto | undefined;
   let runtimeId: string | undefined;
   let socketRuntimeRevision = 0;
@@ -116,7 +117,7 @@
       socketState: connection,
       inputOwner,
       inputOwnerKnown,
-      busy,
+      busy: busy || interfaceState !== "ready" || !terminalGridSettled,
       focus: focusTerminal,
       start: startRuntime,
       stop: stopRuntime,
@@ -138,9 +139,20 @@
     }),
     fit: () => fitAddon?.fit(),
     requestFrame: (callback) => requestAnimationFrame(callback),
+    onSettled: () => {
+      terminalGridSettled = true;
+      if (
+        interfaceState === "ready" &&
+        worktree.lifecycle === "ready" &&
+        worktree.health === "healthy"
+      ) {
+        connectSocket();
+      }
+    },
   });
 
-  function scheduleFit(): void {
+  function scheduleFit(layoutChanged = true): void {
+    if (layoutChanged) terminalGridSettled = false;
     fitScheduler.schedule();
   }
 
@@ -150,13 +162,11 @@
     return true;
   }
 
-  function sendTerminalSize(
+  function terminalDimensions(
     cols: number | undefined = terminal?.cols,
     rows: number | undefined = terminal?.rows,
-  ): void {
+  ): { cols: number; rows: number } | undefined {
     if (
-      !inputOwnerKnown ||
-      !inputOwner ||
       cols === undefined ||
       !Number.isInteger(cols) ||
       cols < TERMINAL_MIN_COLS ||
@@ -166,9 +176,23 @@
       rows < TERMINAL_MIN_ROWS ||
       rows > TERMINAL_MAX_ROWS
     ) {
-      return;
+      return undefined;
     }
-    send({ v: TERMINAL_PROTOCOL_VERSION, type: "resize", cols, rows });
+    return { cols, rows };
+  }
+
+  function sendTerminalSize(
+    cols: number | undefined = terminal?.cols,
+    rows: number | undefined = terminal?.rows,
+  ): void {
+    if (!inputOwnerKnown || !inputOwner) return;
+    const dimensions = terminalDimensions(cols, rows);
+    if (!dimensions) return;
+    send({
+      v: TERMINAL_PROTOCOL_VERSION,
+      type: "resize",
+      ...dimensions,
+    });
   }
 
   function sendTextInput(data: string): void {
@@ -230,7 +254,7 @@
       // fit. Only when the queue is fully drained — flushOutput() may have
       // already started the next entry, so a single-entry queue still reads
       // empty here while a write is active.
-      if (!writeActive && pendingOutput.length === 0) scheduleFit();
+      if (!writeActive && pendingOutput.length === 0) scheduleFit(false);
     });
   }
 
@@ -305,12 +329,19 @@
     socket = candidate;
     candidate.addEventListener("open", () => {
       if (socket !== candidate) return;
+      const dimensions = terminalDimensions();
+      if (!dimensions) {
+        errorMessage = "The terminal grid is not ready to attach.";
+        candidate.close(1011, "Terminal grid unavailable");
+        return;
+      }
       reconnectAttempts = 0;
       connection = "connected";
       send({
         v: TERMINAL_PROTOCOL_VERSION,
         type: "attach",
         afterSeq: lastAppliedSeq,
+        ...dimensions,
       });
       heartbeatTimer = setInterval(() => {
         send({
@@ -381,6 +412,11 @@
   }
 
   async function startRuntime(): Promise<void> {
+    const dimensions = terminalDimensions();
+    if (interfaceState !== "ready" || !terminalGridSettled || !dimensions) {
+      errorMessage = "The terminal grid is not ready to start.";
+      return;
+    }
     busy = true;
     errorMessage = "";
     try {
@@ -388,8 +424,8 @@
       const socketRevisionAtStart = socketRuntimeRevision;
       const response =
         kind === "pi"
-          ? await api.startTerminal(worktree.id)
-          : await api.startShellTerminal(worktree.id);
+          ? await api.startTerminal(worktree.id, dimensions)
+          : await api.startShellTerminal(worktree.id, dimensions);
       const socketStateChanged =
         socketRuntimeRevision !== socketRevisionAtStart;
       if (
@@ -453,6 +489,11 @@
   }
 
   async function restartRuntime(): Promise<void> {
+    const dimensions = terminalDimensions();
+    if (interfaceState !== "ready" || !terminalGridSettled || !dimensions) {
+      errorMessage = "The terminal grid is not ready to restart.";
+      return;
+    }
     busy = true;
     errorMessage = "";
     try {
@@ -464,6 +505,7 @@
                 worktree.id,
                 restartKey,
                 runtime?.runtimeId ?? null,
+                dimensions,
               )
             ).runtime
           : (
@@ -471,6 +513,7 @@
                 worktree.id,
                 restartKey,
                 runtime?.runtimeId ?? null,
+                dimensions,
               )
             ).runtime,
       );
@@ -551,9 +594,9 @@
       interfaceState = "fonts";
       await document.fonts?.ready;
       if (disposed || terminal !== loadedTerminal) return;
-      scheduleFit();
       flushOutput();
       interfaceState = "ready";
+      scheduleFit();
       if (visible) loadedTerminal.focus();
     } catch (error) {
       interfaceState = "error";
@@ -578,10 +621,7 @@
     // trigger a fit once the FitAddon is ready.
     observeHostResize();
     window.addEventListener("resize", handleWindowResize);
-    if (worktree.lifecycle === "ready" && worktree.health === "healthy") {
-      connectSocket();
-      void startRuntime();
-    } else {
+    if (worktree.lifecycle !== "ready" || worktree.health !== "healthy") {
       errorMessage = `This worktree must be ready and healthy before ${kind === "pi" ? "Pi" : "the shell"} can start.`;
     }
   });

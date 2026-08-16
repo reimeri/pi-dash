@@ -26,6 +26,7 @@ import {
   type RenameWorkspaceRequest,
   type ReorderWorkspacesRequest,
   type StatusAcknowledgeRequest,
+  type TerminalDimensions,
   type UpdateWorkspaceEnvironmentRequest,
   type WorkspacePathRequest,
 } from "@pi-dash/contracts";
@@ -273,11 +274,11 @@ export const api = {
       `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/terminal`,
       RuntimeResponseSchema,
     ),
-  startTerminal: (worktreeId: string) =>
+  startTerminal: (worktreeId: string, dimensions: TerminalDimensions) =>
     requestJson(
       `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/terminal/start`,
       RuntimeResponseSchema,
-      { method: "POST", body: {} },
+      { method: "POST", body: dimensions },
     ),
   stopTerminal: (worktreeId: string) =>
     requestJson(
@@ -295,22 +296,27 @@ export const api = {
     worktreeId: string,
     idempotencyKey: string,
     expectedRuntimeId: string | null,
+    dimensions?: TerminalDimensions,
   ) =>
     requestJson(
       `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/terminal/restart`,
       RestartRuntimeResponseSchema,
-      { method: "POST", body: { expectedRuntimeId }, idempotencyKey },
+      {
+        method: "POST",
+        body: { expectedRuntimeId, dimensions },
+        idempotencyKey,
+      },
     ),
   shellTerminal: (worktreeId: string) =>
     requestJson(
       `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/shell-terminal`,
       RuntimeResponseSchema,
     ),
-  startShellTerminal: (worktreeId: string) =>
+  startShellTerminal: (worktreeId: string, dimensions: TerminalDimensions) =>
     requestJson(
       `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/shell-terminal/start`,
       RuntimeResponseSchema,
-      { method: "POST", body: {} },
+      { method: "POST", body: dimensions },
     ),
   stopShellTerminal: (worktreeId: string) =>
     requestJson(
@@ -322,10 +328,15 @@ export const api = {
     worktreeId: string,
     idempotencyKey: string,
     expectedRuntimeId: string | null,
+    dimensions?: TerminalDimensions,
   ) =>
     requestJson(
       `/api/v1/worktrees/${encodeURIComponent(worktreeId)}/shell-terminal/restart`,
       RestartRuntimeResponseSchema,
-      { method: "POST", body: { expectedRuntimeId }, idempotencyKey },
+      {
+        method: "POST",
+        body: { expectedRuntimeId, dimensions },
+        idempotencyKey,
+      },
     ),
 };

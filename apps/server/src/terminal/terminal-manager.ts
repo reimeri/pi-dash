@@ -6,6 +6,7 @@ import type {
   RuntimeDto,
   RuntimeLaunchError,
   ShellActivityDto,
+  TerminalDimensions,
 } from "@pi-dash/contracts";
 import { PiResolutionError } from "../pi/pi-resolver.js";
 import type { WorktreeLifecycleCoordinator } from "../worktrees/worktree-lifecycle.js";
@@ -195,6 +196,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
   async function startLocked(
     worktreeId: string,
     signal?: AbortSignal,
+    dimensions?: TerminalDimensions,
   ): Promise<RuntimeDto> {
     signal?.throwIfAborted();
     if (shuttingDown) {
@@ -217,6 +219,9 @@ export function createTerminalManager(options: TerminalManagerOptions) {
       existing?.dto.state === "running" ||
       existing?.dto.state === "starting"
     ) {
+      if (dimensions && !existing.hasInputOwner) {
+        existing.synchronizeDimensions(dimensions.cols, dimensions.rows);
+      }
       return existing.snapshot;
     }
     const priorLaunch = launches.get(worktreeId);
@@ -263,8 +268,10 @@ export function createTerminalManager(options: TerminalManagerOptions) {
         runtimeId,
         cwd: claimed.path,
         processScope: options.processScope,
-        initialCols: options.initialCols,
-        initialRows: options.initialRows,
+        initialCols:
+          dimensions?.cols ?? existing?.dimensions.cols ?? options.initialCols,
+        initialRows:
+          dimensions?.rows ?? existing?.dimensions.rows ?? options.initialRows,
         outputBufferBytes: options.outputBufferBytes,
         maxSocketBufferedBytes: options.maxSocketBufferedBytes,
         stopGraceMs: options.stopGraceMs,
@@ -342,8 +349,13 @@ export function createTerminalManager(options: TerminalManagerOptions) {
       return runtimeDto(worktreeId);
     },
 
-    start(worktreeId: string): Promise<RuntimeDto> {
-      return exclusive(worktreeId, () => startLocked(worktreeId));
+    start(
+      worktreeId: string,
+      dimensions: TerminalDimensions,
+    ): Promise<RuntimeDto> {
+      return exclusive(worktreeId, () =>
+        startLocked(worktreeId, undefined, dimensions),
+      );
     },
 
     stop(worktreeId: string): Promise<RuntimeDto> {
@@ -354,6 +366,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
       worktreeId: string,
       idempotencyKey: string,
       expectedRuntimeId: string | null,
+      dimensions?: TerminalDimensions,
     ): Promise<RestartRuntimeResponse> {
       const hash = createHash("sha256")
         .update(
@@ -362,6 +375,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
             runtimeKind: options.runtimeKind,
             worktreeId,
             expectedRuntimeId,
+            dimensions,
           }),
         )
         .digest("hex");
@@ -390,7 +404,7 @@ export function createTerminalManager(options: TerminalManagerOptions) {
           return { operationId, restarted: false, runtime: current };
         }
         await stopLocked(worktreeId);
-        const runtime = await startLocked(worktreeId);
+        const runtime = await startLocked(worktreeId, undefined, dimensions);
         return { operationId, restarted: true, runtime };
       });
       restartOperations.set(idempotencyKey, { hash, promise });
@@ -401,12 +415,18 @@ export function createTerminalManager(options: TerminalManagerOptions) {
       worktreeId: string,
       connectionId: string,
       afterSeq: number,
+      dimensions: TerminalDimensions,
       socket: TerminalSocketTransport,
       signal?: AbortSignal,
     ): Promise<() => void> {
       return exclusive(worktreeId, async () => {
         signal?.throwIfAborted();
-        await startLocked(worktreeId, signal);
+        const current = runtimes.get(worktreeId);
+        await startLocked(
+          worktreeId,
+          signal,
+          current?.hasInputOwner ? undefined : dimensions,
+        );
         signal?.throwIfAborted();
         const runtime = runtimes.get(worktreeId);
         if (!runtime) {

@@ -3,6 +3,7 @@ export interface TerminalFitSchedulerOptions {
   getDimensions: () => { width: number; height: number };
   fit: () => void;
   requestFrame: (callback: () => void) => void;
+  onSettled?: () => void;
   stableFrames?: number;
 }
 
@@ -15,6 +16,7 @@ export function createTerminalFitScheduler({
   getDimensions,
   fit,
   requestFrame,
+  onSettled,
   stableFrames = 3,
 }: TerminalFitSchedulerOptions): TerminalFitScheduler {
   let scheduled = false;
@@ -61,6 +63,7 @@ export function createTerminalFitScheduler({
       requestFrame(run);
     } else {
       scheduled = false;
+      onSettled?.();
     }
   }
 

@@ -39,10 +39,15 @@ describe("terminal core contracts", () => {
 
   it("validates versioned frames, dimensions, and canonical binary data", () => {
     expect(
-      parseTerminalClientFrame('{"v":2,"type":"attach","afterSeq":0}'),
+      parseTerminalClientFrame(
+        '{"v":3,"type":"attach","afterSeq":0,"cols":120,"rows":40}',
+      ),
     ).toMatchObject({ ok: true });
     expect(
-      parseTerminalClientFrame('{"v":2,"type":"resize","cols":0,"rows":20}'),
+      parseTerminalClientFrame('{"v":3,"type":"attach","afterSeq":0}'),
+    ).toMatchObject({ ok: false, code: "VALIDATION_ERROR" });
+    expect(
+      parseTerminalClientFrame('{"v":3,"type":"resize","cols":0,"rows":20}'),
     ).toMatchObject({ ok: false, code: "INVALID_RESIZE" });
     expect(
       parseTerminalClientFrame('{"v":0,"type":"attach","afterSeq":0}'),
@@ -53,7 +58,7 @@ describe("terminal core contracts", () => {
     });
     expect(
       parseTerminalClientFrame(
-        '{"v":2,"type":"binaryInput","dataBase64":"not base64"}',
+        '{"v":3,"type":"binaryInput","dataBase64":"not base64"}',
       ),
     ).toMatchObject({ ok: false });
   });

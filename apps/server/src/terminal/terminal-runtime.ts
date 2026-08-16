@@ -92,6 +92,21 @@ export class TerminalRuntime {
     return this.#pty?.pid;
   }
 
+  get hasInputOwner(): boolean {
+    return this.#inputOwner !== undefined;
+  }
+
+  get dimensions(): { cols: number; rows: number } {
+    return { ...this.#dimensions };
+  }
+
+  synchronizeDimensions(cols: number, rows: number): void {
+    if (this.#dimensions.cols === cols && this.#dimensions.rows === rows)
+      return;
+    this.#dimensions = { cols, rows };
+    this.#pty?.resize(cols, rows);
+  }
+
   get snapshot(): RuntimeDto {
     return {
       ...this.dto,
@@ -389,8 +404,7 @@ export class TerminalRuntime {
 
   resize(connectionId: string, cols: number, rows: number): boolean {
     if (this.#inputOwner !== connectionId) return false;
-    this.#dimensions = { cols, rows };
-    if (this.dto.state === "running" && this.#pty) this.#pty.resize(cols, rows);
+    this.synchronizeDimensions(cols, rows);
     return true;
   }
 

@@ -19,6 +19,7 @@ const extensionPath = fileURLToPath(
   new URL("../../../packages/pi-extension/src/runtime.ts", import.meta.url),
 );
 const roots: string[] = [];
+const dimensions = { cols: 120, rows: 40 };
 
 function deferred() {
   let resolve!: () => void;
@@ -168,7 +169,7 @@ async function startRunning(
   manager: ReturnType<typeof fixture>["manager"],
   worktreeId: string,
 ) {
-  const starting = await manager.start(worktreeId);
+  const starting = await manager.start(worktreeId, dimensions);
   await waitFor(() => manager.get(worktreeId).state === "running");
   return { starting, running: manager.get(worktreeId) };
 }
@@ -201,8 +202,8 @@ describe("terminal manager integration", () => {
     });
     const worktreeId = "11111111-1111-4111-8111-111111111111";
     const [first, second] = await Promise.all([
-      manager.start(worktreeId),
-      manager.start(worktreeId),
+      manager.start(worktreeId, dimensions),
+      manager.start(worktreeId, dimensions),
     ]);
     expect(first.runtimeId).toBe(second.runtimeId);
     expect(first.state).toBe("starting");
@@ -213,9 +214,16 @@ describe("terminal manager integration", () => {
       worktreeId,
       "owner",
       0,
+      { cols: 120, rows: 40 },
       owner.socket,
     );
-    await manager.attach(worktreeId, "observer", 0, observer.socket);
+    await manager.attach(
+      worktreeId,
+      "observer",
+      0,
+      { cols: 90, rows: 30 },
+      observer.socket,
+    );
     expect(owner.frames.find((frame) => frame.type === "hello")).toMatchObject({
       inputOwner: true,
       runtime: { state: "starting", launchError: null },
@@ -230,7 +238,7 @@ describe("terminal manager integration", () => {
     launch.resolve();
     await waitFor(() => manager.get(worktreeId).state === "running");
     records.get(worktreeId)!.lifecycle = "removing";
-    await expect(manager.start(worktreeId)).rejects.toMatchObject({
+    await expect(manager.start(worktreeId, dimensions)).rejects.toMatchObject({
       code: "WORKTREE_NOT_READY",
     });
     records.get(worktreeId)!.lifecycle = "ready";
@@ -260,6 +268,7 @@ describe("terminal manager integration", () => {
         worktreeId,
         "closed",
         0,
+        { cols: 120, rows: 40 },
         transport().socket,
         controller.signal,
       ),
@@ -281,6 +290,7 @@ describe("terminal manager integration", () => {
       worktreeId,
       "closed-while-queued",
       0,
+      { cols: 120, rows: 40 },
       transport().socket,
       controller.signal,
     );
@@ -295,7 +305,7 @@ describe("terminal manager integration", () => {
     await manager.shutdown();
   });
 
-  it("atomically reserves a starting runtime for the first attached client", async () => {
+  it("starts the first attached runtime at the browser's measured dimensions", async () => {
     const launch = deferred();
     const { manager } = fixture({
       beforeResolveLaunch: () => launch.promise,
@@ -303,19 +313,32 @@ describe("terminal manager integration", () => {
     const worktreeId = "11111111-1111-4111-8111-111111111111";
     const client = transport();
 
-    await manager.attach(worktreeId, "owner", 0, client.socket);
+    await manager.attach(
+      worktreeId,
+      "owner",
+      0,
+      { cols: 132, rows: 43 },
+      client.socket,
+    );
     const hello = client.frames.find((frame) => frame.type === "hello");
     expect(hello).toMatchObject({
       runtime: { state: "starting", launchError: null },
       inputOwner: true,
     });
-    const concurrent = await manager.start(worktreeId);
+    const concurrent = await manager.start(worktreeId, dimensions);
     expect(concurrent.runtimeId).toBe(
       hello?.type === "hello" ? hello.runtime.runtimeId : undefined,
     );
 
     launch.resolve();
     await waitFor(() => manager.get(worktreeId).state === "running");
+    await waitFor(() =>
+      client.frames.some(
+        (frame) =>
+          frame.type === "output" &&
+          frame.data.includes('"terminal":{"cols":132,"rows":43}'),
+      ),
+    );
     await manager.shutdown();
   });
 
@@ -326,12 +349,18 @@ describe("terminal manager integration", () => {
       launchFailure: new Error("private launch detail"),
     });
     const worktreeId = "11111111-1111-4111-8111-111111111111";
-    await expect(manager.start(worktreeId)).resolves.toMatchObject({
+    await expect(manager.start(worktreeId, dimensions)).resolves.toMatchObject({
       state: "starting",
       launchError: null,
     });
     const client = transport();
-    await manager.attach(worktreeId, "owner", 0, client.socket);
+    await manager.attach(
+      worktreeId,
+      "owner",
+      0,
+      { cols: 120, rows: 40 },
+      client.socket,
+    );
 
     launch.resolve();
     await waitFor(() => manager.get(worktreeId).state === "crashed");
@@ -372,7 +401,7 @@ describe("terminal manager integration", () => {
         }),
     });
     const worktreeId = "11111111-1111-4111-8111-111111111111";
-    await expect(manager.start(worktreeId)).resolves.toMatchObject({
+    await expect(manager.start(worktreeId, dimensions)).resolves.toMatchObject({
       state: "starting",
     });
 
@@ -390,7 +419,13 @@ describe("terminal manager integration", () => {
     const worktreeId = "11111111-1111-4111-8111-111111111111";
     const { running: firstRuntime } = await startRunning(manager, worktreeId);
     const client = transport();
-    await manager.attach(worktreeId, "owner", 0, client.socket);
+    await manager.attach(
+      worktreeId,
+      "owner",
+      0,
+      { cols: 120, rows: 40 },
+      client.socket,
+    );
     const output = () =>
       client.frames
         .filter((frame) => frame.type === "output")
@@ -427,7 +462,13 @@ describe("terminal manager integration", () => {
     const worktreeId = "11111111-1111-4111-8111-111111111111";
     await startRunning(manager, worktreeId);
     const client = transport();
-    await manager.attach(worktreeId, "owner", 0, client.socket);
+    await manager.attach(
+      worktreeId,
+      "owner",
+      0,
+      { cols: 120, rows: 40 },
+      client.socket,
+    );
     const output = () =>
       client.frames
         .filter((frame) => frame.type === "output")
@@ -467,7 +508,13 @@ describe("terminal manager integration", () => {
     const worktreeId = "11111111-1111-4111-8111-111111111111";
     await startRunning(manager, worktreeId);
     const client = transport();
-    const detach = await manager.attach(worktreeId, "owner", 0, client.socket);
+    const detach = await manager.attach(
+      worktreeId,
+      "owner",
+      0,
+      { cols: 120, rows: 40 },
+      client.socket,
+    );
     const output = () =>
       client.frames
         .filter((frame) => frame.type === "output")
@@ -511,29 +558,60 @@ describe("terminal manager integration", () => {
     const worktreeId = "11111111-1111-4111-8111-111111111111";
     await startRunning(manager, worktreeId);
     const client = transport();
-    await manager.attach(worktreeId, "owner", 0, client.socket);
+    await manager.attach(
+      worktreeId,
+      "owner",
+      0,
+      { cols: 120, rows: 40 },
+      client.socket,
+    );
     manager.input(worktreeId, "owner", "__CRASH__");
     await waitFor(() => manager.get(worktreeId).state === "crashed");
     expect(manager.get(worktreeId).exitCode).toBe(7);
 
     const key = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const crashedRuntimeId = manager.get(worktreeId).runtimeId;
-    const restarted = await manager.restart(worktreeId, key, crashedRuntimeId);
-    const replay = await manager.restart(worktreeId, key, crashedRuntimeId);
+    const restarted = await manager.restart(worktreeId, key, crashedRuntimeId, {
+      cols: 132,
+      rows: 43,
+    });
+    const replay = await manager.restart(worktreeId, key, crashedRuntimeId, {
+      cols: 132,
+      rows: 43,
+    });
     expect(replay).toEqual(restarted);
     expect(restarted.restarted).toBe(true);
     expect(restarted.runtime.state).toBe("starting");
     await waitFor(() => manager.get(worktreeId).state === "running");
+    const replacement = transport();
+    await manager.attach(
+      worktreeId,
+      "replacement-owner",
+      0,
+      { cols: 132, rows: 43 },
+      replacement.socket,
+    );
+    manager.input(worktreeId, "replacement-owner", "__SIZE__");
+    await waitFor(() =>
+      replacement.frames.some(
+        (frame) =>
+          frame.type === "output" && frame.data.includes("FAKE_PI_SIZE 132x43"),
+      ),
+    );
 
     const stale = await manager.restart(
       worktreeId,
       "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       crashedRuntimeId,
+      { cols: 132, rows: 43 },
     );
     expect(stale.restarted).toBe(false);
     expect(stale.runtime.runtimeId).toBe(restarted.runtime.runtimeId);
     expect(() =>
-      manager.restart("22222222-2222-4222-8222-222222222222", key, null),
+      manager.restart("22222222-2222-4222-8222-222222222222", key, null, {
+        cols: 132,
+        rows: 43,
+      }),
     ).toThrowError(/different input/);
     await manager.shutdown();
   });

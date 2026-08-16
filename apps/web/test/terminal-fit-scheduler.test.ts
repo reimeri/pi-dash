@@ -82,11 +82,12 @@ describe("terminal fit scheduler", () => {
     expect(fits).toBe(4);
   });
 
-  it("fits through changing dimensions and three stable frames", () => {
+  it("fits through changing dimensions and reports a settled grid", () => {
     const frames = createFrameQueue();
     const widths = [500, 700, 900, 900, 900, 900];
     let frame = 0;
     let fits = 0;
+    let settled = 0;
     const scheduler = createTerminalFitScheduler({
       canFit: () => true,
       getDimensions: () => ({
@@ -95,11 +96,30 @@ describe("terminal fit scheduler", () => {
       }),
       fit: () => (fits += 1),
       requestFrame: frames.requestFrame,
+      onSettled: () => (settled += 1),
     });
 
     scheduler.schedule();
     while (frames.size() > 0) frames.runNext();
 
     expect(fits).toBe(6);
+    expect(settled).toBe(1);
+  });
+
+  it("does not report a settled grid when geometry is unavailable", () => {
+    const frames = createFrameQueue();
+    let settled = 0;
+    const scheduler = createTerminalFitScheduler({
+      canFit: () => true,
+      getDimensions: () => ({ width: 0, height: 0 }),
+      fit: () => undefined,
+      requestFrame: frames.requestFrame,
+      onSettled: () => (settled += 1),
+    });
+
+    scheduler.schedule();
+    frames.runNext();
+
+    expect(settled).toBe(0);
   });
 });

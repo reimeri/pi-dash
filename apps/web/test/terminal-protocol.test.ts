@@ -147,7 +147,7 @@ describe("terminal browser protocol", () => {
   it("rejects malformed daemon frames", () => {
     expect(
       isTerminalServerFrame({
-        v: 2,
+        v: 3,
         type: "output",
         seq: 1,
         data: "hello",
@@ -155,13 +155,13 @@ describe("terminal browser protocol", () => {
       }),
     ).toBe(true);
     expect(
-      isTerminalServerFrame({ v: 2, type: "output", seq: 1, data: "hello" }),
+      isTerminalServerFrame({ v: 3, type: "output", seq: 1, data: "hello" }),
     ).toBe(false);
     expect(isTerminalServerFrame({ v: 1, type: "pong", nonce: "n" })).toBe(
       false,
     );
     const validRuntimeFrame = {
-      v: 2,
+      v: 3,
       type: "runtime",
       runtime: {
         worktreeId: "11111111-1111-4111-8111-111111111111",

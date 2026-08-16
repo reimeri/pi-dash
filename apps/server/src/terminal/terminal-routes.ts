@@ -4,11 +4,13 @@ import {
   ApiErrorEnvelopeSchema,
   EmptyObjectSchema,
   RestartRuntimeRequestSchema,
+  StartRuntimeRequestSchema,
   RestartRuntimeResponseSchema,
   RuntimeResponseSchema,
   TERMINAL_PROTOCOL_VERSION,
   WorktreeIdParamsSchema,
   type RestartRuntimeRequest,
+  type StartRuntimeRequest,
   type TerminalServerFrame,
   type WorktreeIdParams,
 } from "@pi-dash/contracts";
@@ -103,18 +105,23 @@ export async function registerTerminalRoutes(
     },
   );
 
-  app.post<{ Params: WorktreeIdParams; Body: Record<string, never> }>(
+  app.post<{ Params: WorktreeIdParams; Body: StartRuntimeRequest }>(
     `${basePath}/start`,
     {
       schema: {
         params: WorktreeIdParamsSchema,
-        body: EmptyObjectSchema,
+        body: StartRuntimeRequestSchema,
         response: { 200: RuntimeResponseSchema, ...TERMINAL_ERROR_RESPONSES },
       },
     },
     async (request) => {
       try {
-        return { runtime: await options.terminals.start(request.params.id) };
+        return {
+          runtime: await options.terminals.start(
+            request.params.id,
+            request.body,
+          ),
+        };
       } catch (error) {
         serviceError(error);
       }
@@ -157,6 +164,7 @@ export async function registerTerminalRoutes(
           request.params.id,
           idempotencyKey(request),
           request.body.expectedRuntimeId,
+          request.body.dimensions,
         );
       } catch (error) {
         serviceError(error);
@@ -232,12 +240,17 @@ export async function registerTerminalRoutes(
         }
       };
 
-      const attach = async (afterSeq: number): Promise<void> => {
+      const attach = async (
+        afterSeq: number,
+        cols: number,
+        rows: number,
+      ): Promise<void> => {
         try {
           const attachedRuntime = await options.terminals.attach(
             worktreeId,
             connectionId,
             afterSeq,
+            { cols, rows },
             {
               get bufferedAmount() {
                 return socket.bufferedAmount;
@@ -293,7 +306,7 @@ export async function registerTerminalRoutes(
               return;
             }
             attaching = true;
-            void attach(frame.afterSeq);
+            void attach(frame.afterSeq, frame.cols, frame.rows);
             return;
           }
           if (!attached) {

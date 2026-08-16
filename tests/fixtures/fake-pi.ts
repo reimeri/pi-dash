@@ -54,6 +54,10 @@ process.stdout.write(
   `FAKE_PI_READY ${JSON.stringify({
     pid: process.pid,
     processGroup,
+    terminal: {
+      cols: process.stdout.columns,
+      rows: process.stdout.rows,
+    },
     cwd: process.cwd(),
     extension: process.argv[process.argv.indexOf("--extension") + 1] ?? null,
     dashVariables: Object.keys(process.env)
@@ -141,6 +145,12 @@ process.stdin.on("data", (chunk) => {
       completionId: settledCompletionId,
     });
     inputBuffer = inputBuffer.replace("__SETTLED__", "");
+  }
+  if (inputBuffer.includes("__SIZE__")) {
+    process.stdout.write(
+      `FAKE_PI_SIZE ${process.stdout.columns}x${process.stdout.rows}\r\n`,
+    );
+    inputBuffer = inputBuffer.replace("__SIZE__", "");
   }
   if (inputBuffer.includes("__CRASH__")) process.exit(7);
   if (inputBuffer.includes("__EXIT__")) process.exit(0);
